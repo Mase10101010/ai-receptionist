@@ -31,7 +31,9 @@ async def lifespan(app: FastAPI):
     setup_logging()
     logger.info(
         "Starting %s v%s in %s mode",
-        settings.APP_NAME, settings.APP_VERSION, settings.ENVIRONMENT,
+        settings.APP_NAME,
+        settings.APP_VERSION,
+        settings.ENVIRONMENT,
     )
     yield
     # Clean up the DB connection pool on shutdown
@@ -47,22 +49,29 @@ def create_app() -> FastAPI:
         debug=settings.DEBUG,
         lifespan=lifespan,
         # Hide docs in production unless DEBUG is on
-        docs_url="/docs" if settings.DEBUG or settings.ENVIRONMENT != "production" else None,
-        redoc_url="/redoc" if settings.DEBUG or settings.ENVIRONMENT != "production" else None,
+        docs_url="/docs"
+        if settings.DEBUG or settings.ENVIRONMENT != "production"
+        else None,
+        redoc_url="/redoc"
+        if settings.DEBUG or settings.ENVIRONMENT != "production"
+        else None,
     )
 
     # ── Middleware ────────────────────────────────────────────────────────
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_origins_list,
+        allow_origins=[
+            "http://localhost:5173",
+            "http://localhost:5174",
+            "http://localhost:5175",
+            "https://concierge-nine-phi.vercel.app",
+        ],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
     # ── Exception handlers ────────────────────────────────────────────────
-    # Translate domain exceptions → proper HTTP responses, so service code
-    # never has to import FastAPI/HTTPException.
     @app.exception_handler(AppException)
     async def handle_app_exception(_: Request, exc: AppException) -> JSONResponse:
         return JSONResponse(
@@ -71,7 +80,10 @@ def create_app() -> FastAPI:
         )
 
     @app.exception_handler(Exception)
-    async def handle_unexpected_exception(_: Request, exc: Exception) -> JSONResponse:
+    async def handle_unexpected_exception(
+        _: Request,
+        exc: Exception,
+    ) -> JSONResponse:
         logger.exception("Unhandled exception")
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
