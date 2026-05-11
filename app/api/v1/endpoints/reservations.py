@@ -1,20 +1,21 @@
-"""REST endpoints for managing reservations."""
 import uuid
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.db.session import get_db
-from app.repositories.reservation_repository import ReservationRepository
 
-from app.api.dependencies import ReservationServiceDep
+from app.db.session import get_db
 from app.models.reservation import ReservationStatus
+from app.repositories.reservation_repository import ReservationRepository
 from app.schemas.reservation import (
     ReservationCreate,
     ReservationResponse,
     ReservationUpdate,
 )
+from app.services.reservation_service import ReservationService
 
 router = APIRouter(prefix="/reservations", tags=["reservations"])
+
+
 def get_reservation_service(
     db: AsyncSession = Depends(get_db),
 ) -> ReservationService:
@@ -26,13 +27,14 @@ def get_reservation_service(
     "",
     response_model=ReservationResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Create a new reservation",
+    summary="Create a reservation",
 )
 async def create_reservation(
-    payload: ReservationCreate, service: ReservationServiceDep
+    payload: ReservationCreate,
+    service: ReservationService = Depends(get_reservation_service),
 ) -> ReservationResponse:
-    """Create a reservation. Validates time, party size, and capacity."""
     reservation = await service.create_reservation(payload)
+    await service.repository.db.commit()
     return ReservationResponse.model_validate(reservation)
 
 
@@ -54,23 +56,23 @@ async def list_reservations(
         status=status,
         restaurant_id=restaurant_id,
     )
-
-    return [
-        ReservationResponse.model_validate(r)
-        for r in reservations
-    ]
+    return [ReservationResponse.model_validate(r) for r in reservations]
 
 
 @router.get(
     "/{reservation_id}",
     response_model=ReservationResponse,
-    summary="Get a single reservation",
+    summary="Get a reservation",
 )
 async def get_reservation(
-    reservation_id: uuid.UUID, service: ReservationServiceDep
+    reservation_id: uuid.UUID,
+    service: ReservationService = Depends(get_reservation_service),
+    restaurant_id: uuid.UUID | None = Query(default=None),
 ) -> ReservationResponse:
-    """Look up a reservation by id. 404s if not found."""
-    reservation = await service.get_reservation(reservation_id)
+    reservation = await service.get_reservation(
+        reservation_id=reservation_id,
+        restaurant_id=restaurant_id,
+    )
     return ReservationResponse.model_validate(reservation)
 
 
@@ -82,21 +84,21 @@ async def get_reservation(
 async def update_reservation(
     reservation_id: uuid.UUID,
     payload: ReservationUpdate,
-    service: ReservationServiceDep,
+    service: ReservationService = Depends(get_reservation_service),
 ) -> ReservationResponse:
-    """Partially update a reservation. Re-validates if time/party_size change."""
     reservation = await service.update_reservation(reservation_id, payload)
+    await service.repository.db.commit()
     return ReservationResponse.model_validate(reservation)
 
 
 @router.delete(
     "/{reservation_id}",
-    response_model=ReservationResponse,
-    summary="Cancel a reservation",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a reservation",
 )
-async def cancel_reservation(
-    reservation_id: uuid.UUID, service: ReservationServiceDep
-) -> ReservationResponse:
-    """Soft-cancel a reservation (sets status=cancelled, doesn't delete row)."""
-    reservation = await service.cancel_reservation(reservation_id)
-    return ReservationResponse.model_validate(reservation)
+async def delete_reservation(
+    reservation_id: uuid.UUID,
+    service: ReservationService = Depends(get_reservation_service),
+) -> None:
+    await service.delete_reservation(reservation_id)
+    await service.repository.db.commit()
