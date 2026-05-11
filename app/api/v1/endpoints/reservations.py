@@ -1,7 +1,7 @@
 """REST endpoints for managing reservations."""
 import uuid
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Depends, Query, status
 
 from app.api.dependencies import ReservationServiceDep
 from app.models.reservation import ReservationStatus
