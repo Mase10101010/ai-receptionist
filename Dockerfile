@@ -17,12 +17,14 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # Runtime needs only libpq
-RUN apt-get update && apt-get install -y --no-install-recommends libpq5 \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libpq5 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --shell /bin/bash appuser
 
 # Copy installed packages from builder
 COPY --from=builder /root/.local /home/appuser/.local
+
 ENV PATH=/home/appuser/.local/bin:$PATH
 
 COPY --chown=appuser:appuser . .
@@ -35,4 +37,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
     CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run migrations automatically before starting FastAPI
+CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
