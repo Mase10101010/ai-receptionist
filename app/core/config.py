@@ -9,7 +9,7 @@ crashing later at runtime.
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, PostgresDsn, field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,19 +31,21 @@ class Settings(BaseSettings):
     API_V1_PREFIX: str = "/api/v1"
 
     # ── Database ──────────────────────────────────────────────────────────
-    # Async URL used by the FastAPI app (asyncpg driver)
+    # Render gives us a normal postgresql:// URL. The app needs asyncpg.
     DATABASE_URL: str = Field(
         default="postgresql+asyncpg://postgres:postgres@localhost:5432/restaurant_ai",
-        description="Async PostgreSQL connection string (asyncpg)",
+        description="Async PostgreSQL connection string for FastAPI",
     )
-    # Sync URL used by Alembic migrations (psycopg2 driver)
-    SYNC_DATABASE_URL: str = Field(
-        default="postgresql+psycopg2://postgres:postgres@localhost:5432/restaurant_ai",
-        description="Sync PostgreSQL connection string (psycopg2) for Alembic",
+
+    # Optional. If missing, we derive it automatically from DATABASE_URL.
+    SYNC_DATABASE_URL: str | None = Field(
+        default=None,
+        description="Sync PostgreSQL connection string for Alembic",
     )
+
     DB_POOL_SIZE: int = 10
     DB_MAX_OVERFLOW: int = 20
-    DB_ECHO: bool = False  # Set True to log all SQL (dev only)
+    DB_ECHO: bool = False
 
     # ── OpenAI ────────────────────────────────────────────────────────────
     OPENAI_API_KEY: str = Field(..., description="OpenAI API key (required)")
@@ -53,23 +55,43 @@ class Settings(BaseSettings):
     OPENAI_TIMEOUT_SECONDS: float = 30.0
 
     # ── Conversation memory ───────────────────────────────────────────────
-    # How many past message pairs to include in the LLM context. Trimming the
-    # window keeps token costs predictable while still feeling "stateful".
     CONVERSATION_HISTORY_LIMIT: int = 20
 
     # ── Restaurant business rules ─────────────────────────────────────────
     RESTAURANT_NAME: str = "La Maison"
     RESTAURANT_TIMEZONE: str = "America/New_York"
-    OPENING_HOUR: int = 11   # 11:00 (24h)
-    CLOSING_HOUR: int = 22   # 22:00 (24h)
+    OPENING_HOUR: int = 11
+    CLOSING_HOUR: int = 22
     MAX_PARTY_SIZE: int = 12
     MIN_PARTY_SIZE: int = 1
-    RESERVATION_DURATION_MINUTES: int = 90  # Default table booking length
-    MAX_DAILY_CAPACITY: int = 80  # Total seats available per service
+    RESERVATION_DURATION_MINUTES: int = 90
+    MAX_DAILY_CAPACITY: int = 80
 
     # ── Security ──────────────────────────────────────────────────────────
-    # Comma-separated list of allowed CORS origins
-    CORS_ORIGINS: str = "http://localhost:8000,http://localhost:3000"
+    CORS_ORIGINS: str = (
+        "http://localhost:5173,"
+        "http://localhost:5174,"
+        "http://localhost:5175,"
+        "https://concierge-nine-phi.vercel.app"
+    )
+
+    @field_validator("DATABASE_URL")
+    @classmethod
+    def _normalize_database_url(cls, v: str) -> str:
+        """
+        FastAPI uses async SQLAlchemy, so force asyncpg for app runtime.
+
+        Render often provides:
+            postgresql://user:pass@host/db
+
+        We convert it to:
+            postgresql+asyncpg://user:pass@host/db
+        """
+        if v.startswith("postgres://"):
+            v = v.replace("postgres://", "postgresql+asyncpg://", 1)
+        elif v.startswith("postgresql://"):
+            v = v.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return v
 
     @field_validator("OPENAI_TEMPERATURE")
     @classmethod
@@ -79,20 +101,34 @@ class Settings(BaseSettings):
         return v
 
     @property
+    def sync_database_url(self) -> str:
+        """
+        Alembic uses sync SQLAlchemy, so force psycopg2 for migrations.
+        """
+        if self.SYNC_DATABASE_URL:
+            return self.SYNC_DATABASE_URL
+
+        url = self.DATABASE_URL
+
+        if url.startswith("postgresql+asyncpg://"):
+            return url.replace("postgresql+asyncpg://", "postgresql+psycopg2://", 1)
+
+        if url.startswith("postgres://"):
+            return url.replace("postgres://", "postgresql+psycopg2://", 1)
+
+        if url.startswith("postgresql://"):
+            return url.replace("postgresql://", "postgresql+psycopg2://", 1)
+
+        return url
+
+    @property
     def cors_origins_list(self) -> list[str]:
-        return [origin.strip() for origin in self.CORS_ORIGINS.split(",")]
+        return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
 
 
 @lru_cache
 def get_settings() -> Settings:
-    """
-    Return the application settings singleton.
-
-    `lru_cache` ensures we only instantiate Settings once per process — this
-    avoids re-reading the .env file on every dependency injection call.
-    """
     return Settings()  # type: ignore[call-arg]
 
 
-# Module-level convenience handle. Most code can `from app.core.config import settings`.
 settings = get_settings()
