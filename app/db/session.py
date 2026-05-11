@@ -38,18 +38,12 @@ AsyncSessionLocal = async_sessionmaker(
 )
 
 
-async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    """
-    FastAPI dependency that yields an async DB session.
-
-    The session is automatically closed when the request finishes. We use
-    a context manager pattern so any uncommitted changes are rolled back
-    if an exception bubbles up out of the request handler.
-    """
+async def get_db():
     async with AsyncSessionLocal() as session:
         try:
             yield session
-        except Exception:
+            await session.commit()
+        except:
             await session.rollback()
             raise
         finally:

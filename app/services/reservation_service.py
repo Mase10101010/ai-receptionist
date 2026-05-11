@@ -46,6 +46,7 @@ class ReservationService:
             status=ReservationStatus.CONFIRMED,
         )
         created = await self.repository.create(reservation)
+        await self.repository.db.commit()
         logger.info(
             "Reservation created: id=%s party=%d time=%s",
             created.id, created.party_size, created.reservation_time.isoformat(),
