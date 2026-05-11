@@ -2,6 +2,9 @@
 import uuid
 
 from fastapi import APIRouter, Depends, Query, status
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.db.session import get_db
+from app.repositories.reservation_repository import ReservationRepository
 
 from app.api.dependencies import ReservationServiceDep
 from app.models.reservation import ReservationStatus
@@ -12,6 +15,11 @@ from app.schemas.reservation import (
 )
 
 router = APIRouter(prefix="/reservations", tags=["reservations"])
+def get_reservation_service(
+    db: AsyncSession = Depends(get_db),
+) -> ReservationService:
+    repository = ReservationRepository(db)
+    return ReservationService(repository)
 
 
 @router.post(
