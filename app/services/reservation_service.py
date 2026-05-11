@@ -34,6 +34,7 @@ class ReservationService:
         await self._enforce_capacity(payload.reservation_time, payload.party_size)
 
         reservation = Reservation(
+            restaurant_id=payload.restaurant_id,
             customer_name=payload.customer_name,
             customer_phone=payload.customer_phone,
             customer_email=payload.customer_email,
@@ -63,9 +64,14 @@ class ReservationService:
         skip: int = 0,
         limit: int = 100,
         status: ReservationStatus | None = None,
+        restaurant_id: uuid.UUID | None = None,
     ) -> list[Reservation]:
-        """List reservations with optional pagination and status filter."""
-        return await self.repository.list_all(skip=skip, limit=limit, status=status)
+        return await self.repository.list_all(
+            skip=skip,
+            limit=limit,
+            status=status,
+            restaurant_id=restaurant_id,
+        )
 
     async def update_reservation(
         self, reservation_id: uuid.UUID, payload: ReservationUpdate

@@ -30,11 +30,21 @@ class ReservationRepository:
         return reservation
 
     # ── Read ──────────────────────────────────────────────────────────────
-    async def get_by_id(self, reservation_id: uuid.UUID) -> Reservation | None:
-        """Look up a single reservation by primary key."""
-        result = await self.db.execute(
-            select(Reservation).where(Reservation.id == reservation_id)
+    async def get_by_id(
+        self,
+        reservation_id: uuid.UUID,
+        restaurant_id: uuid.UUID | None = None,
+    ) -> Reservation | None:
+        stmt = select(Reservation).where(
+            Reservation.id == reservation_id
         )
+
+        if restaurant_id is not None:
+            stmt = stmt.where(
+                Reservation.restaurant_id == restaurant_id
+            )
+
+        result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
     async def list_all(
@@ -42,11 +52,14 @@ class ReservationRepository:
         skip: int = 0,
         limit: int = 100,
         status: ReservationStatus | None = None,
+        restaurant_id: uuid.UUID | None = None,
     ) -> list[Reservation]:
         """List reservations with optional status filter and pagination."""
         stmt = select(Reservation).order_by(Reservation.reservation_time.desc())
         if status is not None:
             stmt = stmt.where(Reservation.status == status)
+        if restaurant_id is not None:
+            stmt = stmt.where(Reservation.restaurant_id == restaurant_id)
         stmt = stmt.offset(skip).limit(limit)
         result = await self.db.execute(stmt)
         return list(result.scalars().all())

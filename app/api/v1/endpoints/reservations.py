@@ -34,16 +34,23 @@ async def create_reservation(
     summary="List reservations",
 )
 async def list_reservations(
-    service: ReservationServiceDep,
+    service: ReservationService = Depends(get_reservation_service),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
-    status_filter: ReservationStatus | None = Query(None, alias="status"),
+    status: ReservationStatus | None = Query(default=None),
+    restaurant_id: uuid.UUID | None = Query(default=None),
 ) -> list[ReservationResponse]:
-    """List reservations with optional pagination and status filter."""
-    items = await service.list_reservations(
-        skip=skip, limit=limit, status=status_filter
+    reservations = await service.list_reservations(
+        skip=skip,
+        limit=limit,
+        status=status,
+        restaurant_id=restaurant_id,
     )
-    return [ReservationResponse.model_validate(r) for r in items]
+
+    return [
+        ReservationResponse.model_validate(r)
+        for r in reservations
+    ]
 
 
 @router.get(
