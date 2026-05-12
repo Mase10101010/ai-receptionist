@@ -68,15 +68,14 @@ class Settings(BaseSettings):
     MAX_DAILY_CAPACITY: int = 80
 
     # ── Security ──────────────────────────────────────────────────────────
-    CORS_ORIGINS: str = (
-        "http://localhost:5173,"
-        "http://localhost:5174,"
-        "http://localhost:5175,"
-        "https://concierge-nine-phi.vercel.app"
-    )
-
-    @field_validator("DATABASE_URL")
+    CORS_ORIGINS: list[str] = [] 
+    
+    @field_validator("CORS_ORIGINS", mode = "before")
     @classmethod
+    def assemble_cors_origins(cls, v):
+        if isinstance(v, str):
+            return[i.strip() for i in v.split(",")]
+        return v
     def _normalize_database_url(cls, v: str) -> str:
         """
         FastAPI uses async SQLAlchemy, so force asyncpg for app runtime.
