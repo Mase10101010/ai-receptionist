@@ -42,3 +42,5 @@ class RestaurantResponse(RestaurantBase):
     subscription_status: str
     created_at: datetime
     updated_at: datetime
+    
+    owner_id: uuid.UUID

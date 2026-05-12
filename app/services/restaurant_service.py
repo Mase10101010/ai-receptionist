@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.models.restaurant import Restaurant
@@ -11,7 +11,11 @@ class RestaurantService:
     def __init__(self, repository: RestaurantRepository) -> None:
         self.repository = repository
 
-    async def create_restaurant(self, payload: RestaurantCreate) -> Restaurant:
+    async def create_restaurant(
+        self,
+        payload: RestaurantCreate,
+        owner_id: uuid.UUID,
+    ) -> Restaurant:
         if payload.opening_hour >= payload.closing_hour:
             raise ValidationError("Opening hour must be before closing hour")
 
@@ -22,6 +26,7 @@ class RestaurantService:
         now = datetime.utcnow()
 
         restaurant = Restaurant(
+            owner_id=owner_id,
             name=payload.name,
             slug=payload.slug,
             business_type=payload.business_type,
@@ -33,32 +38,49 @@ class RestaurantService:
             number_of_tables=payload.number_of_tables,
             concierge_tone=payload.concierge_tone,
             subscription_status="trialing",
+            created_at=now,
+            updated_at=now,
         )
-
-        restaurant.created_at = now
-        restaurant.updated_at = now
 
         return await self.repository.create(restaurant)
 
-    async def get_restaurant(self, restaurant_id: uuid.UUID) -> Restaurant:
-        restaurant = await self.repository.get_by_id(restaurant_id)
+    async def get_restaurant(
+        self,
+        restaurant_id: uuid.UUID,
+        owner_id: uuid.UUID,
+    ) -> Restaurant:
+        restaurant = await self.repository.get_by_id_for_owner(
+            restaurant_id=restaurant_id,
+            owner_id=owner_id,
+        )
+
         if restaurant is None:
             raise NotFoundError(f"Restaurant {restaurant_id} not found")
+
         return restaurant
 
     async def list_restaurants(
         self,
+        owner_id: uuid.UUID,
         skip: int = 0,
         limit: int = 100,
     ) -> list[Restaurant]:
-        return await self.repository.list_all(skip=skip, limit=limit)
+        return await self.repository.list_by_owner(
+            owner_id=owner_id,
+            skip=skip,
+            limit=limit,
+        )
 
     async def update_restaurant(
         self,
         restaurant_id: uuid.UUID,
+        owner_id: uuid.UUID,
         payload: RestaurantUpdate,
     ) -> Restaurant:
-        restaurant = await self.get_restaurant(restaurant_id)
+        restaurant = await self.get_restaurant(
+            restaurant_id=restaurant_id,
+            owner_id=owner_id,
+        )
 
         updates = payload.model_dump(exclude_unset=True)
 

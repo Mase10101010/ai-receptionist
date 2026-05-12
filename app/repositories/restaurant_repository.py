@@ -21,6 +21,19 @@ class RestaurantRepository:
             select(Restaurant).where(Restaurant.id == restaurant_id)
         )
         return result.scalar_one_or_none()
+    
+    async def get_by_id_for_owner(
+            self,
+            restaurant_id:uuid.UUID,
+            owner_id: uuid.UUID,
+    ) -> Restaurant | None:
+        result = await self.db.execute(
+            select(Restaurant).where(
+                Restaurant.id == restaurant_id,
+                Restaurant.owner_id == owner_id,
+            )
+        )
+        return result.scalar_one_or_none()
 
     async def get_by_slug(self, slug: str) -> Restaurant | None:
         result = await self.db.execute(
@@ -28,9 +41,14 @@ class RestaurantRepository:
         )
         return result.scalar_one_or_none()
 
-    async def list_all(self, skip: int = 0, limit: int = 100) -> list[Restaurant]:
+    async def list_all(
+        self, 
+        skip: int = 0, 
+        limit: int = 100
+    ) -> list[Restaurant]:
         result = await self.db.execute(
             select(Restaurant)
+            .where(Restaurant.owner_id == owner_id)
             .order_by(Restaurant.created_at.desc())
             .offset(skip)
             .limit(limit)
