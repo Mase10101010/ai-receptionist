@@ -65,6 +65,7 @@ def create_app() -> FastAPI:
             "http://localhost:5174",
             "http://localhost:5175",
             "https://concierge-nine-phi.vercel.app",
+            "https://alias-platform.vercel.app"
         ],
         allow_credentials=True,
         allow_methods=["*"],
