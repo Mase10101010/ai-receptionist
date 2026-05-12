@@ -7,7 +7,7 @@ if a required env var is missing or malformed, the app fails fast rather than
 crashing later at runtime.
 """
 from functools import lru_cache
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     ENVIRONMENT: Literal["development", "staging", "production"] = "development"
     DEBUG: bool = False
     API_V1_PREFIX: str = "/api/v1"
+    JWT_SECRET_KEY: str = "change-this-secret-in-production"
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7
 
     # ── Database ──────────────────────────────────────────────────────────
     # Render gives us a normal postgresql:// URL. The app needs asyncpg.
@@ -68,7 +71,7 @@ class Settings(BaseSettings):
     MAX_DAILY_CAPACITY: int = 80
 
     # ── Security ──────────────────────────────────────────────────────────
-    CORS_ORIGINS: list[str] = [] 
+    CORS_ORIGINS: Any = "http://localhost:8000,http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:5175,https://concierge-nine-phi.vercel.app,https://alias-platform.vercel.app"
     
     @field_validator("CORS_ORIGINS", mode = "before")
     @classmethod
@@ -122,7 +125,19 @@ class Settings(BaseSettings):
 
     @property
     def cors_origins_list(self) -> list[str]:
-        return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+        if isinstance(self.CORS_ORIGINS, list):
+            return [
+                str(origin).strip()
+                for origin in self.CORS_ORIGINS
+                if str(origin).strip()
+            ]
+        if isinstance(self.CORS_ORIGINS, str):
+            return [
+                origin.strip()
+                for origin in self.CORS_ORIGINS.split(",")
+                if origin.strip()
+            ]
+        return []
 
 
 @lru_cache

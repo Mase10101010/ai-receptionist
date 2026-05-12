@@ -1,38 +1,34 @@
 """
 Dependency injection wiring for the API layer.
-
-FastAPI's `Depends` system lets us declare what each endpoint needs (a DB
-session, a service, etc.) and resolves them automatically. Centralizing the
-factories here means endpoint files stay focused on routing and validation.
 """
+import uuid
 from typing import Annotated
 
-from fastapi import Depends
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jose import JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.security import decode_access_token
 from app.db.session import get_db
+from app.models.user import User
 from app.repositories.conversation_repository import ConversationRepository
 from app.repositories.reservation_repository import ReservationRepository
+from app.repositories.user_repository import UserRepository
 from app.services.ai_service import AIService
 from app.services.reservation_service import ReservationService
 
-# Type alias — saves us repeating Annotated[..., Depends(...)] in every endpoint.
+security = HTTPBearer()
+
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 def get_reservation_service(db: DbSession) -> ReservationService:
-    """Build a ReservationService bound to the request's DB session."""
     repo = ReservationRepository(db)
     return ReservationService(repo)
 
 
 def get_ai_service(db: DbSession) -> AIService:
-    """
-    Build an AIService.
-
-    AIService depends on both repositories and on ReservationService, so we
-    construct the whole graph here.
-    """
     conversation_repo = ConversationRepository(db)
     reservation_repo = ReservationRepository(db)
     reservation_service = ReservationService(reservation_repo)
@@ -40,13 +36,42 @@ def get_ai_service(db: DbSession) -> AIService:
 
 
 def get_conversation_repository(db: DbSession) -> ConversationRepository:
-    """Direct repo access for read-only history endpoints."""
     return ConversationRepository(db)
 
 
-# Convenience type aliases for endpoint signatures
+async def get_current_user(
+    db: DbSession,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> User:
+    try:
+        payload = decode_access_token(credentials.credentials)
+        user_id = payload.get("sub")
+
+        if user_id is None:
+            raise ValueError("Missing token subject")
+
+        user_uuid = uuid.UUID(str(user_id))
+    except (JWTError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+        )
+
+    repo = UserRepository(db)
+    user = await repo.get_by_id(user_uuid)
+
+    if user is None or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found or inactive",
+        )
+
+    return user
+
+
 ReservationServiceDep = Annotated[ReservationService, Depends(get_reservation_service)]
 AIServiceDep = Annotated[AIService, Depends(get_ai_service)]
 ConversationRepoDep = Annotated[
     ConversationRepository, Depends(get_conversation_repository)
 ]
+CurrentUserDep = Annotated[User, Depends(get_current_user)]
