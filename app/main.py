@@ -60,11 +60,17 @@ def create_app() -> FastAPI:
     # ── Middleware ────────────────────────────────────────────────────────
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_origins_list,
+        allow_origins=[
+            "http://localhost:5173",
+            "http://localhost:5174",
+            "http://localhost:5175",
+            "https://concierge-nine-phi.vercel.app",
+            "https://alias-platform.vercel.app"
+        ],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
-    )
+    ) 
 
     # ── Exception handlers ────────────────────────────────────────────────
     @app.exception_handler(AppException)
