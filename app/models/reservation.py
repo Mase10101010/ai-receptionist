@@ -11,8 +11,7 @@ from enum import Enum
 from sqlalchemy import DateTime, Enum as SQLEnum, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import ForeignKey
-from sqlalchemy.orm import relationship
+
 
 from app.db.base import Base
 
@@ -46,7 +45,7 @@ class Reservation(Base):
         index=True,
     )
 
-    restaurant = relationship("Restaurant")
+    
     # Customer info — minimal PII, only what's needed to honor the reservation.
     customer_name: Mapped[str] = mapped_column(String(120), nullable=False)
     customer_phone: Mapped[str] = mapped_column(String(32), nullable=False)

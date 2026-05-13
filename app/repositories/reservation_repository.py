@@ -1,10 +1,5 @@
 """
 Reservation repository.
-
-The repository pattern isolates SQL/ORM concerns from business logic. The
-service layer talks to the repository in domain terms ("get by id", "list
-between dates") and never touches SQLAlchemy directly. This makes testing
-easier (you can mock the repo) and keeps the database swappable.
 """
 import uuid
 from datetime import datetime
@@ -21,30 +16,44 @@ class ReservationRepository:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
-    # ── Create ────────────────────────────────────────────────────────────
     async def create(self, reservation: Reservation) -> Reservation:
-        """Persist a new reservation and return it with DB-generated fields."""
         self.db.add(reservation)
-        await self.db.flush()        # Push to DB to populate id/timestamps
+        await self.db.flush()
         await self.db.refresh(reservation)
         return reservation
 
-    # ── Read ──────────────────────────────────────────────────────────────
     async def get_by_id(
         self,
         reservation_id: uuid.UUID,
         restaurant_id: uuid.UUID | None = None,
     ) -> Reservation | None:
         stmt = select(Reservation).where(
-            Reservation.id == reservation_id
+            Reservation.id == reservation_id,
         )
 
         if restaurant_id is not None:
             stmt = stmt.where(
-                Reservation.restaurant_id == restaurant_id
+                Reservation.restaurant_id == restaurant_id,
             )
 
         result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_by_id_for_restaurants(
+        self,
+        reservation_id: uuid.UUID,
+        restaurant_ids: list[uuid.UUID],
+    ) -> Reservation | None:
+        if not restaurant_ids:
+            return None
+
+        result = await self.db.execute(
+            select(Reservation).where(
+                Reservation.id == reservation_id,
+                Reservation.restaurant_id.in_(restaurant_ids),
+            )
+        )
+
         return result.scalar_one_or_none()
 
     async def list_all(
@@ -54,13 +63,42 @@ class ReservationRepository:
         status: ReservationStatus | None = None,
         restaurant_id: uuid.UUID | None = None,
     ) -> list[Reservation]:
-        """List reservations with optional status filter and pagination."""
-        stmt = select(Reservation).order_by(Reservation.reservation_time.desc())
+        stmt = select(Reservation).order_by(
+            Reservation.reservation_time.desc(),
+        )
+
         if status is not None:
             stmt = stmt.where(Reservation.status == status)
+
         if restaurant_id is not None:
             stmt = stmt.where(Reservation.restaurant_id == restaurant_id)
+
         stmt = stmt.offset(skip).limit(limit)
+
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def list_by_restaurant_ids(
+        self,
+        restaurant_ids: list[uuid.UUID],
+        skip: int = 0,
+        limit: int = 100,
+        status: ReservationStatus | None = None,
+    ) -> list[Reservation]:
+        if not restaurant_ids:
+            return []
+
+        stmt = (
+            select(Reservation)
+            .where(Reservation.restaurant_id.in_(restaurant_ids))
+            .order_by(Reservation.reservation_time.desc())
+            .offset(skip)
+            .limit(limit)
+        )
+
+        if status is not None:
+            stmt = stmt.where(Reservation.status == status)
+
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
@@ -68,17 +106,12 @@ class ReservationRepository:
         self,
         start: datetime,
         end: datetime,
+        restaurant_id: uuid.UUID | None = None,
         exclude_statuses: tuple[ReservationStatus, ...] = (
             ReservationStatus.CANCELLED,
             ReservationStatus.NO_SHOW,
         ),
     ) -> list[Reservation]:
-        """
-        Find reservations that fall within [start, end).
-
-        Used by the service layer for capacity checks: before confirming a
-        new booking, count concurrent reservations.
-        """
         stmt = select(Reservation).where(
             and_(
                 Reservation.reservation_time >= start,
@@ -86,22 +119,25 @@ class ReservationRepository:
                 Reservation.status.notin_(exclude_statuses),
             )
         )
+
+        if restaurant_id is not None:
+            stmt = stmt.where(Reservation.restaurant_id == restaurant_id)
+
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
-    # ── Update ────────────────────────────────────────────────────────────
     async def update(
-        self, reservation: Reservation, fields: dict
+        self,
+        reservation: Reservation,
+        fields: dict,
     ) -> Reservation:
-        """Apply a partial update from a dict of field→value."""
         for key, value in fields.items():
             setattr(reservation, key, value)
+
         await self.db.flush()
         await self.db.refresh(reservation)
         return reservation
 
-    # ── Delete ────────────────────────────────────────────────────────────
     async def delete(self, reservation: Reservation) -> None:
-        """Hard-delete a reservation. Prefer status=cancelled in most cases."""
         await self.db.delete(reservation)
         await self.db.flush()
