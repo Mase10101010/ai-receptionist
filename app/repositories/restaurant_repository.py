@@ -48,13 +48,27 @@ class RestaurantRepository:
     ) -> list[Restaurant]:
         result = await self.db.execute(
             select(Restaurant)
-            .where(Restaurant.owner_id == owner_id)
             .order_by(Restaurant.created_at.desc())
             .offset(skip)
             .limit(limit)
         )
         return list(result.scalars().all())
-
+    
+    async def list_by_owner(
+            self,
+            owner_id: uuid.UUID,
+            skip: int = 0,
+            limit: int = 100,
+    ) -> list[Restaurant]:
+        result = await self.db.execute(
+            select(Restaurant)
+            .where(Restaurant.owner_id == owner_id)
+            .order_by(Restaurant.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+        ) 
+        return list(result.scalars().all())
+    
     async def update(self, restaurant: Restaurant, fields: dict) -> Restaurant:
         for key, value in fields.items():
             setattr(restaurant, key, value)
