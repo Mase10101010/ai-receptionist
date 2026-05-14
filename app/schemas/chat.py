@@ -9,6 +9,7 @@ from app.models.conversation import MessageRole
 
 class ChatRequest(BaseModel):
     """Incoming chat message from the user."""
+    restaurant_id: uuid.uuid | None = None
     # If session_id is omitted, the server creates a new conversation.
     session_id: str | None = Field(
         None,

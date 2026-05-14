@@ -122,7 +122,10 @@ class AIService:
         )
 
     async def handle_message(
-        self, session_id: str | None, user_message: str
+        self, 
+        session_id: str | None, 
+        user_message: str,
+        restaurant_id: uuid.UUID | None = None,
     ) -> tuple[str, str, uuid.UUID | None]:
 
         if session_id is None:
@@ -152,7 +155,10 @@ class AIService:
                 {"role": msg.role, "content": msg.content}
             )
 
-        reply, reservation_id = await self._run_completion_loop(messages)
+        reply, reservation_id = await self._run_completion_loop(
+            messages,
+            restaurant_id,
+        )
 
         await self.conversation_repo.add_message(
             conversation.id,
@@ -164,7 +170,8 @@ class AIService:
 
     async def _run_completion_loop(
         self,
-        messages: list[dict[str, Any]]
+        messages: list[dict[str, Any]],
+        restaurant_id: uuid.UUID | None = None,
     ) -> tuple[str, uuid.UUID | None]:
 
         reservation_id: uuid.UUID | None = None
@@ -208,7 +215,8 @@ class AIService:
             for tc in msg.tool_calls:
                 result, rid = await self._execute_tool(
                     tc.function.name,
-                    tc.function.arguments
+                    tc.function.arguments,
+                    restaurant_id,
                 )
 
                 if rid:
@@ -227,7 +235,8 @@ class AIService:
     async def _execute_tool(
         self,
         name: str,
-        raw_arguments: str
+        raw_arguments: str,
+        restaurant_id: uuid.UUID | None = None,
     ) -> tuple[dict[str, Any], uuid.UUID | None]:
 
         args = json.loads(raw_arguments or "{}")
@@ -244,6 +253,7 @@ class AIService:
 
             if name == "create_reservation":
                 payload = ReservationCreate(
+                    restaurant_id=restaurant_id,
                     customer_name=args["customer_name"],
                     customer_phone=args["customer_phone"],
                     customer_email=args.get("customer_email"),

@@ -28,7 +28,9 @@ async def send_message(payload: ChatRequest, ai_service: AIServiceDep) -> ChatRe
     the AI maintains memory across turns.
     """
     session_id, reply, reservation_id = await ai_service.handle_message(
-        payload.session_id, payload.message
+        payload.session_id, 
+        payload.message,
+        payload.restaurant_id,
     )
     return ChatResponse(
         session_id=session_id, reply=reply, reservation_id=reservation_id
