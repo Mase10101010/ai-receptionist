@@ -43,7 +43,7 @@ async def send_public_message(
     session_id, reply, reservation_id = await ai_service.handle_message(
         payload.session_id, 
         payload.message,
-        restaurant_id,
+        restaurant.id,
     )
     return ChatResponse(
         session_id=session_id, 
