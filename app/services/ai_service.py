@@ -158,6 +158,7 @@ class AIService:
         reply, reservation_id = await self._run_completion_loop(
             messages,
             restaurant_id,
+            session_id,
         )
 
         await self.conversation_repo.add_message(
@@ -172,6 +173,7 @@ class AIService:
         self,
         messages: list[dict[str, Any]],
         restaurant_id: uuid.UUID | None = None,
+        session_id: str | None = None,
     ) -> tuple[str, uuid.UUID | None]:
 
         reservation_id: uuid.UUID | None = None
@@ -217,6 +219,7 @@ class AIService:
                     tc.function.name,
                     tc.function.arguments,
                     restaurant_id,
+                    session_id,
                 )
 
                 if rid:
@@ -237,6 +240,7 @@ class AIService:
         name: str,
         raw_arguments: str,
         restaurant_id: uuid.UUID | None = None,
+        session_id: str | None = None,
     ) -> tuple[dict[str, Any], uuid.UUID | None]:
 
         args = json.loads(raw_arguments or "{}")
@@ -263,6 +267,8 @@ class AIService:
                     ),
                     special_requests=args.get("special_requests"),
                 )
+
+                payload.session_id = session_id
 
                 res = await self.reservation_service.create_reservation(payload)
 
