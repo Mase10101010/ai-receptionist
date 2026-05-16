@@ -25,15 +25,16 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 def get_reservation_service(db: DbSession) -> ReservationService:
-    repo = ReservationRepository(db)
-    return ReservationService(repo)
+    reservation_repo = ReservationRepository(db)
+    restaurant_repo = RestaurantRepository(db)
+    return ReservationService(reservation_repo, restaurant_repo)
 
 
 def get_ai_service(db: DbSession) -> AIService:
     conversation_repo = ConversationRepository(db)
     reservation_repo = ReservationRepository(db)
     restaurant_repo = RestaurantRepository(db)
-    reservation_service = ReservationService(reservation_repo)
+    reservation_service = ReservationService(reservation_repo, restaurant_repo)
     return AIService(
         conversation_repo,
         reservation_service,

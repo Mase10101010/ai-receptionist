@@ -9,14 +9,20 @@ from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.core.logging import get_logger
 from app.models.reservation import Reservation, ReservationStatus
 from app.repositories.reservation_repository import ReservationRepository
+from app.repositories.restaurant_repository import RestaurantRepository
 from app.schemas.reservation import ReservationCreate, ReservationUpdate
 
 logger = get_logger(__name__)
 
 
 class ReservationService:
-    def __init__(self, repository: ReservationRepository) -> None:
+    def __init__(
+        self, 
+        repository: ReservationRepository,
+        restaurant_repository: RestaurantRepository,
+    ) -> None:
         self.repository = repository
+        self.restaurant_repository = restaurant_repository
 
     async def create_reservation(self, payload: ReservationCreate) -> Reservation:
         self._validate_reservation_time(payload.reservation_time)
@@ -267,7 +273,15 @@ class ReservationService:
 
         seats_taken = sum(r.party_size for r in concurrent)
 
-        if seats_taken + party_size > settings.MAX_DAILY_CAPACITY:
+        max_capacity = settings.MAX_DAILY_CAPACITY
+
+        if restaurant_id is not None:
+            restaurant = await self.restaurant_repository.get_by_id(restaurant_id)
+
+            if restaurant is not None:
+                max_capacity = restaurant.number_of_tables * 4
+            
+        if seats_taken + party_size > max_capacity:
             raise ConflictError(
                 "Sorry, we don't have availability for that time. "
                 "Please try a different time slot."
