@@ -13,7 +13,8 @@ from app.core.security import decode_access_token
 from app.db.session import get_db
 from app.models.user import User
 from app.repositories.conversation_repository import ConversationRepository
-from app.repositories.reservation_repository import RestaurantRepository
+from app.repositories.reservation_repository import ReservationRepository
+from app.repositories.restaurant_repository import RestaurantRepository
 from app.repositories.user_repository import UserRepository
 from app.services.ai_service import AIService
 from app.services.reservation_service import ReservationService
