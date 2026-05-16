@@ -47,6 +47,7 @@ Reservation rules:
   • Always collect name, phone number, party size, and date/time before booking.
   • Interpret all guest-provided dates and times in the restaurant timezone.
   • Before confirming a slot, call check_availability.
+  • If a requested time is unavailable, call suggest_alternative_slots and offer nearby available times.
   • After successfully booking, share the reservation id and recap.
   • If no year is provided, assume current or next occurrence.
 
@@ -286,6 +287,19 @@ class AIService:
                     party_size=int(args["party_size"]),
                 )
                 return {"available": ok}, None
+            
+            if name == "suggest_alternative_slots":
+                slots = await self.reservation_service.suggest_alternative_slots(
+                    reservation_time=datetime.fromisoformat(
+                        args["reservation_time"].replace("Z", "+00:00")
+                    ),
+                    party_size=int(args["party_size"]),
+                    restaurant_id=restaurant_id,
+                )
+
+                return {
+                    "suggestions": [slot.isoformat() for slot in slots]
+                }, None
 
             if name == "create_reservation":
                 payload = ReservationCreate(

@@ -233,6 +233,42 @@ class ReservationService:
             return True
         except (ValidationError, ConflictError):
             return False
+        
+    async def suggest_alternative_slots(
+        self,
+        reservation_time: datetime,
+        prty_size: int,
+        restaurant_id: uuid.UUID | None = None,
+    ) -> list[datetime]:
+        """
+        Suggest nearby available solts around the requested reservation time.
+        We check ±30, ±60, ±90 minutes and return the first available options.
+        """
+        offsets = [-90, -60, -30, 30, 60, 90]
+        suggestions: list[datetime] = []
+
+        for minutes in offsets:
+            candidate = reservation_time + timedelta(minutes=minutes)
+
+            try:
+                self._validate_reservation_time(candidate)
+
+                await self._enforce_capacity(
+                    reservation_time=candidate,
+                    party_size=party_size,
+                    restaurant_id=restaurant_id,
+                )
+
+                suggestions.append(candidate)
+
+                if len(suggestions) >= 3:
+                    break
+
+            except (ValidationError, ConflictError):
+                continue
+
+
+        return suggestions
 
     def _validate_reservation_time(self, reservation_time: datetime) -> None:
         if reservation_time.tzinfo is None:
