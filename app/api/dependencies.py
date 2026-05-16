@@ -13,7 +13,7 @@ from app.core.security import decode_access_token
 from app.db.session import get_db
 from app.models.user import User
 from app.repositories.conversation_repository import ConversationRepository
-from app.repositories.reservation_repository import ReservationRepository
+from app.repositories.reservation_repository import RestaurantRepository
 from app.repositories.user_repository import UserRepository
 from app.services.ai_service import AIService
 from app.services.reservation_service import ReservationService
@@ -31,8 +31,13 @@ def get_reservation_service(db: DbSession) -> ReservationService:
 def get_ai_service(db: DbSession) -> AIService:
     conversation_repo = ConversationRepository(db)
     reservation_repo = ReservationRepository(db)
+    restaurant_repo = RestaurantRepository(db)
     reservation_service = ReservationService(reservation_repo)
-    return AIService(conversation_repo, reservation_service)
+    return AIService(
+        conversation_repo,
+        reservation_service,
+        restaurant_repo,
+    )
 
 
 def get_conversation_repository(db: DbSession) -> ConversationRepository:

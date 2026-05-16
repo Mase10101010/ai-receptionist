@@ -14,15 +14,21 @@ from app.core.exceptions import AIServiceError
 from app.core.logging import get_logger
 from app.models.conversation import MessageRole
 from app.repositories.conversation_repository import ConversationRepository
+from app.repositories.restaurant_repository import RestaurantRepository
 from app.schemas.reservation import ReservationCreate
 from app.services.reservation_service import ReservationService
 
 logger = get_logger(__name__)
 
 
-def _build_system_prompt() -> str:
+def _build_system_prompt(
+    restaurant_name: str,
+    timezone_name: str,
+    opening_hour: int,
+    closing_hour: int,
+) -> str:
     return f"""\
-You are the AI receptionist for {settings.RESTAURANT_NAME}, a fine-dining restaurant.
+You are the AI receptionist for {restaurant_name}, a fine-dining restaurant.
 
 Your responsibilities:
   • Greet guests warmly and professionally.
@@ -31,13 +37,15 @@ Your responsibilities:
   • Be concise but friendly. Confirm details before creating a reservation.
 
 Restaurant details:
-  • Name: {settings.RESTAURANT_NAME}
-  • Hours: {settings.OPENING_HOUR:02d}:00 – {settings.CLOSING_HOUR:02d}:00 daily
+  • Name: {restaurant_name}
+  • Timezone: {timezone_name}
+  • Hours: {opening_hour:02d}:00 - {closing_hour:02d}:00 daily
   • Maximum party size handled online: {settings.MAX_PARTY_SIZE}
   • For larger parties, ask the guest to call directly.
 
 Reservation rules:
   • Always collect name, phone number, party size, and date/time before booking.
+  • Interpret all guest-provided dates and times in the restaurant timezone.
   • Before confirming a slot, call check_availability.
   • After successfully booking, share the reservation id and recap.
   • If no year is provided, assume current or next occurrence.
@@ -112,9 +120,11 @@ class AIService:
         self,
         conversation_repo: ConversationRepository,
         reservation_service: ReservationService,
+        restaurant_repo: RestaurantRepository,
     ) -> None:
         self.conversation_repo = conversation_repo
         self.reservation_service = reservation_service
+        self.restaurant_repo = restaurant_repo
 
         self.client = AsyncOpenAI(
             api_key=settings.OPENAI_API_KEY,
@@ -146,8 +156,30 @@ class AIService:
             settings.CONVERSATION_HISTORY_LIMIT
         )
 
+        restaurant_name = settings.RESTAURANT_NAME
+        timezone_name = settings.RESTAURANT_TIMEZONE
+        opening_hour = settings.OPENING_HOUR
+        closing_hour = settings.CLOSING_HOUR
+
+        if restaurant_id is not None:
+            restaurant = await self.restaurant_repo.get_by_id(restaurant_id)
+
+            if restaurant is not None:
+                restaurant_name = restaurant.name
+                timezone_name = restaurant.timezone
+                opening_hour = restaurant.opening_hour
+                closing_hour = restaurant.closing_hour
+
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": _build_system_prompt()}
+            {
+                "role": "system",
+                "content": _build_system_prompt(
+                    restaurant_name,
+                    timezone_name,
+                    opening_hour,
+                    closing_hour,
+                ),
+            }
         ]
 
         for msg in memory:
