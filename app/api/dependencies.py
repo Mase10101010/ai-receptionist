@@ -42,7 +42,12 @@ def get_ai_service(db: DbSession) -> AIService:
     conversation_repo = ConversationRepository(db)
     reservation_repo = ReservationRepository(db)
     restaurant_repo = RestaurantRepository(db)
-    reservation_service = ReservationService(reservation_repo, restaurant_repo)
+    email_service = EmailService()
+    reservation_service = ReservationService(
+        reservation_repo,
+        restaurant_repo,
+        email_service,
+    )
     return AIService(
         conversation_repo,
         reservation_service,
