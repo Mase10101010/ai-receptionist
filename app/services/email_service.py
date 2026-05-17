@@ -32,23 +32,99 @@ class EmailService:
                     "to": [to_email],
                     "subject": f"{restaurant_name} Reservation Confirmation",
                     "html": f"""
-                    <div style="font-family:Arial;padding:24px;">
-                        <h2>Reservation confirmed</h2>
+                    <div style="
+                        background:#0b0b0b;
+                        padding:40px 20px;
+                        font-family:Arial,sans-serif;
+                        color:white;
+                    ">
 
-                        <p>Hello {customer_name},</p>
+                        <div style="
+                            max-width:600px;
+                            margin:0 auto;
+                            background:#111111;
+                            border:1px solid #222;
+                            border-radius:20px;
+                            overflow:hidden;
+                        ">
 
-                        <p>Your reservation has been confirmed.</p>
+                            <div style="
+                                padding:40px 20px;
+                                text-align:center;
+                                background:black;
+                            ">
+                                <img
+                                    src="https://alias-platform.vercel.app/alias-logo-dark.png"
+                                    alt="Alias"
+                                    style="max-width:260px;width:100%;"
+                                />
+                            </div>
 
-                        <ul>
-                            <li><strong>Restaurant:</strong> {restaurant_name}</li>
-                            <li><strong>Date & Time:</strong> {reservation_time}</li>
-                            <li><strong>Party Size:</strong> {party_size}</li>
-                            <li><strong>Reservation ID:</strong> {reservation_id}</li>
-                        </ul>
+                            <div style="padding:40px;">
 
-                        <p>Please keep your reservation ID for modifications or cancellations.</p>
+                                <h1 style="
+                                    margin-top:0;
+                                    font-size:28px;
+                                    color:white;
+                                ">
+                                    Reservation Confirmed
+                                </h1>
 
-                        <p>We look forward to welcoming you.</p>
+                                <p style="
+                                    color:#cccccc;
+                                    font-size:16px;
+                                    line-height:1.7;
+                                ">
+                                    Hello {customer_name},
+                                </p>
+
+                                <p style="
+                                    color:#cccccc;
+                                    font-size:16px;
+                                    line-height:1.7;
+                                ">
+                                    Your reservation at
+                                    <strong style="color:white;">
+                                        {restaurant_name}
+                                    </strong>
+                                    has been confirmed.
+                                </p>
+
+                                <div style="
+                                    margin:30px 0;
+                                    padding:24px;
+                                    background:#181818;
+                                    border-radius:16px;
+                                    border:1px solid #2a2a2a;
+                                ">
+
+                                    <p><strong>Reservation ID:</strong><br>{reservation_id}</p>
+
+                                    <p><strong>Date & Time:</strong><br>{reservation_time}</p>
+
+                                    <p><strong>Party Size:</strong><br>{party_size} guests</p>
+
+                                </div>
+
+                                <p style="
+                                    color:#aaaaaa;
+                                    font-size:14px;
+                                    line-height:1.7;
+                                ">
+                                    Please keep your reservation ID for future
+                                    modifications or cancellations.
+                                </p>
+
+                                <p style="
+                                    margin-top:40px;
+                                    color:#cccccc;
+                                    font-size:15px;
+                                ">
+                                    We look forward to welcoming you.
+                                </p>
+
+                            </div>
+                        </div>
                     </div>
                     """,
                 }
