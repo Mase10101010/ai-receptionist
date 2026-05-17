@@ -132,3 +132,88 @@ class EmailService:
 
         except Exception as e:
             logger.exception("Failed to send confirmation email: %s", e)
+
+    async def send_password_reset_email(
+        self,
+        to_email: str,
+        reset_link: str,
+    ) -> None:
+
+        if not settings.RESEND_API_KEY:
+            logger.warning("RESEND_API_KEY missing - skipping email")
+            return
+
+        try:
+            resend.Emails.send(
+                {
+                    "from": settings.EMAIL_FROM,
+                    "to": [to_email],
+                    "subject": "Reset your Alias password",
+                    "html": f"""
+                    <div style="
+                        background:#0b0b0b;
+                        padding:40px 20px;
+                        font-family:Arial,sans-serif;
+                        color:white;
+                    ">
+
+                        <div style="
+                            max-width:600px;
+                            margin:0 auto;
+                            background:#111111;
+                            border:1px solid #222;
+                            border-radius:20px;
+                            overflow:hidden;
+                        ">
+
+                            <div style="
+                                padding:40px 20px;
+                                text-align:center;
+                                background:black;
+                            ">
+                                <img
+                                    src="https://alias-platform.vercel.app/alias-logo-dark.png"
+                                    alt="Alias"
+                                    style="max-width:260px;width:100%;"
+                                />
+                            </div>
+
+                            <div style="padding:40px;">
+
+                                <h1 style="color:white;">
+                                    Reset your password
+                                </h1>
+
+                                <p style="color:#cccccc;line-height:1.7;">
+                                    We received a request to reset your password.
+                                </p>
+
+                                <div style="margin:40px 0;text-align:center;">
+                                    <a
+                                        href="{reset_link}"
+                                        style="
+                                            background:white;
+                                            color:black;
+                                            padding:14px 24px;
+                                            border-radius:12px;
+                                            text-decoration:none;
+                                            font-weight:bold;
+                                        "
+                                    >
+                                        Reset Password
+                                    </a>
+                                </div>
+
+                                <p style="color:#888888;font-size:14px;">
+                                    This link expires in 30 minutes.
+                                </p>
+
+                            </div>
+                        </div>
+                    </div>
+                    """,
+                }
+            )
+
+        except Exception as e:
+            logger.exception("Failed to send reset email: %s", e)

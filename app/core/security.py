@@ -58,3 +58,23 @@ def decode_access_token(token: str) -> dict[str, Any]:
         settings.JWT_SECRET_KEY,
         algorithms=[settings.JWT_ALGORITHM],
     )
+def create_password_reset_token(email: str) -> str:
+    return create_access_token(
+        subject=email,
+        expires_delta=timedelta(minutes=30),
+        extra_claims={"type": "password_reset"},
+    )
+
+
+def decode_password_reset_token(token: str) -> str:
+    payload = decode_access_token(token)
+
+    if payload.get("type") != "password_reset":
+        raise ValueError("Invalid reset token")
+
+    email = payload.get("sub")
+
+    if not email:
+        raise ValueError("Invalid reset token")
+
+    return str(email)
