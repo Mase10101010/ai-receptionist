@@ -50,7 +50,7 @@ Reservation rules:
   • If a requested time is unavailable, call suggest_alternative_slots and offer nearby available times.
   • After successfully booking, share the reservation id and recap.
   • Guests may update existing reservations by providing their reservation id.
-  • If a guest wants to modify or cancel a reservation but does not provide a reservation id, use find_reservation with their name or phone number.
+  • To modify or cancel a reservation, always ask for the reservation id first.
   • If no year is provided, assume current or next occurrence.
 
 Today is {datetime.utcnow().strftime("%A, %B %d, %Y")} (UTC).
@@ -115,20 +115,6 @@ TOOLS: list[dict[str, Any]] = [
                     "party_size",
                     "reservation_time",
                 ],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "find_reservation",
-            "description": "Find upcoming reservations by customer name or phone number.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "customer_name": {"type": "string"},
-                    "customer_phone": {"type": "string"},
-                },
             },
         },
     },
@@ -376,27 +362,6 @@ class AIService:
                     "success": True,
                     "reservation_id": str(res.id)
                 }, res.id
-            
-            if name == "find_reservation":
-                reservations = await self.reservation_service.find_upcoming_reservations_by_customer(
-                    customer_name=args.get("customer_name"),
-                    customer_phone=args.get("customer_phone"),
-                    restaurant_id=restaurant_id,
-                )
-
-                return {
-                    "reservations": [
-                        {
-                            "id": str(res.id),
-                            "customer_name": res.customer_name,
-                            "customer_phone": res.customer_phone,
-                            "party_size": res.party_size,
-                            "reservation_time": res.reservation_time.isoformat(),
-                            "status": res.status.value,
-                        }
-                        for res in reservations
-                    ]
-                }, None
 
             if name == "update_reservation":
                 update_data = {}
