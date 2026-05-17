@@ -15,7 +15,7 @@ from app.core.logging import get_logger
 from app.models.conversation import MessageRole
 from app.repositories.conversation_repository import ConversationRepository
 from app.repositories.restaurant_repository import RestaurantRepository
-from app.schemas.reservation import ReservationCreate
+from app.schemas.reservation import ReservationCreate, ReservationUpdate
 from app.services.reservation_service import ReservationService
 
 logger = get_logger(__name__)
@@ -49,6 +49,7 @@ Reservation rules:
   • Before confirming a slot, call check_availability.
   • If a requested time is unavailable, call suggest_alternative_slots and offer nearby available times.
   • After successfully booking, share the reservation id and recap.
+  • Guests may update existing reservations by providing their reservation id.
   • If no year is provided, assume current or next occurrence.
 
 Today is {datetime.utcnow().strftime("%A, %B %d, %Y")} (UTC).
@@ -61,6 +62,24 @@ TOOLS: list[dict[str, Any]] = [
         "function": {
             "name": "check_availability",
             "description": "Check availability for a time slot.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reservation_time": {
+                        "type": "string",
+                        "format": "date-time",
+                    },
+                    "party_size": {"type": "integer", "minimum": 1},
+                },
+                "required": ["reservation_time", "party_size"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "suggest_alternative_slots",
+            "description": "Suggest nearby available reservation times when the requested slot is unavailable.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -95,6 +114,26 @@ TOOLS: list[dict[str, Any]] = [
                     "party_size",
                     "reservation_time",
                 ],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_reservation",
+            "description": "Update an existing reservation's date/time, party size, customer details, or special requests.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reservation_id": {"type":"string"},
+                    "customer_name": {"type": "string"},
+                    "customer_phone": {"type": "string"},
+                    "customer_email": {"type": "string"},
+                    "party_size": {"type": "integer"},
+                    "reservation_time": {"type": "string"},
+                    "special_requests": {"type": "string"},
+                },
+                "required": ["reservation_id"],
             },
         },
     },
@@ -322,7 +361,30 @@ class AIService:
                     "success": True,
                     "reservation_id": str(res.id)
                 }, res.id
+            if name == "update_reservation":
+                reservation = await self.reservation_service.update_reservation(
+                    reservation_id=uuid.UUID(args["reservation_id"]),
+                    payload=ReservationUpdate(
+                        customer_name=args.get("customer_name"),
+                        customer_phone=args.get("customer_phone"),
+                        customer_email=args.get("customer_email"),
+                        party_size=args.get("party_size"),
+                        reservation_time=(
+                            datetime.fromisoformat(
+                                args["reservation-time"].replace("Z", "+00:00")
+                            )
+                            if args.get("reservation_time")
+                            else None
+                        ),
+                        special_requests=args.get("special_requests"),
+                    ),
+                )
 
+                return {
+                    "success": True,
+                    "reservation_id": str(reservation.id),
+                }, reservation.id
+            
             if name == "cancel_reservation":
                 res = await self.reservation_service.cancel_reservation(
                     uuid.UUID(args["reservation_id"])
