@@ -362,27 +362,39 @@ class AIService:
                     "reservation_id": str(res.id)
                 }, res.id
             if name == "update_reservation":
+                update_data = {}
+
+                if args.get("customer_name") is not None:
+                    update_data["customer_name"] = args["customer_name"]
+                
+                if args.get("customer_phone") is not None:
+                    update_data["customer_phone"] = args["customer-phone"]
+
+                if args.get("customer_email") is not None:
+                    update_data["customer_email"] = args["customer_email"]
+                
+                if args.get("party_size") is not None:
+                    update_data["party_size"] = int(args['party_size'])
+                
+                if args.get("reservation_time") is not None:
+                    update_data["reservation_time"] = datetime.fromisoformat(
+                        args["reservation_time"].replace("Z", "+00:00")
+                    )
+
+                if args.get("special_requests") is not None:
+                    update_data["special_requests"] = args["special_requests"]
+
                 reservation = await self.reservation_service.update_reservation(
                     reservation_id=uuid.UUID(args["reservation_id"]),
-                    payload=ReservationUpdate(
-                        customer_name=args.get("customer_name"),
-                        customer_phone=args.get("customer_phone"),
-                        customer_email=args.get("customer_email"),
-                        party_size=args.get("party_size"),
-                        reservation_time=(
-                            datetime.fromisoformat(
-                                args["reservation-time"].replace("Z", "+00:00")
-                            )
-                            if args.get("reservation_time")
-                            else None
-                        ),
-                        special_requests=args.get("special_requests"),
-                    ),
+                    payload=ReservationUpdate(**update_data),
                 )
 
                 return {
                     "success": True,
                     "reservation_id": str(reservation.id),
+                    "updated_time": reservation.reservation_time.isoformat(),
+                    "party_size": reservation.party_size,
+                    "status": reservation.status.value,
                 }, reservation.id
             
             if name == "cancel_reservation":
