@@ -17,7 +17,9 @@ from app.repositories.reservation_repository import ReservationRepository
 from app.repositories.restaurant_repository import RestaurantRepository
 from app.repositories.user_repository import UserRepository
 from app.services.ai_service import AIService
+from app.services.email_service import EmailService
 from app.services.reservation_service import ReservationService
+
 
 security = HTTPBearer()
 
@@ -27,7 +29,13 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 def get_reservation_service(db: DbSession) -> ReservationService:
     reservation_repo = ReservationRepository(db)
     restaurant_repo = RestaurantRepository(db)
-    return ReservationService(reservation_repo, restaurant_repo)
+    email_service = EmailService()
+
+    return ReservationService(
+        reservation_repo, 
+        restaurant_repo,
+        email_service,
+    )
 
 
 def get_ai_service(db: DbSession) -> AIService:

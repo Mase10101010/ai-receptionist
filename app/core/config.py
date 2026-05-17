@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     OPENAI_MAX_TOKENS: int = 800
     OPENAI_TIMEOUT_SECONDS: float = 30.0
 
+    # ── Email / Resend ─────────────────────────────────────
+    RESEND_API_KEY: str | None = None
+    EMAIL_FROM: str = "Alias Concierge <onboarding@resend.dev>"
+
     # ── Conversation memory ───────────────────────────────────────────────
     CONVERSATION_HISTORY_LIMIT: int = 20
 

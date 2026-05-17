@@ -11,6 +11,7 @@ from app.models.reservation import Reservation, ReservationStatus
 from app.repositories.reservation_repository import ReservationRepository
 from app.repositories.restaurant_repository import RestaurantRepository
 from app.schemas.reservation import ReservationCreate, ReservationUpdate
+from app.services.email_service import EmailService
 
 logger = get_logger(__name__)
 
@@ -20,9 +21,11 @@ class ReservationService:
         self, 
         repository: ReservationRepository,
         restaurant_repository: RestaurantRepository,
+        email_service: EmailService,
     ) -> None:
         self.repository = repository
         self.restaurant_repository = restaurant_repository
+        self.email_service = email_service
 
     async def create_reservation(self, payload: ReservationCreate) -> Reservation:
         self._validate_reservation_time(payload.reservation_time)
@@ -57,6 +60,28 @@ class ReservationService:
             created.party_size,
             created.reservation_time.isoformat(),
         )
+
+        if created.customer_email:
+                restaurant_name = settings.RESTAURANT_NAME
+
+                if created.restaurant_id:
+                    restaurant = await self.restaurant_repository.get_by_id(
+                        created.restaurant_id
+                    )
+
+                    if restaurant is not None:
+                        restaurant_name = restaurant.name
+
+                await self.email_service.send_reservation_confirmation(
+                    to_email=created.customer_email,
+                    restaurant_name=restaurant_name,
+                    customer_name=created.customer_name,
+                    reservation_id=str(created.id),
+                    reservation_time=created.reservation_time.strftime(
+                        "%B %d, %Y at %I:%M %p"
+                    ),
+                    party_size=created.party_size,
+                )
 
         return created
 
