@@ -4,7 +4,7 @@ Reservation repository.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.reservation import Reservation, ReservationStatus
@@ -123,6 +123,41 @@ class ReservationRepository:
         if restaurant_id is not None:
             stmt = stmt.where(Reservation.restaurant_id == restaurant_id)
 
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def find_upcoming_by_customer(
+            self,
+            customer_name: str | None = None,
+            customer_phone: str | None = None,
+            restaurant_id: uuid.UUID | None = None,
+            limit: int = 5,
+    ) -> list[Reservation]:
+        stmt = select(Reservation).where(
+            Reservation.reservation_time >= datetime.utcnow(),
+            Reservation.status.notin_(
+                (
+                    ReservationStatus.CANCELLED,
+                    ReservationStatus.NO_SHOW,
+                    ReservationStatus.COMPLETED,
+                )
+            ),
+        )
+
+        if restaurant_id is not None:
+            stmt = stmt.where(Reservation.restaurant_id == restaurant_id)
+
+        if customer_phone:
+            stmt = stmt.where(Reservation.customer_phone == customer_phone)
+        
+        if customer_name:
+            stmt = stmt.where(
+                func.lower(Reservation.customer_name).like(
+                    f"%{customer_name.lower()}%"
+                )
+            )
+        
+        stmt = stmt.order_by(Reservation.reservation_time.asc()).limit(limit)
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
 

@@ -118,6 +118,18 @@ class ReservationService:
             status=status,
         )
 
+    async def find_upcoming_reservations_by_customer(
+            self,
+            customer_name: str | None = None,
+            customer_phone: str | None = None,
+            restaurant_id: uuid.UUID | None = None,
+    ) -> list[Reservation]:
+        return await self.repository.find_upcoming_by_customer(
+            customer_name=customer_name,
+            customer_phone=customer_phone,
+            restaurant_id=restaurant_id,
+        )
+
     async def update_reservation(
         self,
         reservation_id: uuid.UUID,
