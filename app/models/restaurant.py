@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, DateTime, Integer, String
+from sqlalchemy import ForeignKey, DateTime, Integer, String, JSON
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -72,6 +72,21 @@ class Restaurant(Base):
         Integer,
         default=20,
         nullable=False,
+    )
+
+    table_setup: Mapped[list | None] = mapped_column(
+        JSON,
+        nullable=True,
+    )
+
+    weekly_schedule: Mapped[list | None] = mapped_column(
+        JSON,
+        nullable=True,
+    )
+
+    special_closures: Mapped[list | None] = mapped_column(
+        JSON,
+        nullable=True,
     )
 
     concierge_tone: Mapped[str] = mapped_column(
