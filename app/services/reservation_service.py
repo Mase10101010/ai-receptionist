@@ -28,7 +28,10 @@ class ReservationService:
         self.email_service = email_service
 
     async def create_reservation(self, payload: ReservationCreate) -> Reservation:
-        self._validate_reservation_time(payload.reservation_time)
+        await self._validate_reservation_time(
+            payload.reservation_time,
+            payload.restaurant_id,
+        )
 
         await self._enforce_capacity(
             reservation_time=payload.reservation_time,
@@ -171,7 +174,10 @@ class ReservationService:
         new_party = updates.get("party_size", reservation.party_size)
 
         if "reservation_time" in updates:
-            self._validate_reservation_time(new_time)
+            await self._validate_reservation_time(
+                new_time,
+                reservation.restaurant_id,
+            )
 
         if "reservation_time" in updates or "party_size" in updates:
             await self._enforce_capacity(
@@ -211,7 +217,10 @@ class ReservationService:
         new_party = updates.get("party_size", reservation.party_size)
 
         if "reservation_time" in updates:
-            self._validate_reservation_time(new_time)
+            await self._validate_reservation_time(
+                new_time,
+                reservation.restaurant_id,
+            )
 
         if "reservation_time" in updates or "party_size" in updates:
             await self._enforce_capacity(
@@ -259,7 +268,10 @@ class ReservationService:
         restaurant_id: uuid.UUID | None = None,
     ) -> bool:
         try:
-            self._validate_reservation_time(reservation_time)
+            await self._validate_reservation_time(
+                reservation_time,
+                restaurant_id,
+            )
 
             await self._enforce_capacity(
                 reservation_time=reservation_time,
@@ -288,7 +300,10 @@ class ReservationService:
             candidate = reservation_time + timedelta(minutes=minutes)
 
             try:
-                self._validate_reservation_time(candidate)
+                await self._validate_reservation_time(
+                    candidate,
+                    restaurant_id,
+                )
 
                 await self._enforce_capacity(
                     reservation_time=candidate,
@@ -307,7 +322,11 @@ class ReservationService:
 
         return suggestions
 
-    def _validate_reservation_time(self, reservation_time: datetime) -> None:
+    async def _validate_reservation_time(
+        self, 
+        reservation_time: datetime,
+        restaurant_id: uuid.UUID | None = None,
+        ) -> None:
         if reservation_time.tzinfo is None:
             reservation_time = reservation_time.replace(tzinfo=timezone.utc)
 
@@ -316,12 +335,46 @@ class ReservationService:
         if reservation_time <= now:
             raise ValidationError("Reservation time must be in the future")
 
+        opening_hour = settings.OPENING_HOUR
+        closing_hour = settings.CLOSING_HOUR
+
+        if restaurant_id is not None:
+            restaurant = await self.restaurant_repository.get_by_id(restaurant_id)
+
+            if restaurant is not None:
+                opening_hour = restaurant.opening_hour
+                closing_hour = restaurant.closing_hour
+
+                reservation_date = reservation_time.date().isoformat()
+
+                for closure in restaurant.special_closures or []:
+                    if closure.get("date") == reservation_date:
+                        reason = closure.get("reason") or "special closure"
+                        raise ValidationError(
+                            f"The restaurant is closed on this date due to {reason}."
+                        )
+
+                day_name = reservation_time.strftime("%a")
+
+                for schedule in restaurant.weekly_schedule or []:
+                    if schedule.get("day") == day_name:
+                        is_open = schedule.get("is_open", True)
+
+                        if not is_open:
+                            raise ValidationError(
+                                "The restaurant is closed on this day."
+                            )
+
+                        opening_hour = int(schedule.get("opening_hour", opening_hour))
+                        closing_hour = int(schedule.get("closing_hour", closing_hour))
+                        break
+
         hour = reservation_time.hour
 
-        if hour < settings.OPENING_HOUR or hour >= settings.CLOSING_HOUR:
+        if hour < opening_hour or hour >= closing_hour:
             raise ValidationError(
                 f"Reservations are only accepted between "
-                f"{settings.OPENING_HOUR:02d}:00 and {settings.CLOSING_HOUR:02d}:00"
+                f"{opening_hour:02d}:00 and {closing_hour:02d}:00"
             )
 
     async def _enforce_capacity(
