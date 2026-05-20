@@ -113,6 +113,7 @@ TOOLS: list[dict[str, Any]] = [
                 "required": [
                     "customer_name",
                     "customer_phone",
+                    "customer_email",
                     "party_size",
                     "reservation_time",
                 ],
