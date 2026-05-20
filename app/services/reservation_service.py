@@ -3,6 +3,7 @@ Reservation service.
 """
 import uuid
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from app.core.config import settings
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
@@ -75,12 +76,27 @@ class ReservationService:
                     if restaurant is not None:
                         restaurant_name = restaurant.name
 
+                restaurant_timezone = "UTC"
+
+                if created.restaurant_id:
+                    restaurant = await self.restaurant_repository.get_by_id(
+                        created.restaurant_id
+                    )
+
+                    if restaurant is not None:
+                        restaurant_name = restaurant.name
+                        restaurant_timezone = restaurant.timezone
+
+                localized_time = created.reservation_time.astimezone(
+                    ZoneInfo(restaurant_timezone)
+                )
+
                 await self.email_service.send_reservation_confirmation(
                     to_email=created.customer_email,
                     restaurant_name=restaurant_name,
                     customer_name=created.customer_name,
                     reservation_id=str(created.id),
-                    reservation_time=created.reservation_time.strftime(
+                    reservation_time=localized_time.strftime(
                         "%B %d, %Y at %I:%M %p"
                     ),
                     party_size=created.party_size,
