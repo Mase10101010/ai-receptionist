@@ -325,6 +325,7 @@ class AIService:
                         args["reservation_time"].replace("Z", "+00:00")
                     ),
                     party_size=int(args["party_size"]),
+                    restaurant_id=restaurant_id
                 )
                 return {"available": ok}, None
             

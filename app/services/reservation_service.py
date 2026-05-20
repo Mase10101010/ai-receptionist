@@ -286,7 +286,7 @@ class ReservationService:
     async def suggest_alternative_slots(
         self,
         reservation_time: datetime,
-        prty_size: int,
+        party_size: int,
         restaurant_id: uuid.UUID | None = None,
     ) -> list[datetime]:
         """
