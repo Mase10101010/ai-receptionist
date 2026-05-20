@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -14,6 +15,9 @@ class RestaurantBase(BaseModel):
     opening_hour: int = Field(default=11, ge=0, le=23)
     closing_hour: int = Field(default=22, ge=0, le=23)
     number_of_tables: int = Field(default=20, ge=1)
+    table_setup: list[dict[str, Any]] | None = None
+    weekly_schedule: list[dict[str, Any]] | None = None
+    special_closures: list[dict[str, Any]] | None = None
     concierge_tone: str = Field(default="Elegant", max_length=100)
 
 
@@ -31,6 +35,9 @@ class RestaurantUpdate(BaseModel):
     opening_hour: int | None = Field(default=None, ge=0, le=23)
     closing_hour: int | None = Field(default=None, ge=0, le=23)
     number_of_tables: int | None = Field(default=None, ge=1)
+    table_setup: list[dict[str, Any]] | None = None
+    weekly_schedule: list[dict[str, Any]] | None = None
+    special_closures: list[dict[str, Any]] | None = None
     concierge_tone: str | None = Field(default=None, max_length=100)
     subscription_status: str | None = Field(default=None, max_length=50)
 
