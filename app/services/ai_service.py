@@ -52,7 +52,9 @@ Communication rules:
   • Use localized date/time phrasing depending on the language.
 
 Reservation rules:
-  • Always collect name, phone number, email, party size, and date/time before booking.
+  • Always collect first name, last name, phone number, email, party size, and date/time before booking.
+  • The guest must provide both first name and last name. If they provide only one name, politely ask for the missing part before booking.
+  • Before creating the reservation, ask whether the guest has any special requests, allergies, seating preferences, or notes. If they have none, continue with an empty special_requests value.
   • Email is required because guests receive their reservation confirmation by email.
   • Interpret all guest-provided dates and times in the restaurant timezone.
   • Before confirming a slot, call check_availability.
@@ -111,12 +113,17 @@ TOOLS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "customer_name": {"type": "string"},
+                    "customer_name": {
+                        "type": "string",
+                        "description": "Guest full name including both first name and last name.",
+                    },
                     "customer_phone": {"type": "string"},
                     "customer_email": {"type": "string"},
                     "party_size": {"type": "integer"},
                     "reservation_time": {"type": "string"},
-                    "special_requests": {"type": "string"},
+                    "special_requests": {
+                        "type": "string",
+                        "description": "Optional guest notes such as allergies, dietary restrictions, seating preferences, celebrations or other requests. Use an empty string if the guest has no special requests."},
                 },
                 "required": [
                     "customer_name",
