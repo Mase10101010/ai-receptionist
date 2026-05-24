@@ -215,5 +215,10 @@ class EmailService:
                 }
             )
 
+            logger.info(
+                "Sending reservation confirmation email to %s",
+                to_email,
+            )
+
         except Exception as e:
             logger.exception("Failed to send reset email: %s", e)

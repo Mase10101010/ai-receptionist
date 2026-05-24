@@ -378,7 +378,13 @@ class AIService:
 
                 return {
                     "success": True,
-                    "reservation_id": str(res.id)
+                    "reservation_id": str(res.id),
+                    "customer_name": res.customer_name,
+                    "customer_email": res.customer_email,
+                    "customer_phone": res.customer_phone,
+                    "party_size": res.party_size,
+                    "reservation_time": res.reservation_time,
+                    "special_requests": res.special_requests,
                 }, res.id
 
             if name == "update_reservation":
@@ -388,7 +394,7 @@ class AIService:
                     update_data["customer_name"] = args["customer_name"]
                 
                 if args.get("customer_phone") is not None:
-                    update_data["customer_phone"] = args["customer-phone"]
+                    update_data["customer_phone"] = args["customer_phone"]
 
                 if args.get("customer_email") is not None:
                     update_data["customer_email"] = args["customer_email"]
