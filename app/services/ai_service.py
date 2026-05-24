@@ -383,7 +383,7 @@ class AIService:
                     "customer_email": res.customer_email,
                     "customer_phone": res.customer_phone,
                     "party_size": res.party_size,
-                    "reservation_time": res.reservation_time,
+                    "reservation_time": res.reservation_time.isoformat(),
                     "special_requests": res.special_requests,
                 }, res.id
 

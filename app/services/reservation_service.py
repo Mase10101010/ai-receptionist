@@ -66,16 +66,8 @@ class ReservationService:
         )
 
         if created.customer_email:
+            try:
                 restaurant_name = settings.RESTAURANT_NAME
-
-                if created.restaurant_id:
-                    restaurant = await self.restaurant_repository.get_by_id(
-                        created.restaurant_id
-                    )
-
-                    if restaurant is not None:
-                        restaurant_name = restaurant.name
-
                 restaurant_timezone = "UTC"
 
                 if created.restaurant_id:
@@ -85,11 +77,20 @@ class ReservationService:
 
                     if restaurant is not None:
                         restaurant_name = restaurant.name
-                        restaurant_timezone = restaurant.timezone
+                        restaurant_timezone = restaurant.timezone or "UTC"
 
-                localized_time = created.reservation_time.astimezone(
-                    ZoneInfo(restaurant_timezone)
-                )
+                try:
+                    localized_time = created.reservation_time.astimezone(
+                        ZoneInfo(restaurant_timezone)
+                    )
+                except Exception:
+                    logger.exception(
+                        "Invalid restaurant timezone: %s. Falling back to UTC.",
+                        restaurant_timezone,
+                    )
+                    localized_time = created.reservation_time.astimezone(
+                        ZoneInfo("UTC")
+                    )
 
                 await self.email_service.send_reservation_confirmation(
                     to_email=created.customer_email,
@@ -100,6 +101,10 @@ class ReservationService:
                         "%B %d, %Y at %I:%M %p"
                     ),
                     party_size=created.party_size,
+                )
+            except Exception:
+                logger.exception(
+                    "Reservation confirmation email failed, but reservation was created."
                 )
 
         return created
