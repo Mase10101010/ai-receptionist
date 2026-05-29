@@ -114,11 +114,33 @@ class EmailService:
         reservation_id: str,
         reservation_time: str,
         party_size: int,
+        language: str = "en",
     ) -> None:
 
         if not settings.RESEND_API_KEY:
             logger.warning("RESEND_API_KEY missing - skipping email")
             return
+        
+        content = {
+            "en": {
+                "subject": f"{restaurant_name} Reservation Confirmation",
+                "title": "Reservation Confirmed",
+                "greeting": f"Hello {customer_name},",
+                "body": f"Your reservation at {restaurant_name} has been confirmed.",
+                "party_label": "Party Size",
+                "footer": "We look forward to welcoming you.",
+            },
+            "it": {
+                "subject": f"Conferma prenotazione {restaurant_name}",
+                "title": "Prenotazione confermata",
+                "greeting": f"Ciao {customer_name},",
+                "body": f"La tua prenotazione presso {restaurant_name} è stata confermata.",
+                "party_label": "Numero ospiti",
+                "footer": "Non vediamo l'ora di accoglierti.",
+            },
+        }
+
+        text = content.get(language,content["en"])
 
         try:
             resend.Emails.send(

@@ -69,6 +69,7 @@ class ReservationService:
             try:
                 restaurant_name = settings.RESTAURANT_NAME
                 restaurant_timezone = "UTC"
+                restaurant_language = "en"
 
                 if created.restaurant_id:
                     restaurant = await self.restaurant_repository.get_by_id(
@@ -78,6 +79,7 @@ class ReservationService:
                     if restaurant is not None:
                         restaurant_name = restaurant.name
                         restaurant_timezone = restaurant.timezone or "UTC"
+                        restaurant_language = restaurant.preferred_language or "en"
 
                 try:
                     localized_time = created.reservation_time.astimezone(
@@ -101,6 +103,7 @@ class ReservationService:
                         "%B %d, %Y at %I:%M %p"
                     ),
                     party_size=created.party_size,
+                    language=restaurant_language,
                 )
             except Exception:
                 logger.exception(
