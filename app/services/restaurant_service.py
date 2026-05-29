@@ -5,11 +5,17 @@ from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.models.restaurant import Restaurant
 from app.repositories.restaurant_repository import RestaurantRepository
 from app.schemas.restaurant import RestaurantCreate, RestaurantUpdate
+from app.services.email_service import EmailService
 
 
 class RestaurantService:
-    def __init__(self, repository: RestaurantRepository) -> None:
+    def __init__(
+        self, 
+        repository: RestaurantRepository,
+        email_service: EmailService,
+    ) -> None:
         self.repository = repository
+        self.email_service = email_service
 
     async def create_restaurant(
         self,
@@ -46,7 +52,16 @@ class RestaurantService:
             updated_at=now,
         )
 
-        return await self.repository.create(restaurant)
+        restaurant = await self.repository.create(restaurant)
+
+        if restaurant.email:
+            await self.email_service.send_restaurant-welcome-email(
+                to_email=restaurant.email,
+                restaurant_name=restaurant.name,
+                language=restaurant.preferred_language,
+            )
+        return restaurant
+
 
     async def get_restaurant(
         self,

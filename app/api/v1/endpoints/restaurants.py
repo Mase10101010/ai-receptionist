@@ -13,6 +13,7 @@ from app.schemas.restaurant import (
     RestaurantUpdate,
 )
 from app.services.restaurant_service import RestaurantService
+from app.services.email_service import EmailService
 
 router = APIRouter(prefix="/restaurants", tags=["restaurants"])
 
@@ -21,7 +22,10 @@ def get_restaurant_service(
     db: AsyncSession = Depends(get_db),
 ) -> RestaurantService:
     repository = RestaurantRepository(db)
-    return RestaurantService(repository)
+    return RestaurantService(
+        repository=repository,
+        email_service=EmailService(),
+    )
 
 
 @router.post(
