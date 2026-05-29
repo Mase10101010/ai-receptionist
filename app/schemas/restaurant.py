@@ -11,6 +11,7 @@ class RestaurantBase(BaseModel):
     business_type: str = Field(default="restaurant", max_length=100)
     phone: str | None = Field(default=None, max_length=50)
     email: EmailStr | None = None
+    preferred_language: str = Field(default="en", max_length=10)
     timezone: str = Field(default="Australia/Perth", max_length=100)
     opening_hour: int = Field(default=11, ge=0, le=23)
     closing_hour: int = Field(default=22, ge=0, le=23)
@@ -31,6 +32,7 @@ class RestaurantUpdate(BaseModel):
     business_type: str | None = Field(default=None, max_length=100)
     phone: str | None = Field(default=None, max_length=50)
     email: EmailStr | None = None
+    preferred_language: str | None + Field(default=None, max_length=10)
     timezone: str | None = Field(default=None, max_length=100)
     opening_hour: int | None = Field(default=None, ge=0, le=23)
     closing_hour: int | None = Field(default=None, ge=0, le=23)

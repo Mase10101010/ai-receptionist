@@ -32,6 +32,7 @@ class RestaurantService:
             business_type=payload.business_type,
             phone=payload.phone,
             email=str(payload.email) if payload.email else None,
+            preferred_language=payload.preferred_language,
             timezone=payload.timezone,
             opening_hour=payload.opening_hour,
             closing_hour=payload.closing_hour,

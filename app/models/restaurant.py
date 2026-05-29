@@ -50,6 +50,12 @@ class Restaurant(Base):
         nullable=True,
     )
 
+    preferred_language: Mapped[str] = mapped_column(
+        String(10),
+        default="en",
+        nullable=False,
+    )
+
     timezone: Mapped[str] = mapped_column(
         String(100),
         default="Australia/Perth",
