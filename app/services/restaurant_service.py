@@ -55,11 +55,14 @@ class RestaurantService:
         restaurant = await self.repository.create(restaurant)
 
         if restaurant.email:
-            await self.email_service.send_restaurant-welcome-email(
-                to_email=restaurant.email,
-                restaurant_name=restaurant.name,
-                language=restaurant.preferred_language,
-            )
+            try:
+                await self.email_service.send_restaurant_welcome_email(
+                    to_email=restaurant.email,
+                    restaurant_name=restaurant.name,
+                    language=restaurant.preferred_language,
+                )
+            except Exception:
+                pass
         return restaurant
 
 
