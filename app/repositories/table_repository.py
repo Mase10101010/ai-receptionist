@@ -58,6 +58,23 @@ class TableRepository:
 
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
+    
+    async def list_capacity_candidates(
+        self,
+        restaurant_id: uuid.UUID,
+        party_size: int,
+    ) -> list[Table]:
+        result = await self.db.execute(
+            select(Table)
+            .where(
+                Table.restaurant_id == restaurant_id,
+                Table.is_active == True,
+                Table.seats >= party_size,
+            )
+            .order_by(Table.seats.asc(), Table.table_number.asc())
+        )
+
+        return list(result.scalars().all())
 
     async def update(
         self,

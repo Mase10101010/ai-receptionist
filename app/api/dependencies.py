@@ -15,6 +15,7 @@ from app.models.user import User
 from app.repositories.conversation_repository import ConversationRepository
 from app.repositories.reservation_repository import ReservationRepository
 from app.repositories.restaurant_repository import RestaurantRepository
+from app.repositories.table_repository import TableRepository       
 from app.repositories.user_repository import UserRepository
 from app.services.ai_service import AIService
 from app.services.email_service import EmailService
@@ -29,11 +30,13 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 def get_reservation_service(db: DbSession) -> ReservationService:
     reservation_repo = ReservationRepository(db)
     restaurant_repo = RestaurantRepository(db)
+    table_repo = TableRepository(db)
     email_service = EmailService()
 
     return ReservationService(
         reservation_repo, 
         restaurant_repo,
+        table_repo,
         email_service,
     )
 
@@ -42,10 +45,12 @@ def get_ai_service(db: DbSession) -> AIService:
     conversation_repo = ConversationRepository(db)
     reservation_repo = ReservationRepository(db)
     restaurant_repo = RestaurantRepository(db)
+    table_repo = TableRepository(db)
     email_service = EmailService()
     reservation_service = ReservationService(
         reservation_repo,
         restaurant_repo,
+        table_repo,
         email_service,
     )
     return AIService(

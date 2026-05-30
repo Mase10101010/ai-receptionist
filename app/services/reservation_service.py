@@ -11,6 +11,7 @@ from app.core.logging import get_logger
 from app.models.reservation import Reservation, ReservationStatus
 from app.repositories.reservation_repository import ReservationRepository
 from app.repositories.restaurant_repository import RestaurantRepository
+from app.repositories.table_repository import TableRepository
 from app.schemas.reservation import ReservationCreate, ReservationUpdate
 from app.services.email_service import EmailService
 
@@ -22,10 +23,12 @@ class ReservationService:
         self, 
         repository: ReservationRepository,
         restaurant_repository: RestaurantRepository,
+        table_repository: TableRepository,
         email_service: EmailService,
     ) -> None:
         self.repository = repository
         self.restaurant_repository = restaurant_repository
+        self.table_repository = table_repository
         self.email_service = email_service
 
     async def create_reservation(self, payload: ReservationCreate) -> Reservation:
@@ -40,8 +43,15 @@ class ReservationService:
             restaurant_id=payload.restaurant_id,
         )
 
+        table_id = await self._assign_available_table(
+            reservation_time=payload.reservation_time,
+            party_size=payload.party_size,
+            restaurant_id=payload.restaurant_id,
+        )
+
         reservation = Reservation(
             restaurant_id=payload.restaurant_id,
+            table_id=table_id,
             customer_name=payload.customer_name,
             customer_phone=payload.customer_phone,
             customer_email=str(payload.customer_email)
@@ -345,6 +355,48 @@ class ReservationService:
 
 
         return suggestions
+    
+    async def _assign_available_table(
+        self,
+        reservation_time: datetime,
+        party_size: int,
+        restaurant_id: uuid.UUID | None = None,
+    ) -> uuid.UUID | None:
+        if restaurant_id is None:
+            return None
+
+        candidates = await self.table_repository.list_capacity_candidates(
+            restaurant_id=restaurant_id,
+            party_size=party_size,
+        )
+
+        if not candidates:
+            return None
+
+        half = timedelta(minutes=settings.RESERVATION_DURATION_MINUTES)
+        window_start = reservation_time - half
+        window_end = reservation_time + half
+
+        concurrent = await self.repository.list_in_window(
+            start=window_start,
+            end=window_end,
+            restaurant_id=restaurant_id,
+        )
+
+        occupied_table_ids = {
+            reservation.table_id
+            for reservation in concurrent
+            if reservation.table_id is not None
+        }
+
+        for table in candidates:
+            if table.id not in occupied_table_ids:
+                return table.id
+
+        raise ConflictError(
+            "Sorry, we don't have an available table for that time. "
+            "Please try a different time slot."
+        )
 
     async def _validate_reservation_time(
         self, 
