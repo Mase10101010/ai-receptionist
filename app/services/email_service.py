@@ -123,11 +123,15 @@ class EmailService:
         
         content = {
             "en": {
-                "subject": f"{restaurant_name} Reservation Confirmation",
+                "subject": text["subject"],
                 "title": "Reservation Confirmed",
                 "greeting": f"Hello {customer_name},",
                 "body": f"Your reservation at {restaurant_name} has been confirmed.",
                 "party_label": "Party Size",
+                "guest_word": "guests",
+                "date_label": "Date & Time",
+                "reservation_id_label": "Reservation ID",
+                "note": "Please keep your reservation ID for future modifications or cancellations.",
                 "footer": "We look forward to welcoming you.",
             },
             "it": {
@@ -136,18 +140,59 @@ class EmailService:
                 "greeting": f"Ciao {customer_name},",
                 "body": f"La tua prenotazione presso {restaurant_name} è stata confermata.",
                 "party_label": "Numero ospiti",
+                "guest_word": "ospiti",
+                "date_label": "Data e ora",
+                "reservation_id_label": "ID prenotazione",
+                "note": "Conserva il tuo ID prenotazione per eventuali modifiche o cancellazioni.",
                 "footer": "Non vediamo l'ora di accoglierti.",
+            },
+            "es": {
+                "subject": f"Confirmación de reserva {restaurant_name}",
+                "title": "Reserva confirmada",
+                "greeting": f"Hola {customer_name},",
+                "body": f"Tu reserva en {restaurant_name} ha sido confirmada.",
+                "party_label": "Número de personas",
+                "guest_word": "personas",
+                "date_label": "Fecha y hora",
+                "reservation_id_label": "ID de reserva",
+                "note": "Conserva tu ID de reserva para futuras modificaciones o cancelaciones.",
+                "footer": "Esperamos darte la bienvenida.",
+            },
+            "fr": {
+                "subject": f"Confirmation de réservation {restaurant_name}",
+                "title": "Réservation confirmée",
+                "greeting": f"Bonjour {customer_name},",
+                "body": f"Votre réservation chez {restaurant_name} a été confirmée.",
+                "party_label": "Nombre de personnes",
+                "guest_word": "personnes",
+                "date_label": "Date et heure",
+                "reservation_id_label": "ID de réservation",
+                "note": "Veuillez conserver votre ID de réservation pour toute modification ou annulation.",
+                "footer": "Nous avons hâte de vous accueillir.",
+            },
+            "de": {
+                "subject": f"Reservierungsbestätigung {restaurant_name}",
+                "title": "Reservierung bestätigt",
+                "greeting": f"Hallo {customer_name},",
+                "body": f"Ihre Reservierung bei {restaurant_name} wurde bestätigt.",
+                "party_label": "Anzahl Gäste",
+                "guest_word": "Gäste",
+                "date_label": "Datum & Uhrzeit",
+                "reservation_id_label": "Reservierungs-ID",
+                "note": "Bitte bewahren Sie Ihre Reservierungs-ID für zukünftige Änderungen oder Stornierungen auf.",
+                "footer": "Wir freuen uns auf Ihren Besuch.",
             },
         }
 
-        text = content.get(language,content["en"])
+        language = (language or "en").lower()
+        text = content.get(language, content["en"])
 
         try:
             resend.Emails.send(
                 {
                     "from": settings.EMAIL_FROM,
                     "to": [to_email],
-                    "subject": f"{restaurant_name} Reservation Confirmation",
+                    "subject": text["subject"],
                     "html": f"""
                     <div style="
                         background:#0b0b0b;
@@ -184,7 +229,7 @@ class EmailService:
                                     font-size:28px;
                                     color:white;
                                 ">
-                                    Reservation Confirmed
+                                    {text["title"]}
                                 </h1>
 
                                 <p style="
@@ -192,7 +237,7 @@ class EmailService:
                                     font-size:16px;
                                     line-height:1.7;
                                 ">
-                                    Hello {customer_name},
+                                    {text["greeting"]}
                                 </p>
 
                                 <p style="
@@ -200,11 +245,7 @@ class EmailService:
                                     font-size:16px;
                                     line-height:1.7;
                                 ">
-                                    Your reservation at
-                                    <strong style="color:white;">
-                                        {restaurant_name}
-                                    </strong>
-                                    has been confirmed.
+                                    {text["body"]}
                                 </p>
 
                                 <div style="
@@ -215,11 +256,11 @@ class EmailService:
                                     border:1px solid #2a2a2a;
                                 ">
 
-                                    <p><strong>Reservation ID:</strong><br>{reservation_id}</p>
+                                    <p><strong>{text["reservation_id_label"]}:</strong><br>{reservation_id}</p>
 
-                                    <p><strong>Date & Time:</strong><br>{reservation_time}</p>
+                                    <p><strong>{text["date_label"]}:</strong><br>{reservation_time}</p>
 
-                                    <p><strong>Party Size:</strong><br>{party_size} guests</p>
+                                    <p><strong>{text["party_label"]}:</strong><br>{party_size} {text["guest_word"]}</p>
 
                                 </div>
 
@@ -228,8 +269,7 @@ class EmailService:
                                     font-size:14px;
                                     line-height:1.7;
                                 ">
-                                    Please keep your reservation ID for future
-                                    modifications or cancellations.
+                                    {text["note"]}
                                 </p>
 
                                 <p style="
@@ -237,7 +277,7 @@ class EmailService:
                                     color:#cccccc;
                                     font-size:15px;
                                 ">
-                                    We look forward to welcoming you.
+                                    {text["footer"]}
                                 </p>
 
                             </div>
