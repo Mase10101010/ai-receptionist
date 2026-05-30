@@ -39,13 +39,7 @@ class AuthService:
 
         created = await self.repository.create(user)
 
-        verification_token = create_email_verification_token(created.email)
-        verification_link = f"https://www.aliasconcierge.com/verify-email?token={verification_token}"
-
-        await self.email_service.send_email_verification_email(
-            to_email=created.email,
-            verification_link=verification_link,
-        )
+        
 
         token = create_access_token(
             subject=str(created.id),
@@ -73,6 +67,18 @@ class AuthService:
 
         return user, token
     
+    async def send_verification_email(self, user: User) -> None:
+        if user.is_email_verified:
+            return
+
+        verification_token = create_email_verification_token(user.email)
+        verification_link = f"https://www.aliasconcierge.com/verify-email?token={verification_token}"
+
+        await self.email_service.send_email_verification_email(
+            to_email=user.email,
+            verification_link=verification_link,
+        )
+    
     async def request_password_reset(self, email: str) -> None:
         user = await self.repository.get_by_email(email.lower())
 
@@ -80,7 +86,7 @@ class AuthService:
             return
 
         token = create_password_reset_token(user.email)
-        reset_link = f"https://alias-platform.vercel.app/reset-password?token={token}"
+        reset_link = f"https://www.aliasconcierge.com/reset-password?token={token}"
 
         await self.email_service.send_password_reset_email(
             to_email=user.email,

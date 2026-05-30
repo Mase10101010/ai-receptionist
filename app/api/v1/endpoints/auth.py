@@ -106,6 +106,20 @@ async def verify_email(
         message="Email verified successfully.",
     )
 
+@router.post(
+    "/send-verification-email",
+    response_model=MessageResponse,
+)
+async def send_verification_email(
+    current_user: CurrentUserDep,
+    service: AuthService = Depends(get_auth_service),
+) -> MessageResponse:
+    await service.send_verification_email(current_user)
+
+    return MessageResponse(
+        message="Verification email sent.",
+    )
+
 @router.get("/me", response_model=UserResponse)
 async def me(
     current_user: CurrentUserDep,
