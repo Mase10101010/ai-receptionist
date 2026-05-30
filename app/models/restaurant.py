@@ -130,3 +130,9 @@ class Restaurant(Base):
         back_populates="restaurant",
         cascade="all, delete-orphan",
     )
+
+    tables = relationship(
+        "Table",
+        back_populates="restaurant",
+        cascade="all, delete-orphan",
+    )
