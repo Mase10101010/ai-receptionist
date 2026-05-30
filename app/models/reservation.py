@@ -45,6 +45,13 @@ class Reservation(Base):
         index=True,
     )
 
+    table_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tables.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     
     # Customer info — minimal PII, only what's needed to honor the reservation.
     customer_name: Mapped[str] = mapped_column(String(120), nullable=False)
@@ -84,6 +91,10 @@ class Reservation(Base):
     restaurant = relationship(
         "Restaurant",
         back_populates="reservations",
+    )
+
+    table = relationship(
+        "Table",
     )
 
     __table_args__ = (

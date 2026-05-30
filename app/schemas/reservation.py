@@ -16,6 +16,7 @@ from app.models.reservation import ReservationStatus
 
 class ReservationBase(BaseModel):
     restaurant_id: uuid.UUID | None = None
+    table_id: uuid.UUID | None = None
     """Fields shared between create/update/response schemas."""
     customer_name: str = Field(..., min_length=1, max_length=120)
     customer_phone: str = Field(..., min_length=7, max_length=32)
