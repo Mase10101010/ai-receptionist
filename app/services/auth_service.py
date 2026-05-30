@@ -1,7 +1,9 @@
 from app.core.exceptions import ConflictError, ValidationError
 from app.core.security import (
     create_access_token,
+    create_email_verification_token,
     create_password_reset_token,
+    decode_email_verification_token,
     decode_password_reset_token,
     hash_password,
     verify_password,
@@ -31,10 +33,19 @@ class AuthService:
             email=str(payload.email).lower(),
             hashed_password=hash_password(payload.password),
             full_name=payload.full_name,
-            is_active=True,
+            is_active=False,
+            is_email_verified=False,
         )
 
         created = await self.repository.create(user)
+
+        verification_token = create_email_verification_token(created.email)
+        verification_link = f"https://www.aliasconcierge.com/verify-email?token={verification_token}"
+
+        await self.email_service.send_email_verification_email(
+            to_email=created.email,
+            verification_link=verification_link,
+        )
 
         token = create_access_token(
             subject=str(created.id),
@@ -51,6 +62,9 @@ class AuthService:
 
         if not verify_password(payload.password, user.hashed_password):
             raise ValidationError("Invalid email or password")
+        
+        if not user.is_email_verified or not user.is_active:
+            raise ValidationError("Please verify your email before logging in")
 
         token = create_access_token(
             subject=str(user.id),
@@ -81,4 +95,20 @@ class AuthService:
             raise ValidationError("Invalid or expired reset token")
 
         user.hashed_password = hash_password(new_password)
+        await self.repository.db.flush()
+
+    async def verify_email(self, token: str) -> None:
+        try:
+            email = decode_email_verification_token(token)
+        except Exception:
+            raise ValidationError("Invalid or expired verification token")
+
+        user = await self.repository.get_by_email(email.lower())
+
+        if user is None:
+            raise ValidationError("Invalid or expired verification token")
+
+        user.is_email_verified = True
+        user.is_active = True
+
         await self.repository.db.flush()

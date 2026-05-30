@@ -78,3 +78,24 @@ def decode_password_reset_token(token: str) -> str:
         raise ValueError("Invalid reset token")
 
     return str(email)
+
+def create_email_verification_token(email: str) -> str:
+    return create_access_token(
+        subject=email,
+        expires_delta=timedelta(hours=24),
+        extra_claims={"type": "email_verification"},
+    )
+
+
+def decode_email_verification_token(token: str) -> str:
+    payload = decode_access_token(token)
+
+    if payload.get("type") != "email_verification":
+        raise ValueError("Invalid email verification token")
+
+    email = payload.get("sub")
+
+    if not email:
+        raise ValueError("Invalid email verification token")
+
+    return str(email)

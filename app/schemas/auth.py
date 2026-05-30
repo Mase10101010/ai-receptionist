@@ -21,6 +21,7 @@ class UserResponse(BaseModel):
     email: EmailStr
     full_name: str | None
     is_active: bool
+    is_email_verified: bool
 
 
 class TokenResponse(BaseModel):

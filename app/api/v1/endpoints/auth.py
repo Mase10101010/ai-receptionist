@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -89,6 +89,21 @@ async def reset_password(
 
     return MessageResponse(
         message="Password reset successfully.",
+    )
+
+@router.get(
+    "/verify-email",
+    response_model=MessageResponse,
+)
+async def verify_email(
+    token: str = Query(...),
+    service: AuthService = Depends(get_auth_service),
+) -> MessageResponse:
+    await service.verify_email(token)
+    await service.repository.db.commit()
+
+    return MessageResponse(
+        message="Email verified successfully.",
     )
 
 @router.get("/me", response_model=UserResponse)
