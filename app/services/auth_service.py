@@ -33,7 +33,7 @@ class AuthService:
             email=str(payload.email).lower(),
             hashed_password=hash_password(payload.password),
             full_name=payload.full_name,
-            is_active=False,
+            is_active=True,
             is_email_verified=False,
         )
 
