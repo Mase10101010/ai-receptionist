@@ -441,6 +441,7 @@ class ReservationService:
 
         opening_hour = settings.OPENING_HOUR
         closing_hour = settings.CLOSING_HOUR
+        local_time = reservation_time
 
         if restaurant_id is not None:
             restaurant = await self.restaurant_repository.get_by_id(restaurant_id)
@@ -448,8 +449,18 @@ class ReservationService:
             if restaurant is not None:
                 opening_hour = restaurant.opening_hour
                 closing_hour = restaurant.closing_hour
+                try:
+                    local_time = reservation_time.astimezone(
+                        ZoneInfo(restaurant.timezone or "UTC")
+                    )
+                except Exception:
+                    logger.exception(
+                        "Invalid restaurant timezone: %s. Falling back to UTC.",
+                        restaurant.timezone,
+                    )
+                    local_time = reservation_time.astimezone(ZoneInfo("UTC"))
 
-                reservation_date = reservation_time.date().isoformat()
+                reservation_date = local_time.date().isoformat()
 
                 for closure in restaurant.special_closures or []:
                     if closure.get("date") == reservation_date:
@@ -458,7 +469,7 @@ class ReservationService:
                             f"The restaurant is closed on this date due to {reason}."
                         )
 
-                day_name = reservation_time.strftime("%a")
+                day_name = local_time.strftime("%a")
 
                 for schedule in restaurant.weekly_schedule or []:
                     if schedule.get("day") == day_name:
@@ -473,7 +484,7 @@ class ReservationService:
                         closing_hour = int(schedule.get("closing_hour", closing_hour))
                         break
 
-        hour = reservation_time.hour
+        hour = local_time.hour
 
         if hour < opening_hour or hour >= closing_hour:
             raise ValidationError(
