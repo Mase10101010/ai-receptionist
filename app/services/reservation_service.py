@@ -129,6 +129,7 @@ class ReservationService:
                         party_size=created.party_size,
                         table_number=created.table_number,
                         special_requests=created.special_requests,
+                        language=restaurant.preferred_language,
                     )
             except Exception:
                 logger.exception(

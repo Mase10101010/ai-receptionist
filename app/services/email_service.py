@@ -301,15 +301,114 @@ class EmailService:
         party_size: int,
         table_number: str | None = None,
         special_requests: str | None = None,
+        language: str = "en",
     ) -> None:
 
         if not settings.RESEND_API_KEY:
             logger.warning("RESEND_API_KEY missing - skipping restaurant notification email")
             return
 
-        table_text = table_number or "Not assigned"
-        notes_text = special_requests or "No special requests"
-        customer_email_text = customer_email or "Not provided"
+        
+        language = (language or "en").lower()
+        content = {
+            "en": {
+                "subject": text["subject"],
+                "title": "New reservation received",
+                "body": f"A new reservation has been created for {restaurant_name}.",
+                "guest_label": "Guest",
+                "email_label": "Email",
+                "phone_label": "Phone",
+                "party_label": "Party size",
+                "date_label": "Date & Time",
+                "table_label": "Assigned table",
+                "table_word": "Table",
+                "not_assigned": "Not assigned",
+                "notes_label": "Special requests",
+                "no_notes": "No special requests",
+                "not_provided": "Not provided",
+                "footer": "You can view this reservation inside your Alias dashboard.",
+            },
+            "it": {
+                "subject": f"Nuova prenotazione - {restaurant_name}",
+                "title": "Nuova prenotazione ricevuta",
+                "body": f"È stata creata una nuova prenotazione per {restaurant_name}.",
+                "guest_label": "Cliente",
+                "email_label": "Email",
+                "phone_label": "Telefono",
+                "party_label": "Numero ospiti",
+                "date_label": "Data e ora",
+                "table_label": "Tavolo assegnato",
+                "table_word": "Tavolo",
+                "not_assigned": "Non assegnato",
+                "notes_label": "Richieste speciali",
+                "no_notes": "Nessuna richiesta speciale",
+                "not_provided": "Non fornita",
+                "footer": "Puoi visualizzare questa prenotazione nella dashboard di Alias.",
+            },
+            "es": {
+                "subject": f"Nueva reserva - {restaurant_name}",
+                "title": "Nueva reserva recibida",
+                "body": f"Se ha creado una nueva reserva para {restaurant_name}.",
+                "guest_label": "Cliente",
+                "email_label": "Correo electrónico",
+                "phone_label": "Teléfono",
+                "party_label": "Número de personas",
+                "date_label": "Fecha y hora",
+                "table_label": "Mesa asignada",
+                "table_word": "Mesa",
+                "not_assigned": "No asignada",
+                "notes_label": "Solicitudes especiales",
+                "no_notes": "Sin solicitudes especiales",
+                "not_provided": "No proporcionado",
+                "footer": "Puedes ver esta reserva en tu panel de Alias.",
+            },
+
+            "fr": {
+                "subject": f"Nouvelle réservation - {restaurant_name}",
+                "title": "Nouvelle réservation reçue",
+                "body": f"Une nouvelle réservation a été créée pour {restaurant_name}.",
+                "guest_label": "Client",
+                "email_label": "Email",
+                "phone_label": "Téléphone",
+                "party_label": "Nombre de personnes",
+                "date_label": "Date et heure",
+                "table_label": "Table attribuée",
+                "table_word": "Table",
+                "not_assigned": "Non attribuée",
+                "notes_label": "Demandes spéciales",
+                "no_notes": "Aucune demande spéciale",
+                "not_provided": "Non fourni",
+                "footer": "Vous pouvez consulter cette réservation dans votre tableau de bord Alias.",
+            },
+
+            "de": {
+                "subject": f"Neue Reservierung - {restaurant_name}",
+                "title": "Neue Reservierung erhalten",
+                "body": f"Für {restaurant_name} wurde eine neue Reservierung erstellt.",
+                "guest_label": "Gast",
+                "email_label": "E-Mail",
+                "phone_label": "Telefon",
+                "party_label": "Anzahl Gäste",
+                "date_label": "Datum & Uhrzeit",
+                "table_label": "Zugewiesener Tisch",
+                "table_word": "Tisch",
+                "not_assigned": "Nicht zugewiesen",
+                "notes_label": "Besondere Wünsche",
+                "no_notes": "Keine besonderen Wünsche",
+                "not_provided": "Nicht angegeben",
+                "footer": "Sie können diese Reservierung im Alias-Dashboard anzeigen.",
+            },
+        }
+
+        text = content.get(language, content["en"])
+
+        table_text = (
+            f'{text["table_word"]} {table_number}'
+            if table_number
+            else text["not_assigned"]
+        )
+        notes_text = special_requests or text["no_notes"]
+        customer_email_text = customer_email or text["not_provided"]
 
         try:
             resend.Emails.send(
@@ -322,25 +421,25 @@ class EmailService:
                         <div style="max-width:600px;margin:0 auto;background:#111111;border:1px solid #222;border-radius:20px;overflow:hidden;">
                             <div style="padding:40px;">
                                 <h1 style="margin-top:0;font-size:28px;color:white;">
-                                    New reservation received
+                                    _{text["title"]}
                                 </h1>
 
                                 <p style="color:#cccccc;font-size:16px;line-height:1.7;">
-                                    A new reservation has been created for {restaurant_name}.
+                                    {text["body"]}
                                 </p>
 
                                 <div style="margin:30px 0;padding:24px;background:#181818;border-radius:16px;border:1px solid #2a2a2a;">
-                                    <p><strong>Guest:</strong><br>{customer_name}</p>
-                                    <p><strong>Email:</strong><br>{customer_email_text}</p>
-                                    <p><strong>Phone:</strong><br>{customer_phone}</p>
-                                    <p><strong>Party size:</strong><br>{party_size}</p>
-                                    <p><strong>Date & Time:</strong><br>{reservation_time}</p>
-                                    <p><strong>Assigned table:</strong><br>Table {table_text}</p>
-                                    <p><strong>Special requests:</strong><br>{notes_text}</p>
+                                   <p><strong>{text["guest_label"]}:</strong><br>{customer_name}</p>
+                                    <p><strong>{text["email_label"]}:</strong><br>{customer_email_text}</p>
+                                    <p><strong>{text["phone_label"]}:</strong><br>{customer_phone}</p>
+                                    <p><strong>{text["party_label"]}:</strong><br>{party_size}</p>
+                                    <p><strong>{text["date_label"]}:</strong><br>{reservation_time}</p>
+                                    <p><strong>{text["table_label"]}:</strong><br>{table_text}</p>
+                                    <p><strong>{text["notes_label"]}:</strong><br>{notes_text}</p> 
                                 </div>
 
                                 <p style="color:#aaaaaa;font-size:14px;line-height:1.7;">
-                                    You can view this reservation inside your Alias dashboard.
+                                    {text["footer"]}
                                 </p>
                             </div>
                         </div>
