@@ -95,7 +95,16 @@ class Reservation(Base):
 
     table = relationship(
         "Table",
+        lazy="selectin",
     )
+
+    @property
+    def table_number(self) -> str | None:
+        return self.table.table_number if self.table else None
+
+    @property
+    def table_code(self) -> str | None:
+        return self.table.table_code if self.table else None
 
     __table_args__ = (
         Index("ix_reservations_time_status", "reservation_time", "status"),
