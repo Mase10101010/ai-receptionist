@@ -115,6 +115,21 @@ class ReservationService:
                     party_size=created.party_size,
                     language=restaurant_language,
                 )
+
+                if restaurant is not None and restaurant.email:
+                    await self.email_service.send_restaurant_reservation_notification(
+                        restaurant_email=restaurant.email,
+                        restaurant_name=restaurant.name,
+                        customer_name=created.customer_name,
+                        customer_email=created.customer_email,
+                        customer_phone=created.customer_phone,
+                        reservation_time=localized_time.strftime(
+                            "%B %d, %Y at %I:%M %p"
+                        ),
+                        party_size=created.party_size,
+                        table_number=created.table_number,
+                        special_requests=created.special_requests,
+                    )
             except Exception:
                 logger.exception(
                     "Reservation confirmation email failed, but reservation was created."

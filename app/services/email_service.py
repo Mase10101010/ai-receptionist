@@ -290,6 +290,71 @@ class EmailService:
         except Exception as e:
             logger.exception("Failed to send confirmation email: %s", e)
     
+    async def send_restaurant_reservation_notification(
+        self,
+        restaurant_email: str,
+        restaurant_name: str,
+        customer_name: str,
+        customer_email: str | None,
+        customer_phone: str,
+        reservation_time: str,
+        party_size: int,
+        table_number: str | None = None,
+        special_requests: str | None = None,
+    ) -> None:
+
+        if not settings.RESEND_API_KEY:
+            logger.warning("RESEND_API_KEY missing - skipping restaurant notification email")
+            return
+
+        table_text = table_number or "Not assigned"
+        notes_text = special_requests or "No special requests"
+        customer_email_text = customer_email or "Not provided"
+
+        try:
+            resend.Emails.send(
+                {
+                    "from": settings.EMAIL_FROM,
+                    "to": [restaurant_email],
+                    "subject": f"New reservation - {restaurant_name}",
+                    "html": f"""
+                    <div style="background:#0b0b0b;padding:40px 20px;font-family:Arial,sans-serif;color:white;">
+                        <div style="max-width:600px;margin:0 auto;background:#111111;border:1px solid #222;border-radius:20px;overflow:hidden;">
+                            <div style="padding:40px;">
+                                <h1 style="margin-top:0;font-size:28px;color:white;">
+                                    New reservation received
+                                </h1>
+
+                                <p style="color:#cccccc;font-size:16px;line-height:1.7;">
+                                    A new reservation has been created for {restaurant_name}.
+                                </p>
+
+                                <div style="margin:30px 0;padding:24px;background:#181818;border-radius:16px;border:1px solid #2a2a2a;">
+                                    <p><strong>Guest:</strong><br>{customer_name}</p>
+                                    <p><strong>Email:</strong><br>{customer_email_text}</p>
+                                    <p><strong>Phone:</strong><br>{customer_phone}</p>
+                                    <p><strong>Party size:</strong><br>{party_size}</p>
+                                    <p><strong>Date & Time:</strong><br>{reservation_time}</p>
+                                    <p><strong>Assigned table:</strong><br>Table {table_text}</p>
+                                    <p><strong>Special requests:</strong><br>{notes_text}</p>
+                                </div>
+
+                                <p style="color:#aaaaaa;font-size:14px;line-height:1.7;">
+                                    You can view this reservation inside your Alias dashboard.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                    """,
+                }
+            )
+
+        except Exception as e:
+            logger.exception(
+                "Failed to send restaurant reservation notification email: %s",
+                e,
+            )
+
     async def send_email_verification_email(
         self,
         to_email: str,
