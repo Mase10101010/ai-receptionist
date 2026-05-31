@@ -312,7 +312,7 @@ class EmailService:
         language = (language or "en").lower()
         content = {
             "en": {
-                "subject": text["subject"],
+                "subject": f"New reservation - {restaurant_name}",
                 "title": "New reservation received",
                 "body": f"A new reservation has been created for {restaurant_name}.",
                 "guest_label": "Guest",
@@ -415,13 +415,13 @@ class EmailService:
                 {
                     "from": settings.EMAIL_FROM,
                     "to": [restaurant_email],
-                    "subject": f"New reservation - {restaurant_name}",
+                    "subject": text["subject"],
                     "html": f"""
                     <div style="background:#0b0b0b;padding:40px 20px;font-family:Arial,sans-serif;color:white;">
                         <div style="max-width:600px;margin:0 auto;background:#111111;border:1px solid #222;border-radius:20px;overflow:hidden;">
                             <div style="padding:40px;">
                                 <h1 style="margin-top:0;font-size:28px;color:white;">
-                                    _{text["title"]}
+                                    {text["title"]}
                                 </h1>
 
                                 <p style="color:#cccccc;font-size:16px;line-height:1.7;">
