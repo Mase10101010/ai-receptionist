@@ -313,6 +313,12 @@ class ReservationService:
                 restaurant_id=restaurant_id,
             )
 
+            await self._assign_available_table(
+                reservation_time=reservation_time,
+                party_size=party_size,
+                restaurant_id=restaurant_id,
+            )
+
             return True
         except (ValidationError, ConflictError):
             return False
@@ -340,6 +346,12 @@ class ReservationService:
                 )
 
                 await self._enforce_capacity(
+                    reservation_time=candidate,
+                    party_size=party_size,
+                    restaurant_id=restaurant_id,
+                )
+
+                await self._assign_available_table(
                     reservation_time=candidate,
                     party_size=party_size,
                     restaurant_id=restaurant_id,

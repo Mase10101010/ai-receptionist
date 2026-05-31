@@ -323,7 +323,11 @@ class AIService:
                     }
                 )
 
-        return "Error: tool loop limit reached", reservation_id
+        return (
+            "Mi dispiace, non riesco a completare la verifica in questo momento. "
+            "Puoi provare un altro orario oppure contattare direttamente il ristorante.",
+            reservation_id,
+        )
 
     async def _execute_tool(
         self,
