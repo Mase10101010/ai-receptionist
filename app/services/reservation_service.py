@@ -43,11 +43,19 @@ class ReservationService:
             restaurant_id=payload.restaurant_id,
         )
 
-        table_id = await self._assign_available_table(
-            reservation_time=payload.reservation_time,
-            party_size=payload.party_size,
-            restaurant_id=payload.restaurant_id,
-        )
+        if payload.table_id is not None:
+            table_id = await self._validate_selected_table(
+                table_id=payload.table_id,
+                reservation_time=payload.reservation_time,
+                party_size=payload.party_size,
+                restaurant_id=payload.restaurant_id,
+            )
+        else:
+            table_id = await self._assign_available_table(
+                reservation_time=payload.reservation_time,
+                party_size=payload.party_size,
+                restaurant_id=payload.restaurant_id,
+            )
 
         reservation = Reservation(
             restaurant_id=payload.restaurant_id,
@@ -425,6 +433,47 @@ class ReservationService:
             "Sorry, we don't have an available table for that time. "
             "Please try a different time slot."
         )
+    
+    async def _validate_selected_table(
+        self,
+        table_id: uuid.UUID,
+        reservation_time: datetime,
+        party_size: int,
+        restaurant_id: uuid.UUID | None = None,
+    ) -> uuid.UUID:
+        if restaurant_id is None:
+            raise ValidationError("Restaurant is required to select a table.")
+
+        table = await self.table_repository.get_by_id(
+            table_id=table_id,
+            restaurant_id=restaurant_id,
+        )
+
+        if table is None or not table.is_active:
+            raise ValidationError("Selected table was not found or is inactive.")
+
+        if table.seats < party_size:
+            raise ValidationError(
+                "Selected table does not have enough seats for this party size."
+            )
+
+        half = timedelta(minutes=settings.RESERVATION_DURATION_MINUTES)
+        window_start = reservation_time - half
+        window_end = reservation_time + half
+
+        concurrent = await self.repository.list_in_window(
+            start=window_start,
+            end=window_end,
+            restaurant_id=restaurant_id,
+        )
+
+        for reservation in concurrent:
+            if reservation.table_id == table_id:
+                raise ConflictError(
+                    "Selected table is not available at this date and time."
+                )
+
+        return table.id
 
     async def _validate_reservation_time(
         self, 
