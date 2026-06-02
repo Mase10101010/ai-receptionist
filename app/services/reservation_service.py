@@ -17,6 +17,24 @@ from app.services.email_service import EmailService
 
 logger = get_logger(__name__)
 
+def _format_reservation_time_for_language(
+    reservation_time: datetime,
+    language: str,
+) -> str:
+    if language == "it":
+        return reservation_time.strftime("%d/%m/%Y alle %H:%M")
+
+    if language == "es":
+        return reservation_time.strftime("%d/%m/%Y a las %H:%M")
+
+    if language == "fr":
+        return reservation_time.strftime("%d/%m/%Y à %H:%M")
+
+    if language == "de":
+        return reservation_time.strftime("%d.%m.%Y um %H:%M")
+
+    return reservation_time.strftime("%B %d, %Y at %I:%M %p")
+
 
 class ReservationService:
     def __init__(
@@ -117,8 +135,9 @@ class ReservationService:
                     restaurant_name=restaurant_name,
                     customer_name=created.customer_name,
                     reservation_id=str(created.id),
-                    reservation_time=localized_time.strftime(
-                        "%B %d, %Y at %I:%M %p"
+                    reservation_time=_format_reservation_time_for_language(
+                        localized_time,
+                        restaurant_language,
                     ),
                     party_size=created.party_size,
                     language=restaurant_language,
@@ -131,8 +150,9 @@ class ReservationService:
                         customer_name=created.customer_name,
                         customer_email=created.customer_email,
                         customer_phone=created.customer_phone,
-                        reservation_time=localized_time.strftime(
-                            "%B %d, %Y at %I:%M %p"
+                        reservation_time=_format_reservation_time_for_language(
+                            localized_time,
+                            restaurant_language,
                         ),
                         party_size=created.party_size,
                         table_number=created.table_number,

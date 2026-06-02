@@ -6,6 +6,11 @@ import json
 import uuid
 from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
+from app.services.reservation_service import (
+    ReservationService,
+    _format_reservation_time_for_language,
+)
 
 from openai import AsyncOpenAI, OpenAIError
 
@@ -16,7 +21,7 @@ from app.models.conversation import MessageRole
 from app.repositories.conversation_repository import ConversationRepository
 from app.repositories.restaurant_repository import RestaurantRepository
 from app.schemas.reservation import ReservationCreate, ReservationUpdate
-from app.services.reservation_service import ReservationService
+
 
 logger = get_logger(__name__)
 
@@ -417,6 +422,23 @@ class AIService:
                     restaurant_id=restaurant_id,
                 )
 
+                restaurant_timezone = "UTC"
+                restaurant_language = "en"
+
+                if restaurant_id is not None:
+                    restaurant = await self.restaurant_repo.get_by_id(restaurant_id)
+
+                    if restaurant is not None:
+                        restaurant_timezone = restaurant.timezone or "UTC"
+                        restaurant_language = restaurant.preferred_language or "en"
+
+                try:
+                    localized_time = reservation.reservation_time.astimezone(
+                        ZoneInfo(restaurant_timezone)
+                    )
+                except Exception:
+                    localized_time = reservation.reservation_time
+
                 return {
                     "success": True,
                     "reservation_id": str(reservation.id),
@@ -425,6 +447,11 @@ class AIService:
                     "customer_phone": reservation.customer_phone,
                     "party_size": reservation.party_size,
                     "reservation_time": reservation.reservation_time.isoformat(),
+                    "reservation_time_local": _format_reservation_time_for_language(
+                        localized_time,
+                        restaurant_language,
+                    ),
+                    "timezone": restaurant_timezone,
                     "special_requests": reservation.special_requests,
                     "status": reservation.status.value,
                 }, None
