@@ -290,6 +290,165 @@ class EmailService:
         except Exception as e:
             logger.exception("Failed to send confirmation email: %s", e)
     
+    async def send_reservation_update_confirmation(
+        self,
+        to_email: str,
+        restaurant_name: str,
+        customer_name: str,
+        reservation_id: str,
+        reservation_time: str,
+        party_size: int,
+        language: str = "en",
+    ) -> None:
+
+        if not settings.RESEND_API_KEY:
+            logger.warning("RESEND_API_KEY missing - skipping email")
+            return
+        
+        content = {
+            "en": {
+                "subject": f"{restaurant_name} Reservation Updated",
+                "title": "Reservation Updated",
+                "body": f"Your reservation at {restaurant_name} has been updated.",
+                "note": "Please keep your reservation ID for future modifications or cancellations.",
+                "footer": "Your reservation has been updated successfully.",
+            },
+            "it": {
+                "subject": f"Prenotazione aggiornata {restaurant_name}",
+                "title": "Prenotazione aggiornata",
+                "body": f"La tua prenotazione presso {restaurant_name} è stata aggiornata.",
+                "note": "Conserva il tuo ID prenotazione per eventuali modifiche o cancellazioni.",
+                "footer": "La tua prenotazione è stata aggiornata correttamente.",
+            },
+            "es": {
+                "subject": f"Reserva actualizada {restaurant_name}",
+                "title": "Reserva actualizada",
+                "body": f"Tu reserva en {restaurant_name} ha sido actualizada.",
+                "note": "Conserva tu ID de reserva para futuras modificaciones o cancelaciones.",
+                "footer": "Tu reserva ha sido actualizada correctamente.",
+            },
+            "fr": {
+                "subject": f"Réservation mise à jour {restaurant_name}",
+                "title": "Réservation mise à jour",
+                "body": f"Votre réservation chez {restaurant_name} a été mise à jour.",
+                "note": "Veuillez conserver votre ID de réservation pour toute modification ou annulation future.",
+                "footer": "Votre réservation a été mise à jour avec succès.",
+            },
+            "de": {
+                "subject": f"Reservierung aktualisiert {restaurant_name}",
+                "title": "Reservierung aktualisiert",
+                "body": f"Ihre Reservierung bei {restaurant_name} wurde aktualisiert.",
+                "note": "Bitte bewahren Sie Ihre Reservierungs-ID für zukünftige Änderungen oder Stornierungen auf.",
+                "footer": "Ihre Reservierung wurde erfolgreich aktualisiert.",
+            },
+        }
+
+        language = (language or "en").lower()
+        text = content.get(language, content["en"])
+
+        try:
+            resend.Emails.send(
+                {
+                    "from": settings.EMAIL_FROM,
+                    "to": [to_email],
+                    "subject": text["subject"],
+                    "html": f"""
+                    <div style="
+                        background:#0b0b0b;
+                        padding:40px 20px;
+                        font-family:Arial,sans-serif;
+                        color:white;
+                    ">
+
+                        <div style="
+                            max-width:600px;
+                            margin:0 auto;
+                            background:#111111;
+                            border:1px solid #222;
+                            border-radius:20px;
+                            overflow:hidden;
+                        ">
+
+                            <div style="
+                                padding:40px 20px;
+                                text-align:center;
+                                background:black;
+                            ">
+                                <img
+                                    src="https://alias-platform.vercel.app/alias-logo-dark.png"
+                                    alt="Alias"
+                                    style="max-width:260px;width:100%;"
+                                />
+                            </div>
+
+                            <div style="padding:40px;">
+
+                                <h1 style="
+                                    margin-top:0;
+                                    font-size:28px;
+                                    color:white;
+                                ">
+                                    {text["title"]}
+                                </h1>
+
+                                <p style="
+                                    color:#cccccc;
+                                    font-size:16px;
+                                    line-height:1.7;
+                                ">
+                                    {text["greeting"]}
+                                </p>
+
+                                <p style="
+                                    color:#cccccc;
+                                    font-size:16px;
+                                    line-height:1.7;
+                                ">
+                                    {text["body"]}
+                                </p>
+
+                                <div style="
+                                    margin:30px 0;
+                                    padding:24px;
+                                    background:#181818;
+                                    border-radius:16px;
+                                    border:1px solid #2a2a2a;
+                                ">
+
+                                    <p><strong>{text["reservation_id_label"]}:</strong><br>{reservation_id}</p>
+
+                                    <p><strong>{text["date_label"]}:</strong><br>{reservation_time}</p>
+
+                                    <p><strong>{text["party_label"]}:</strong><br>{party_size} {text["guest_word"]}</p>
+
+                                </div>
+
+                                <p style="
+                                    color:#aaaaaa;
+                                    font-size:14px;
+                                    line-height:1.7;
+                                ">
+                                    {text["note"]}
+                                </p>
+
+                                <p style="
+                                    margin-top:40px;
+                                    color:#cccccc;
+                                    font-size:15px;
+                                ">
+                                    {text["footer"]}
+                                </p>
+
+                            </div>
+                        </div>
+                    </div>
+                    """,
+                }
+            )
+
+        except Exception as e:
+            logger.exception("Failed to send confirmation email: %s", e)
+    
     async def send_restaurant_reservation_notification(
         self,
         restaurant_email: str,
@@ -397,6 +556,115 @@ class EmailService:
                 "no_notes": "Keine besonderen Wünsche",
                 "not_provided": "Nicht angegeben",
                 "footer": "Sie können diese Reservierung im Alias-Dashboard anzeigen.",
+            },
+        }
+
+        text = content.get(language, content["en"])
+
+        table_text = (
+            f'{text["table_word"]} {table_number}'
+            if table_number
+            else text["not_assigned"]
+        )
+        notes_text = special_requests or text["no_notes"]
+        customer_email_text = customer_email or text["not_provided"]
+
+        try:
+            resend.Emails.send(
+                {
+                    "from": settings.EMAIL_FROM,
+                    "to": [restaurant_email],
+                    "subject": text["subject"],
+                    "html": f"""
+                    <div style="background:#0b0b0b;padding:40px 20px;font-family:Arial,sans-serif;color:white;">
+                        <div style="max-width:600px;margin:0 auto;background:#111111;border:1px solid #222;border-radius:20px;overflow:hidden;">
+                            <div style="padding:40px;">
+                                <h1 style="margin-top:0;font-size:28px;color:white;">
+                                    {text["title"]}
+                                </h1>
+
+                                <p style="color:#cccccc;font-size:16px;line-height:1.7;">
+                                    {text["body"]}
+                                </p>
+
+                                <div style="margin:30px 0;padding:24px;background:#181818;border-radius:16px;border:1px solid #2a2a2a;">
+                                   <p><strong>{text["guest_label"]}:</strong><br>{customer_name}</p>
+                                    <p><strong>{text["email_label"]}:</strong><br>{customer_email_text}</p>
+                                    <p><strong>{text["phone_label"]}:</strong><br>{customer_phone}</p>
+                                    <p><strong>{text["party_label"]}:</strong><br>{party_size}</p>
+                                    <p><strong>{text["date_label"]}:</strong><br>{reservation_time}</p>
+                                    <p><strong>{text["table_label"]}:</strong><br>{table_text}</p>
+                                    <p><strong>{text["notes_label"]}:</strong><br>{notes_text}</p> 
+                                </div>
+
+                                <p style="color:#aaaaaa;font-size:14px;line-height:1.7;">
+                                    {text["footer"]}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                    """,
+                }
+            )
+
+        except Exception as e:
+            logger.exception(
+                "Failed to send restaurant reservation notification email: %s",
+                e,
+            )
+    
+    async def send_restaurant_reservation_update_notification(
+        self,
+        restaurant_email: str,
+        restaurant_name: str,
+        customer_name: str,
+        customer_email: str | None,
+        customer_phone: str,
+        reservation_time: str,
+        party_size: int,
+        table_number: str | None = None,
+        special_requests: str | None = None,
+        language: str = "en",
+    ) -> None:
+
+        if not settings.RESEND_API_KEY:
+            logger.warning("RESEND_API_KEY missing - skipping restaurant notification email")
+            return
+
+        
+        language = (language or "en").lower()
+        content = {
+            "en": {
+                "subject": f"Reservation updated - {restaurant_name}",
+                "title": "Reservation updated",
+                "body": f"A reservation has been updated for {restaurant_name}.",
+                "footer": "You can view the updated reservation inside your Alias dashboard.",
+            },
+            "it": {
+                "subject": f"Prenotazione aggiornata - {restaurant_name}",
+                "title": "Prenotazione aggiornata",
+                "body": f"Una prenotazione è stata aggiornata per {restaurant_name}.",
+                "footer": "Puoi visualizzare la prenotazione aggiornata nella dashboard di Alias.",
+            },
+            "es": {
+                "subject": f"Reserva actualizada - {restaurant_name}",
+                "title": "Reserva actualizada",
+                "body": f"Una reserva ha sido actualizada para {restaurant_name}.",
+                "footer": "Puedes ver la reserva actualizada en tu panel de Alias.",
+            },
+
+            "fr": {
+                "subject": f"Réservation mise à jour - {restaurant_name}",
+                "title": "Réservation mise à jour",
+                "body": f"Une réservation a été mise à jour pour {restaurant_name}.",
+                "footer": "Vous pouvez consulter la réservation mise à jour dans votre tableau de bord Alias.",
+            },
+
+            "de": {
+                "subject": f"Reservierung aktualisiert - {restaurant_name}",
+                "title": "Reservierung aktualisiert",
+                "body": f"Eine Reservierung wurde für {restaurant_name} aktualisiert.",
+                "footer": "Sie können die aktualisierte Reservierung im Alias-Dashboard anzeigen.",
             },
         }
 

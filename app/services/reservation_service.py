@@ -273,6 +273,62 @@ class ReservationService:
             list(updates.keys()),
         )
 
+        try:
+            restaurant = None
+
+            if updated.restaurant_id:
+                restaurant = await self.restaurant_repository.get_by_id(
+                    updated.restaurant_id
+                )
+
+            if restaurant is not None:
+                restaurant_timezone = restaurant.timezone or "UTC"
+                restaurant_language = restaurant.preferred_language or "en"
+
+                try:
+                    localized_time = updated.reservation_time.astimezone(
+                        ZoneInfo(restaurant_timezone)
+                    )
+                except Exception:
+                    localized_time = updated.reservation_time.astimezone(
+                        ZoneInfo("UTC")
+                    )
+
+                formatted_time = _format_reservation_time_for_language(
+                    localized_time,
+                    restaurant_language,
+                )
+
+                if updated.customer_email:
+                    await self.email_service.send_reservation_update_confirmation(
+                        to_email=updated.customer_email,
+                        restaurant_name=restaurant.name,
+                        customer_name=updated.customer_name,
+                        reservation_id=str(updated.id),
+                        reservation_time=formatted_time,
+                        party_size=updated.party_size,
+                        language=restaurant_language,
+                    )
+
+                if restaurant.email:
+                    await self.email_service.send_restaurant_reservation_update_notification(
+                        restaurant_email=restaurant.email,
+                        restaurant_name=restaurant.name,
+                        customer_name=updated.customer_name,
+                        customer_email=updated.customer_email,
+                        customer_phone=updated.customer_phone,
+                        reservation_time=formatted_time,
+                        party_size=updated.party_size,
+                        table_number=updated.table_number,
+                        special_requests=updated.special_requests,
+                        language=restaurant_language,
+                    )
+
+        except Exception:
+            logger.exception(
+                "Reservation update emails failed."
+            )
+
         return updated
 
     async def update_reservation_for_restaurants(
