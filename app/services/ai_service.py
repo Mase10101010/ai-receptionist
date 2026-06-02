@@ -62,6 +62,13 @@ Reservation rules:
   • After successfully booking, share the reservation id and recap.
   • Guests may update existing reservations by providing their reservation id.
   • To modify or cancel a reservation, always ask for the reservation id first.
+  • Never call update_reservation immediately after receiving a reservation id.
+  • After identifying the reservation, ask the guest what they would like to change.
+  • Only call update_reservation when at least one field has been explicitly changed by the guest (date/time, party size, name, phone, email, or special requests).
+  • If no change has been specified, continue the conversation and ask for the desired modification.
+  • When the guest provides a reservation id for modification or cancellation, first call get_reservation.
+  • After retrieving the reservation, mention the guest name linked to that reservation and ask what they would like to modify or confirm cancellation.
+  • Never call update_reservation immediately after receiving only a reservation id.
   • If no year is provided, assume current or next occurrence.
 
 Today is {datetime.utcnow().strftime("%A, %B %d, %Y")} (UTC).
@@ -132,6 +139,20 @@ TOOLS: list[dict[str, Any]] = [
                     "party_size",
                     "reservation_time",
                 ],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_reservation",
+            "description": "Retrieve an existing reservation by reservation id before modifying or cancelling it.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reservation_id": {"type": "string"},
+                },
+                "required": ["reservation_id"],
             },
         },
     },
@@ -390,6 +411,23 @@ class AIService:
                     "reservation_time": res.reservation_time.isoformat(),
                     "special_requests": res.special_requests,
                 }, res.id
+            if name == "get_reservation":
+                reservation = await self.reservation_service.get_reservation(
+                    reservation_id=uuid.UUID(args["reservation_id"]),
+                    restaurant_id=restaurant_id,
+                )
+
+                return {
+                    "success": True,
+                    "reservation_id": str(reservation.id),
+                    "customer_name": reservation.customer_name,
+                    "customer_email": reservation.customer_email,
+                    "customer_phone": reservation.customer_phone,
+                    "party_size": reservation.party_size,
+                    "reservation_time": reservation.reservation_time.isoformat(),
+                    "special_requests": reservation.special_requests,
+                    "status": reservation.status.value,
+                }, None
 
             if name == "update_reservation":
                 update_data = {}
@@ -413,6 +451,13 @@ class AIService:
 
                 if args.get("special_requests") is not None:
                     update_data["special_requests"] = args["special_requests"]
+
+                if not update_data:
+                    return {
+                        "error": "No modification details provided."
+                    }, None
+                
+                
 
                 reservation = await self.reservation_service.update_reservation(
                     reservation_id=uuid.UUID(args["reservation_id"]),
