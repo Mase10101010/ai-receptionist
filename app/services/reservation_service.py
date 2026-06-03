@@ -372,10 +372,73 @@ class ReservationService:
         if reservation.status == ReservationStatus.CANCELLED:
             return reservation
 
-        return await self.repository.update(
+        cancelled = await self.repository.update(
             reservation,
             {"status": ReservationStatus.CANCELLED},
         )
+
+        logger.info(
+            "Reservation cancelled: id=%s",
+            cancelled.id,
+        )
+
+        try:
+            restaurant = None
+
+            if cancelled.restaurant_id:
+                restaurant = await self.restaurant_repository.get_by_id(
+                    cancelled.restaurant_id
+                )
+
+            if restaurant is not None:
+                restaurant_timezone = restaurant.timezone or "UTC"
+                restaurant_language = restaurant.preferred_language or "en"
+
+                try:
+                    localized_time = cancelled.reservation_time.astimezone(
+                        ZoneInfo(restaurant_timezone)
+                    )
+                except Exception:
+                    localized_time = cancelled.reservation_time.astimezone(
+                        ZoneInfo("UTC")
+                    )
+
+                formatted_time = _format_reservation_time_for_language(
+                    localized_time,
+                    restaurant_language,
+                )
+
+                if cancelled.customer_email:
+                    await self.email_service.send_reservation_cancellation_confirmation(
+                        to_email=cancelled.customer_email,
+                        restaurant_name=restaurant.name,
+                        customer_name=cancelled.customer_name,
+                        reservation_id=str(cancelled.id),
+                        reservation_time=formatted_time,
+                        party_size=cancelled.party_size,
+                        language=restaurant_language,
+                    )
+
+                if restaurant.email:
+                    await self.email_service.send_restaurant_reservation_cancellation_notification(
+                        restaurant_email=restaurant.email,
+                        restaurant_name=restaurant.name,
+                        customer_name=cancelled.customer_name,
+                        customer_email=cancelled.customer_email,
+                        customer_phone=cancelled.customer_phone,
+                        reservation_time=formatted_time,
+                        party_size=cancelled.party_size,
+                        table_number=cancelled.table_number,
+                        special_requests=cancelled.special_requests,
+                        language=restaurant_language,
+                    )
+
+        except Exception:
+            logger.exception(
+                "Reservation cancellation emails failed."
+            )
+
+        return cancelled
 
     async def cancel_reservation_for_restaurants(
         self,
