@@ -312,6 +312,12 @@ class EmailService:
                 "body": f"Your reservation at {restaurant_name} has been updated.",
                 "note": "Please keep your reservation ID for future modifications or cancellations.",
                 "footer": "Your reservation has been updated successfully.",
+                "greeting": f"Hello {customer_name},",
+                "party_label": "Party Size",
+                "guest_word": "guests",
+                "date_label": "Date & Time",
+                "reservation_id_label": "Reservation ID",
+                
             },
             "it": {
                 "subject": f"Prenotazione aggiornata {restaurant_name}",
@@ -319,6 +325,11 @@ class EmailService:
                 "body": f"La tua prenotazione presso {restaurant_name} è stata aggiornata.",
                 "note": "Conserva il tuo ID prenotazione per eventuali modifiche o cancellazioni.",
                 "footer": "La tua prenotazione è stata aggiornata correttamente.",
+                "greeting": f"Ciao {customer_name},",
+                "party_label": "Numero ospiti",
+                "guest_word": "ospiti",
+                "date_label": "Data e ora",
+                "reservation_id_label": "ID prenotazione",
             },
             "es": {
                 "subject": f"Reserva actualizada {restaurant_name}",
@@ -638,18 +649,51 @@ class EmailService:
                 "subject": f"Reservation updated - {restaurant_name}",
                 "title": "Reservation updated",
                 "body": f"A reservation has been updated for {restaurant_name}.",
+                "guest_label": "Guest",
+                "email_label": "Email",
+                "phone_label": "Phone",
+                "party_label": "Party size",
+                "date_label": "Date & Time",
+                "table_label": "Assigned table",
+                "table_word": "Table",
+                "not_assigned": "Not assigned",
+                "notes_label": "Special requests",
+                "no_notes": "No special requests",
+                "not_provided": "Not provided",
                 "footer": "You can view the updated reservation inside your Alias dashboard.",
             },
             "it": {
                 "subject": f"Prenotazione aggiornata - {restaurant_name}",
                 "title": "Prenotazione aggiornata",
                 "body": f"Una prenotazione è stata aggiornata per {restaurant_name}.",
+                "guest_label": "Cliente",
+                "email_label": "Email",
+                "phone_label": "Telefono",
+                "party_label": "Numero ospiti",
+                "date_label": "Data e ora",
+                "table_label": "Tavolo assegnato",
+                "table_word": "Tavolo",
+                "not_assigned": "Non assegnato",
+                "notes_label": "Richieste speciali",
+                "no_notes": "Nessuna richiesta speciale",
+                "not_provided": "Non fornita",
                 "footer": "Puoi visualizzare la prenotazione aggiornata nella dashboard di Alias.",
             },
             "es": {
                 "subject": f"Reserva actualizada - {restaurant_name}",
                 "title": "Reserva actualizada",
                 "body": f"Una reserva ha sido actualizada para {restaurant_name}.",
+                "guest_label": "Cliente",
+                "email_label": "Correo electrónico",
+                "phone_label": "Teléfono",
+                "party_label": "Número de personas",
+                "date_label": "Fecha y hora",
+                "table_label": "Mesa asignada",
+                "table_word": "Mesa",
+                "not_assigned": "No asignada",
+                "notes_label": "Solicitudes especiales",
+                "no_notes": "Sin solicitudes especiales",
+                "not_provided": "No proporcionado",
                 "footer": "Puedes ver la reserva actualizada en tu panel de Alias.",
             },
 
@@ -657,6 +701,17 @@ class EmailService:
                 "subject": f"Réservation mise à jour - {restaurant_name}",
                 "title": "Réservation mise à jour",
                 "body": f"Une réservation a été mise à jour pour {restaurant_name}.",
+                "guest_label": "Client",
+                "email_label": "Email",
+                "phone_label": "Téléphone",
+                "party_label": "Nombre de personnes",
+                "date_label": "Date et heure",
+                "table_label": "Table attribuée",
+                "table_word": "Table",
+                "not_assigned": "Non attribuée",
+                "notes_label": "Demandes spéciales",
+                "no_notes": "Aucune demande spéciale",
+                "not_provided": "Non fourni",
                 "footer": "Vous pouvez consulter la réservation mise à jour dans votre tableau de bord Alias.",
             },
 
@@ -664,6 +719,17 @@ class EmailService:
                 "subject": f"Reservierung aktualisiert - {restaurant_name}",
                 "title": "Reservierung aktualisiert",
                 "body": f"Eine Reservierung wurde für {restaurant_name} aktualisiert.",
+                "guest_label": "Gast",
+                "email_label": "E-Mail",
+                "phone_label": "Telefon",
+                "party_label": "Anzahl Gäste",
+                "date_label": "Datum & Uhrzeit",
+                "table_label": "Zugewiesener Tisch",
+                "table_word": "Tisch",
+                "not_assigned": "Nicht zugewiesen",
+                "notes_label": "Besondere Wünsche",
+                "no_notes": "Keine besonderen Wünsche",
+                "not_provided": "Nicht angegeben",
                 "footer": "Sie können die aktualisierte Reservierung im Alias-Dashboard anzeigen.",
             },
         }
@@ -721,95 +787,8 @@ class EmailService:
                 "Failed to send restaurant reservation notification email: %s",
                 e,
             )
-
-    async def send_email_verification_email(
-        self,
-        to_email: str,
-        verification_link: str,
-    ) -> None:
-
-        if not settings.RESEND_API_KEY:
-            logger.warning("RESEND_API_KEY missing - skipping email")
-            return
-
-        try:
-            resend.Emails.send(
-                {
-                    "from": settings.EMAIL_FROM,
-                    "to": [to_email],
-                    "subject": "Verify your Alias account",
-                    "html": f"""
-                    <div style="
-                        background:#0b0b0b;
-                        padding:40px 20px;
-                        font-family:Arial,sans-serif;
-                        color:white;
-                    ">
-
-                        <div style="
-                            max-width:600px;
-                            margin:0 auto;
-                            background:#111111;
-                            border:1px solid #222;
-                            border-radius:20px;
-                            overflow:hidden;
-                        ">
-
-                            <div style="
-                                padding:40px 20px;
-                                text-align:center;
-                                background:black;
-                            ">
-                                <img
-                                    src="https://www.aliasconcierge.com/alias-logo-dark.png"
-                                    alt="Alias"
-                                    style="max-width:260px;width:100%;"
-                                />
-                            </div>
-
-                            <div style="padding:40px;">
-
-                                <h1 style="color:white;">
-                                    Verify your email
-                                </h1>
-
-                                <p style="color:#cccccc;line-height:1.7;">
-                                    Welcome to Alias.
-                                    Please verify your email address to activate your account.
-                                </p>
-
-                                <div style="margin:40px 0;text-align:center;">
-                                    <a
-                                        href="{verification_link}"
-                                        style="
-                                            background:white;
-                                            color:black;
-                                            padding:14px 24px;
-                                            border-radius:12px;
-                                            text-decoration:none;
-                                            font-weight:bold;
-                                        "
-                                    >
-                                        Verify Account
-                                    </a>
-                                </div>
-
-                                <p style="color:#888888;font-size:14px;">
-                                    This verification link expires in 24 hours.
-                                </p>
-
-                            </div>
-                        </div>
-                    </div>
-                    """,
-                }
-            )
-
-        except Exception as e:
-            logger.exception(
-                "Failed to send verification email: %s",
-                e,
-            )
+    
+    
 
     async def send_password_reset_email(
         self,
