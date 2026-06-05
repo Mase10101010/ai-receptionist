@@ -65,7 +65,7 @@ class EmailService:
                         <div style="max-width:600px;margin:0 auto;background:#111111;border:1px solid #222;border-radius:20px;overflow:hidden;">
                             <div style="padding:40px 20px;text-align:center;background:black;">
                                 <img
-                                    src="https://www.aliasconcierge.com/alias-logo-dark.png"
+                                    src="https://www.aliasconcierge.com/alias-word-dark.png"
                                     alt="Alias"
                                     style="max-width:260px;width:100%;"
                                 />
@@ -216,7 +216,7 @@ class EmailService:
                                 background:black;
                             ">
                                 <img
-                                    src="https://alias-platform.vercel.app/alias-logo-dark.png"
+                                    src="https://www.aliasconcierge.com/alias-word-dark.png"
                                     alt="Alias"
                                     style="max-width:260px;width:100%;"
                                 />
@@ -386,7 +386,7 @@ class EmailService:
                                 background:black;
                             ">
                                 <img
-                                    src="https://alias-platform.vercel.app/alias-logo-dark.png"
+                                    src="https://www.aliasconcierge.com/alias-word-dark.png"
                                     alt="Alias"
                                     style="max-width:260px;width:100%;"
                                 />
@@ -556,7 +556,7 @@ class EmailService:
                                 background:black;
                             ">
                                 <img
-                                    src="https://alias-platform.vercel.app/alias-logo-dark.png"
+                                    src="https://www.aliasconcierge.com/alias-word-dark.png"
                                     alt="Alias"
                                     style="max-width:260px;width:100%;"
                                 />
@@ -758,35 +758,50 @@ class EmailService:
                     "subject": text["subject"],
                     "html": f"""
                     <div style="background:#0b0b0b;padding:40px 20px;font-family:Arial,sans-serif;color:white;">
-                        <div style="max-width:600px;margin:0 auto;background:#111111;border:1px solid #222;border-radius:20px;overflow:hidden;">
-                            <div style="padding:40px;">
-                                <h1 style="margin-top:0;font-size:28px;color:white;">
-                                    {text["title"]}
-                                </h1>
+                    <div style="max-width:600px;margin:0 auto;background:#111111;border:1px solid #222;border-radius:20px;overflow:hidden;">
 
-                                <p style="color:#cccccc;font-size:16px;line-height:1.7;">
-                                    {text["body"]}
-                                </p>
+                        <div style="
+                            padding:40px 20px;
+                            text-align:center;
+                            background:black;
+                        ">
+                            <img
+                                src="https://www.aliasconcierge.com/alias-word-dark.png"
+                                alt="Alias"
+                                style="max-width:260px;width:100%;"
+                            />
+                        </div>
 
-                                <div style="margin:30px 0;padding:24px;background:#181818;border-radius:16px;border:1px solid #2a2a2a;">
-                                   <p><strong>{text["guest_label"]}:</strong><br>{customer_name}</p>
-                                    <p><strong>{text["email_label"]}:</strong><br>{customer_email_text}</p>
-                                    <p><strong>{text["phone_label"]}:</strong><br>{customer_phone}</p>
-                                    <p><strong>{text["party_label"]}:</strong><br>{party_size}</p>
-                                    <p><strong>{text["date_label"]}:</strong><br>{reservation_time}</p>
-                                    <p><strong>{text["table_label"]}:</strong><br>{table_text}</p>
-                                    <p><strong>{text["notes_label"]}:</strong><br>{notes_text}</p> 
-                                </div>
+                        <div style="padding:40px;">
 
-                                <p style="color:#aaaaaa;font-size:14px;line-height:1.7;">
-                                    {text["footer"]}
-                                </p>
+                            <h1 style="margin-top:0;font-size:28px;color:white;">
+                                {text["title"]}
+                            </h1>
+
+                            <p style="color:#cccccc;font-size:16px;line-height:1.7;">
+                                {text["body"]}
+                            </p>
+
+                            <div style="margin:30px 0;padding:24px;background:#181818;border-radius:16px;border:1px solid #2a2a2a;">
+                                <p><strong>{text["guest_label"]}:</strong><br>{customer_name}</p>
+                                <p><strong>{text["email_label"]}:</strong><br>{customer_email_text}</p>
+                                <p><strong>{text["phone_label"]}:</strong><br>{customer_phone}</p>
+                                <p><strong>{text["party_label"]}:</strong><br>{party_size}</p>
+                                <p><strong>{text["date_label"]}:</strong><br>{reservation_time}</p>
+                                <p><strong>{text["table_label"]}:</strong><br>{table_text}</p>
+                                <p><strong>{text["notes_label"]}:</strong><br>{notes_text}</p>
                             </div>
+
+                            <p style="color:#aaaaaa;font-size:14px;line-height:1.7;">
+                                {text["footer"]}
+                            </p>
+
                         </div>
                     </div>
-                    """,
-                }
-            )
+                </div>
+                """,
+            }
+        )
 
         except Exception as e:
             logger.exception(
@@ -923,6 +938,18 @@ class EmailService:
                     "html": f"""
                     <div style="background:#0b0b0b;padding:40px 20px;font-family:Arial,sans-serif;color:white;">
                         <div style="max-width:600px;margin:0 auto;background:#111111;border:1px solid #222;border-radius:20px;overflow:hidden;">
+                            <div style="
+                                padding:40px 20px;
+                                text-align:center;
+                                background:black;
+                            ">
+
+                                <img
+                                    src="https://www.aliasconcierge.com/alias-word-dark.png"
+                                    alt="Alias"
+                                    style="max-width:260px;width:100%;"
+                                />
+                            </div>
                             <div style="padding:40px;">
                                 <h1 style="margin-top:0;font-size:28px;color:white;">
                                     {text["title"]}
@@ -1087,7 +1114,18 @@ class EmailService:
                     "html": f"""
                     <div style="background:#0b0b0b;padding:40px 20px;font-family:Arial,sans-serif;color:white;">
                         <div style="max-width:600px;margin:0 auto;background:#111111;border:1px solid #222;border-radius:20px;overflow:hidden;">
-                            <div style="padding:40px;">
+                            <div style="
+                                padding:40px 20px;
+                                text-align:center;
+                                background:black;
+                            ">
+                                <img
+                                    src="https://www.aliasconcierge.com/alias-word-dark.png"
+                                    alt="Alias"
+                                    style="max-width:260px;width:100%;"
+                                />
+                            </div>
+                            <div style="padding:40;">
                                 <h1 style="margin-top:0;font-size:28px;color:white;">
                                     {text["title"]}
                                 </h1>
@@ -1161,7 +1199,7 @@ class EmailService:
                                 background:black;
                             ">
                                 <img
-                                    src="https://alias-platform.vercel.app/alias-logo-dark.png"
+                                    src="https://www.aliasconcierge.com/alias-word-dark.png"
                                     alt="Alias"
                                     style="max-width:260px;width:100%;"
                                 />
