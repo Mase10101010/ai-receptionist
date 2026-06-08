@@ -3,7 +3,10 @@ import uuid
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import CurrentUserDep
+from app.api.dependencies import (
+    CurrentUserDep, 
+    ActiveRestaurantByIdDep,
+)
 from app.db.session import get_db
 from app.models.user import User
 from app.repositories.restaurant_repository import RestaurantRepository
@@ -113,6 +116,7 @@ async def update_restaurant(
     restaurant_id: uuid.UUID,
     payload: RestaurantUpdate,
     current_user: CurrentUserDep,
+    active_restaurant: ActiveRestaurantByIdDep,
     service: RestaurantService = Depends(get_restaurant_service),
 ) -> RestaurantResponse:
     restaurant = await service.update_restaurant(

@@ -56,6 +56,11 @@ async def send_public_message(
 
     if restaurant is None:
         raise NotFoundError(f"Restaurant '{restaurant_slug}' not found")
+    
+    if restaurant.subscription_status != "active":
+        raise NotFoundError(
+            f"Restaurant '{restaurant_slug}' not found"
+        )
 
     session_id, reply, reservation_id = await ai_service.handle_message(
         payload.session_id,

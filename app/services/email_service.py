@@ -1249,3 +1249,61 @@ class EmailService:
 
         except Exception as e:
             logger.exception("Failed to send reset email: %s", e)
+
+    async def send_email_verification_email(
+        self,
+        to_email: str,
+        verification_link: str,
+    ) -> None:
+
+        if not settings.RESEND_API_KEY:
+            logger.warning("RESEND_API_KEY missing - skipping verification email")
+            return
+
+        try:
+            resend.Emails.send(
+                {
+                    "from": settings.EMAIL_FROM,
+                    "to": [to_email],
+                    "subject": "Verify your Alias email",
+                    "html": f"""
+                    <div style="background:#0b0b0b;padding:40px 20px;font-family:Arial,sans-serif;color:white;">
+                        <div style="max-width:600px;margin:0 auto;background:#111111;border:1px solid #222;border-radius:20px;overflow:hidden;">
+                            <div style="padding:40px 20px;text-align:center;background:black;">
+                                <img
+                                    src="https://www.aliasconcierge.com/alias-word-dark.png"
+                                    alt="Alias"
+                                    style="max-width:260px;width:100%;"
+                                />
+                            </div>
+
+                            <div style="padding:40px;">
+                                <h1 style="color:white;">Verify your email</h1>
+
+                                <p style="color:#cccccc;line-height:1.7;">
+                                    Welcome to Alias. Please verify your email address to continue.
+                                </p>
+
+                                <div style="margin:40px 0;text-align:center;">
+                                    <a
+                                        href="{verification_link}"
+                                        style="background:white;color:black;padding:14px 24px;border-radius:12px;text-decoration:none;font-weight:bold;"
+                                    >
+                                        Verify Email
+                                    </a>
+                                </div>
+
+                                <p style="color:#888888;font-size:14px;">
+                                    If you did not create this account, you can ignore this email.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                    """,
+                }
+            )
+
+            logger.info("Verification email sent to %s", to_email)
+
+        except Exception as e:
+            logger.exception("Failed to send verification email: %s", e)

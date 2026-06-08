@@ -100,3 +100,67 @@ ConversationRepoDep = Annotated[
     ConversationRepository, Depends(get_conversation_repository)
 ]
 CurrentUserDep = Annotated[User, Depends(get_current_user)]
+
+async def get_active_restaurant_for_current_user(
+    current_user: CurrentUserDep,
+    db: DbSession,
+):
+    restaurant_repo = RestaurantRepository(db)
+
+    restaurants = await restaurant_repo.list_by_owner(
+        current_user.id
+    )
+
+    if not restaurants:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No restaurant found for this account",
+        )
+
+    restaurant = restaurants[0]
+
+    if restaurant.subscription_status != "active":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Active subscription required",
+        )
+
+    return restaurant
+
+
+ActiveRestaurantDep = Annotated[
+    object,
+    Depends(get_active_restaurant_for_current_user),
+]
+
+async def get_active_restaurant_by_id_for_current_user(
+    restaurant_id: uuid.UUID,
+    current_user: CurrentUserDep,
+    db: DbSession,
+):
+    restaurant_repo = RestaurantRepository(db)
+
+    restaurant = await restaurant_repo.get_by_id_for_owner(
+        restaurant_id=restaurant_id,
+        owner_id=current_user.id,
+    )
+
+    if restaurant is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Restaurant not found",
+        )
+
+    if restaurant.subscription_status != "active":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Active subscription required",
+        )
+
+    return restaurant
+
+
+ActiveRestaurantByIdDep = Annotated[
+    object,
+    Depends(get_active_restaurant_by_id_for_current_user),
+]

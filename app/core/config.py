@@ -61,6 +61,13 @@ class Settings(BaseSettings):
     RESEND_API_KEY: str | None = None
     EMAIL_FROM: str = "Alias Concierge <onboarding@resend.dev>"
 
+    # ── Stripe ─────────────────────────────────────
+    STRIPE_SECRET_KEY: str = ""
+    STRIPE_PUBLISHABLE_KEY: str = "pk_test_51TfEEfGyqcEhhIxh0f7gjnSWC93yUcq9uKYxzo6gY7k1PyE0Pes3zASfDYzQ6y0JHy1QzCLa9sF3M8qLFlmrZV9x00vbGnhw2b"
+    STRIPE_PRICE_ID: str = "price_1TfFtdGyqcEhhIxhqseVD6tQ"
+    STRIPE_TRIAL_DAYS: int = 7
+    STRIPE_WEBHOOK_SECRET: str | None = None
+
     # ── Conversation memory ───────────────────────────────────────────────
     CONVERSATION_HISTORY_LIMIT: int = 20
 

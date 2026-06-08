@@ -1,7 +1,7 @@
 """REST endpoints for managing reservations."""
 import uuid
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, status, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import CurrentUserDep, ReservationServiceDep
@@ -24,7 +24,13 @@ async def get_current_user_restaurant_ids(
     restaurant_repo = RestaurantRepository(db)
     restaurants = await restaurant_repo.list_by_owner(current_user.id)
 
-    return [restaurant.id for restaurant in restaurants]
+    active_restaurants = [
+        restaurant
+        for restaurant in restaurants
+        if restaurant.subscription_status == "active"
+    ]
+
+    return [restaurant.id for restaurant in active_restaurants]
 
 
 @router.post(
@@ -47,7 +53,10 @@ async def create_reservation(
         payload.restaurant_id = current_user_restaurant_ids[0]
 
     if payload.restaurant_id not in current_user_restaurant_ids:
-        raise ValueError("Restaurant does not belong to current user")
+        raise HTTPException(
+            status_code=403,
+            detail="Active subscription required",
+        )
 
     reservation = await service.create_reservation(payload)
     await service.repository.db.commit()

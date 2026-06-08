@@ -6,6 +6,7 @@ from app.models.table import Table
 from app.repositories.restaurant_repository import RestaurantRepository
 from app.repositories.table_repository import TableRepository
 from app.schemas.table import TableCreate, TableUpdate
+from fastapi import HTTPException, status
 
 
 class TableService:
@@ -16,6 +17,13 @@ class TableService:
     ) -> None:
         self.repository = repository
         self.restaurant_repository = restaurant_repository
+
+    def _ensure_active_subscription(self, restaurant) -> None:
+        if restaurant.subscription_status != "active":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Active subscription required",
+            )
 
     async def create_table(
         self,
@@ -30,6 +38,8 @@ class TableService:
 
         if restaurant is None:
             raise NotFoundError("Restaurant not found")
+        
+        self._ensure_active_subscription(restaurant)
 
         existing = await self.repository.get_by_number(
             restaurant_id=restaurant_id,
@@ -62,6 +72,8 @@ class TableService:
         if restaurant is None:
             raise NotFoundError("Restaurant not found")
 
+        self._ensure_active_subscription(restaurant)
+
         return await self.repository.list_by_restaurant(
             restaurant_id=restaurant_id,
         )
@@ -80,6 +92,8 @@ class TableService:
 
         if restaurant is None:
             raise NotFoundError("Restaurant not found")
+        
+        self._ensure_active_subscription(restaurant)
 
         table = await self.repository.get_by_id(
             table_id=table_id,
@@ -117,6 +131,8 @@ class TableService:
 
         if restaurant is None:
             raise NotFoundError("Restaurant not found")
+        
+        self._ensure_active_subscription(restaurant)
 
         table = await self.repository.get_by_id(
             table_id=table_id,
