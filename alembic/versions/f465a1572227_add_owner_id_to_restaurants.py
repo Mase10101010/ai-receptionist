@@ -8,6 +8,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy import inspect
 
 
 # revision identifiers, used by Alembic.
@@ -20,36 +21,51 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     owner_id = "f73da397-3561-412a-a25b-9251a1abc631"
 
-    op.add_column(
-        "restaurants",
-        sa.Column("owner_id", sa.UUID(), nullable=True),
-    )
+    bind = op.get_bind()
+    inspector = inspect(bind)
 
-    op.execute(
-        f"UPDATE restaurants SET owner_id = '{owner_id}' WHERE owner_id IS NULL"
-    )
+    columns = [c["name"] for c in inspector.get_columns("restaurants")]
 
-    op.alter_column(
-        "restaurants",
-        "owner_id",
-        nullable=False,
-    )
+    if "owner_id" not in columns:
+        op.add_column(
+            "restaurants",
+            sa.Column("owner_id", sa.UUID(), nullable=True),
+        )
 
-    op.create_index(
-        op.f("ix_restaurants_owner_id"),
-        "restaurants",
-        ["owner_id"],
-        unique=False,
-    )
+        op.execute(
+            f"UPDATE restaurants SET owner_id = '{owner_id}' WHERE owner_id IS NULL"
+        )
 
-    op.create_foreign_key(
-        "fk_restaurants_owner_id_users",
-        "restaurants",
-        "users",
-        ["owner_id"],
-        ["id"],
-        ondelete="CASCADE",
-    )
+        op.alter_column(
+            "restaurants",
+            "owner_id",
+            nullable=False,
+        )
+
+    indexes = [idx["name"] for idx in inspector.get_indexes("restaurants")]
+
+    if "ix_restaurants_owner_id" not in indexes:
+        op.create_index(
+            "ix_restaurants_owner_id",
+            "restaurants",
+            ["owner_id"],
+            unique=False,
+        )
+
+    foreign_keys = [
+        fk["name"]
+        for fk in inspector.get_foreign_keys("restaurants")
+    ]
+
+    if "fk_restaurants_owner_id_users" not in foreign_keys:
+        op.create_foreign_key(
+            "fk_restaurants_owner_id_users",
+            "restaurants",
+            "users",
+            ["owner_id"],
+            ["id"],
+            ondelete="CASCADE",
+        )
 
 
 def downgrade() -> None:
