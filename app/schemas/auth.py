@@ -40,3 +40,6 @@ class ResetPasswordRequest(BaseModel):
 
 class MessageResponse(BaseModel):
     message: str
+
+class SendVerificationEmailRequest(BaseModel):
+    language: str = "en"

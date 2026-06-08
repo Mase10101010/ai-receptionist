@@ -67,7 +67,11 @@ class AuthService:
 
         return user, token
     
-    async def send_verification_email(self, user: User) -> None:
+    async def send_verification_email(
+            self, 
+            user: User,
+            language: str = "en",
+    ) -> None:
         if user.is_email_verified:
             return
 
@@ -77,6 +81,7 @@ class AuthService:
         await self.email_service.send_email_verification_email(
             to_email=user.email,
             verification_link=verification_link,
+            language=language,
         )
     
     async def request_password_reset(self, email: str) -> None:

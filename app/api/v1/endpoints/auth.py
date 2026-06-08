@@ -7,6 +7,7 @@ from app.schemas.auth import (
     ForgotPasswordRequest,
     MessageResponse,
     ResetPasswordRequest,
+    SendVerificationEmailRequest,
     TokenResponse, 
     UserCreate, 
     UserLogin, 
@@ -111,10 +112,14 @@ async def verify_email(
     response_model=MessageResponse,
 )
 async def send_verification_email(
+    payload: SendVerificationEmailRequest,
     current_user: CurrentUserDep,
     service: AuthService = Depends(get_auth_service),
 ) -> MessageResponse:
-    await service.send_verification_email(current_user)
+    await service.send_verification_email(
+        current_user,
+        language=payload.language,
+    )
 
     return MessageResponse(
         message="Verification email sent.",

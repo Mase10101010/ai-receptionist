@@ -1254,6 +1254,7 @@ class EmailService:
         self,
         to_email: str,
         verification_link: str,
+        language: str = "en",
     ) -> None:
 
         if not settings.RESEND_API_KEY:
@@ -1261,11 +1262,54 @@ class EmailService:
             return
 
         try:
+            translations = {
+                "en": {
+                    "subject": "Verify your Alias email",
+                    "title": "Verify your email",
+                    "description": "Welcome to Alias. Please verify your email address to continue.",
+                    "button": "Verify Email",
+                    "footer": "If you did not create this account, you can ignore this email.",
+                },
+
+                "it": {
+                    "subject": "Verifica la tua email Alias",
+                    "title": "Verifica la tua email",
+                    "description": "Benvenuto in Alias. Verifica il tuo indirizzo email per continuare.",
+                    "button": "Verifica Email",
+                    "footer": "Se non hai creato questo account puoi ignorare questa email.",
+                },
+
+                "es": {
+                    "subject": "Verifica tu correo de Alias",
+                    "title": "Verifica tu correo",
+                    "description": "Bienvenido a Alias. Verifica tu dirección de correo electrónico para continuar.",
+                    "button": "Verificar correo",
+                    "footer": "Si no creaste esta cuenta, puedes ignorar este correo.",
+                },
+
+                "fr": {
+                    "subject": "Vérifiez votre email Alias",
+                    "title": "Vérifiez votre email",
+                    "description": "Bienvenue sur Alias. Veuillez vérifier votre adresse email pour continuer.",
+                    "button": "Vérifier l'email",
+                    "footer": "Si vous n'avez pas créé ce compte, ignorez cet email.",
+                },
+
+                "de": {
+                    "subject": "Alias E-Mail bestätigen",
+                    "title": "E-Mail bestätigen",
+                    "description": "Willkommen bei Alias. Bitte bestätigen Sie Ihre E-Mail-Adresse, um fortzufahren.",
+                    "button": "E-Mail bestätigen",
+                    "footer": "Falls Sie dieses Konto nicht erstellt haben, können Sie diese E-Mail ignorieren.",
+                },
+            }
+
+            content = translations.get(language, translations["en"])
             resend.Emails.send(
                 {
                     "from": settings.EMAIL_FROM,
                     "to": [to_email],
-                    "subject": "Verify your Alias email",
+                    "subject": content["subject"],
                     "html": f"""
                     <div style="background:#0b0b0b;padding:40px 20px;font-family:Arial,sans-serif;color:white;">
                         <div style="max-width:600px;margin:0 auto;background:#111111;border:1px solid #222;border-radius:20px;overflow:hidden;">
@@ -1278,10 +1322,10 @@ class EmailService:
                             </div>
 
                             <div style="padding:40px;">
-                                <h1 style="color:white;">Verify your email</h1>
+                                <h1 style="color:white;">{content["title"]}</h1>
 
                                 <p style="color:#cccccc;line-height:1.7;">
-                                    Welcome to Alias. Please verify your email address to continue.
+                                    {content["description"]}
                                 </p>
 
                                 <div style="margin:40px 0;text-align:center;">
@@ -1289,12 +1333,12 @@ class EmailService:
                                         href="{verification_link}"
                                         style="background:white;color:black;padding:14px 24px;border-radius:12px;text-decoration:none;font-weight:bold;"
                                     >
-                                        Verify Email
+                                        {content["button"]}
                                     </a>
                                 </div>
 
                                 <p style="color:#888888;font-size:14px;">
-                                    If you did not create this account, you can ignore this email.
+                                    {content["footer"]}
                                 </p>
                             </div>
                         </div>
