@@ -35,6 +35,8 @@ class RestaurantService:
 
         if user is None:
             raise NotFoundError("User not found")
+        
+        now = datetime.utcnow()
 
         restaurant = Restaurant(
             owner_id=owner_id,
