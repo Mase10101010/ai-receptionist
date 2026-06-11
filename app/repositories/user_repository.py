@@ -27,3 +27,15 @@ class UserRepository:
             select(User).where(User.id == user_id)
         )
         return result.scalar_one_or_none()
+    async def update(
+        self,
+        user: User,
+        fields: dict,
+    ) -> User:
+        for key, value in fields.items():
+            setattr(user, key, value)
+
+        await self.db.flush()
+        await self.db.refresh(user)
+
+        return user

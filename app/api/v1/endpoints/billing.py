@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import CurrentUserDep
 from app.db.session import get_db
-from app.repositories.restaurant_repository import RestaurantRepository
+from app.repositories.user_repository import UserRepository
 from app.services.stripe_service import StripeService
 
 router = APIRouter(prefix="/billing", tags=["billing"])
@@ -13,6 +13,7 @@ router = APIRouter(prefix="/billing", tags=["billing"])
 class CheckoutSessionRequest(BaseModel):
     success_url: str
     cancel_url: str
+
 
 class CustomerPortalRequest(BaseModel):
     return_url: str
@@ -24,39 +25,34 @@ async def create_checkout_session(
     current_user: CurrentUserDep,
     db: AsyncSession = Depends(get_db),
 ):
-    
-    restaurant_repo = RestaurantRepository(db)
+    user_repo = UserRepository(db)
 
-    restaurants = await restaurant_repo.list_by_owner(
-        current_user.id
-    )
+    user = await user_repo.get_by_id(current_user.id)
 
-    if not restaurants:
+    if user is None:
         raise HTTPException(
             status_code=404,
-            detail="No restaurant found for this account",
+            detail="User not found",
         )
-    
-    restaurant = restaurants[0]
 
-    if restaurant.subscription_status == "active":
+    if user.subscription_status == "active":
         raise HTTPException(
             status_code=400,
             detail="Subscription already active",
         )
 
-    if restaurant.subscription_status == "lifetime":
+    if user.subscription_status == "lifetime":
         raise HTTPException(
             status_code=400,
             detail="Lifetime accounts do not require billing",
         )
-    
+
     session = StripeService.create_checkout_session(
-        customer_email=current_user.email,
+        customer_email=user.email,
         success_url=payload.success_url,
         cancel_url=payload.cancel_url,
-        use_trial=not restaurant.has_used_trial,
-        restaurant_id=str(restaurant.id),
+        use_trial=not user.has_used_trial,
+        user_id=str(user.id),
     )
 
     return {
@@ -64,34 +60,31 @@ async def create_checkout_session(
         "session_id": session.id,
     }
 
+
 @router.post("/customer-portal")
 async def create_customer_portal(
     payload: CustomerPortalRequest,
     current_user: CurrentUserDep,
     db: AsyncSession = Depends(get_db),
 ):
-    restaurant_repo = RestaurantRepository(db)
+    user_repo = UserRepository(db)
 
-    restaurants = await restaurant_repo.list_by_owner(
-        current_user.id
-    )
+    user = await user_repo.get_by_id(current_user.id)
 
-    if not restaurants:
+    if user is None:
         raise HTTPException(
             status_code=404,
-            detail="No restaurant found for this account",
+            detail="User not found",
         )
 
-    restaurant = restaurants[0]
-
-    if not restaurant.stripe_customer_id:
+    if not user.stripe_customer_id:
         raise HTTPException(
             status_code=400,
             detail="No Stripe customer found for this account",
         )
 
     session = StripeService.create_customer_portal_session(
-        customer_id=restaurant.stripe_customer_id,
+        customer_id=user.stripe_customer_id,
         return_url=payload.return_url,
     )
 
@@ -99,34 +92,31 @@ async def create_customer_portal(
         "portal_url": session.url,
     }
 
+
 @router.get("/status")
 async def get_billing_status(
     current_user: CurrentUserDep,
     db: AsyncSession = Depends(get_db),
 ):
-    restaurant_repo = RestaurantRepository(db)
+    user_repo = UserRepository(db)
 
-    restaurants = await restaurant_repo.list_by_owner(
-        current_user.id
-    )
+    user = await user_repo.get_by_id(current_user.id)
 
-    if not restaurants:
+    if user is None:
         raise HTTPException(
             status_code=404,
-            detail="No restaurant found for this account",
+            detail="User not found",
         )
 
-    restaurant = restaurants[0]
-
     return {
-        "restaurant_id": restaurant.id,
-        "restaurant_name": restaurant.name,
-        "subscription_status": restaurant.subscription_status,
-        "has_used_trial": restaurant.has_used_trial,
-        "trial_start_date": restaurant.trial_start_date,
-        "trial_end_date": restaurant.trial_end_date,
-        "subscription_start_date": restaurant.subscription_start_date,
-        "subscription_end_date": restaurant.subscription_end_date,
-        "stripe_customer_id": restaurant.stripe_customer_id,
-        "stripe_subscription_id": restaurant.stripe_subscription_id,
+        "user_id": user.id,
+        "email": user.email,
+        "subscription_status": user.subscription_status,
+        "has_used_trial": user.has_used_trial,
+        "trial_start_date": user.trial_start_date,
+        "trial_end_date": user.trial_end_date,
+        "subscription_start_date": user.subscription_start_date,
+        "subscription_end_date": user.subscription_end_date,
+        "stripe_customer_id": user.stripe_customer_id,
+        "stripe_subscription_id": user.stripe_subscription_id,
     }

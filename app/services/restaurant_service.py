@@ -6,16 +6,18 @@ from app.models.restaurant import Restaurant
 from app.repositories.restaurant_repository import RestaurantRepository
 from app.schemas.restaurant import RestaurantCreate, RestaurantUpdate
 from app.services.email_service import EmailService
-
+from app.repositories.user_repository import UserRepository
 
 class RestaurantService:
     def __init__(
         self, 
         repository: RestaurantRepository,
         email_service: EmailService,
+        user_repository: UserRepository,
     ) -> None:
         self.repository = repository
         self.email_service = email_service
+        self.user_repository = user_repository
 
     async def create_restaurant(
         self,
@@ -29,7 +31,10 @@ class RestaurantService:
         if existing is not None:
             raise ConflictError(f"Restaurant slug '{payload.slug}' already exists")
 
-        now = datetime.utcnow()
+        user = await self.user_repository.get_by_id(owner_id)
+
+        if user is None:
+            raise NotFoundError("User not found")
 
         restaurant = Restaurant(
             owner_id=owner_id,
@@ -47,7 +52,14 @@ class RestaurantService:
             weekly_schedule=payload.weekly_schedule,
             special_closures=payload.special_closures,
             concierge_tone=payload.concierge_tone,
-            subscription_status="trialing",
+            subscription_status=user.subscription_status,
+            stripe_customer_id=user.stripe_customer_id,
+            stripe_subscription_id=user.stripe_subscription_id,
+            trial_start_date=user.trial_start_date,
+            trial_end_date=user.trial_end_date,
+            subscription_start_date=user.subscription_start_date,
+            subscription_end_date=user.subscription_end_date,
+            has_used_trial=user.has_used_trial,
             created_at=now,
             updated_at=now,
         )

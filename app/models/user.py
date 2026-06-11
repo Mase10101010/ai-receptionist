@@ -1,8 +1,10 @@
 import uuid
 
-from sqlalchemy import Boolean, String
+from sqlalchemy import Boolean, String, DateTime
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from datetime import datetime
+
 
 from app.db.base import Base
 
@@ -40,6 +42,48 @@ class User(Base):
     )
 
     is_email_verified: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+    )
+
+    subscription_status: Mapped[str] = mapped_column(
+        String(50),
+        default="inactive",
+        nullable=False,
+    )
+
+    stripe_customer_id: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+
+    stripe_subscription_id: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+
+    trial_start_date: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+    )
+
+    trial_end_date: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+    )
+
+    subscription_start_date: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+    )
+
+    subscription_end_date: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+    )
+
+    has_used_trial: Mapped[bool] = mapped_column(
         Boolean,
         default=False,
         nullable=False,

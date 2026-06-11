@@ -11,7 +11,7 @@ class StripeService:
         customer_email: str,
         success_url: str,
         cancel_url: str,
-        restaurant_id: str,
+        user_id: str,
         use_trial: bool = True,
     ):
         subscription_data={}
@@ -24,7 +24,7 @@ class StripeService:
             payment_method_types=["card"],
             customer_email=customer_email,
             metadata={
-                "restaurant_id": restaurant_id,
+                "user_id": user_id,
             },
             line_items=[
                 {

@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.session import get_db
-from app.repositories.restaurant_repository import RestaurantRepository
+from app.repositories.user_repository import UserRepository
 
 router = APIRouter(
     prefix="/webhooks",
@@ -56,17 +56,17 @@ async def stripe_webhook(
 
     print("Stripe event:", event_type)
 
+    user_repo = UserRepository(db)
+
     if event_type == "checkout.session.completed":
-        restaurant_id = data["metadata"]["restaurant_id"]
+        user_id = data["metadata"].get("user_id")
 
-        if restaurant_id:
-            restaurant_repo = RestaurantRepository(db)
-
-            restaurant = await restaurant_repo.get_by_id(
-                UUID(restaurant_id)
+        if user_id:
+            user = await user_repo.get_by_id(
+                UUID(user_id)
             )
 
-            if restaurant:
+            if user:
                 subscription_id = data["subscription"]
                 customer_id = data["customer"]
 
@@ -92,7 +92,7 @@ async def stripe_webhook(
                         subscription["trial_end"]
                     )
 
-                    first_item= subscription["items"]["data"][0]
+                    first_item = subscription["items"]["data"][0]
 
                     fields["subscription_start_date"] = _ts_to_datetime(
                         first_item["current_period_start"]
@@ -101,56 +101,67 @@ async def stripe_webhook(
                         first_item["current_period_end"]
                     )
 
-                await restaurant_repo.update(
-                    restaurant,
+                await user_repo.update(
+                    user,
                     fields,
                 )
 
                 await db.commit()
-    
-    elif event_type == "customer.subscription.deleted":
 
+    elif event_type == "customer.subscription.deleted":
         subscription_id = data["id"]
 
-        restaurant_repo = RestaurantRepository(db)
+        # Temporary simple lookup strategy.
+        # Later we can add get_by_stripe_subscription_id to UserRepository.
+        # For now, use SQLAlchemy directly.
+        from sqlalchemy import select
+        from app.models.user import User
 
-        restaurants = await restaurant_repo.list_all()
+        result = await db.execute(
+            select(User).where(User.stripe_subscription_id == subscription_id)
+        )
+        user = result.scalar_one_or_none()
 
-        for restaurant in restaurants:
-            if (
-                restaurant.stripe_subscription_id
-                == subscription_id
-            ):
-                await restaurant_repo.update(
-                    restaurant,
-                    {
-                        "subscription_status": "inactive",
-                    }
-                )
+        if user:
+            await user_repo.update(
+                user,
+                {
+                    "subscription_status": "inactive",
+                },
+            )
 
-                await db.commit()
-                break
+            await db.commit()
 
     elif event_type == "customer.subscription.updated":
         subscription_id = data["id"]
 
-        restaurant_repo = RestaurantRepository(db)
+        from sqlalchemy import select
+        from app.models.user import User
 
-        restaurants = await restaurant_repo.list_all()
+        result = await db.execute(
+            select(User).where(User.stripe_subscription_id == subscription_id)
+        )
+        user = result.scalar_one_or_none()
 
-        for restaurant in restaurants:
-            if (
-                restaurant.stripe_subscription_id
-                == subscription_id
-            ):
-                await restaurant_repo.update(
-                    restaurant,
-                    {
-                        "subscription_status": data["status"],
-                    }
-                )
+        if user:
+            fields = {
+                "subscription_status": data["status"],
+            }
 
-                await db.commit()
-                break
+            first_item = data["items"]["data"][0]
+
+            fields["subscription_start_date"] = _ts_to_datetime(
+                first_item["current_period_start"]
+            )
+            fields["subscription_end_date"] = _ts_to_datetime(
+                first_item["current_period_end"]
+            )
+
+            await user_repo.update(
+                user,
+                fields,
+            )
+
+            await db.commit()
 
     return {"received": True}

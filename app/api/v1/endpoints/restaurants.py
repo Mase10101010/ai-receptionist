@@ -15,6 +15,7 @@ from app.schemas.restaurant import (
     RestaurantResponse,
     RestaurantUpdate,
 )
+from app.repositories.user_repository import UserRepository
 from app.services.restaurant_service import RestaurantService
 from app.services.email_service import EmailService
 
@@ -25,9 +26,11 @@ def get_restaurant_service(
     db: AsyncSession = Depends(get_db),
 ) -> RestaurantService:
     repository = RestaurantRepository(db)
+    user_repository = UserRepository(db)
     return RestaurantService(
         repository=repository,
         email_service=EmailService(),
+        user_repository=user_repository,
     )
 
 
