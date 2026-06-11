@@ -59,7 +59,8 @@ async def stripe_webhook(
     user_repo = UserRepository(db)
 
     if event_type == "checkout.session.completed":
-        user_id = data["metadata"].get("user_id")
+        metadata = dict(data["metadata"])
+        user_id = metadata.get("user_id")
 
         if user_id:
             user = await user_repo.get_by_id(
