@@ -35,6 +35,7 @@ class StripeService:
             subscription_data=subscription_data,
             success_url=success_url,
             cancel_url=cancel_url,
+            locale="auto",
         )
     
     @staticmethod
