@@ -9,6 +9,15 @@ from app.models.reservation import Reservation, ReservationStatus
 from app.models.restaurant import Restaurant
 from app.models.table import Table
 from app.models.user import User
+from app.models.integration import (
+    IntegrationMode,
+    IntegrationOperation,
+    IntegrationStatus,
+    OperationStatus,
+    OperationType,
+    ProviderType,
+    RestaurantIntegration,
+)
 
 __all__ = [
     "Conversation",
@@ -19,5 +28,12 @@ __all__ = [
     "User",
     "Restaurant",
     "Table",
+    "IntegrationMode",
+    "IntegrationOperation",
+    "IntegrationStatus",
+    "OperationStatus",
+    "OperationType",
+    "ProviderType",
+    "RestaurantIntegration",
     
 ]

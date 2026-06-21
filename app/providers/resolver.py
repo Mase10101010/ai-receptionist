@@ -32,6 +32,7 @@ from .contract.availability import AliasVenueId
 from .contract.base import ReservationProvider
 from .contract.refs import ProviderType
 from .registry import ProviderRegistry, default_registry
+from .integration_store import SqlAlchemyIntegrationConfigStore
 
 __all__ = [
     "IntegrationConfigStore",
@@ -100,7 +101,7 @@ class ProviderResolver:
         self._config_store = (
             config_store
             if config_store is not None
-            else NullIntegrationConfigStore()
+            else SqlAlchemyIntegrationConfigStore()
         )
         self._decryptor = credential_decryptor
         self._default_timezone = default_timezone
