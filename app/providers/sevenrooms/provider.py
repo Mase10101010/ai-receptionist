@@ -14,6 +14,7 @@ from ..contract.reservation import (
     UpdateReservationRequest,
 )
 from ..registry import default_registry
+from .client import SevenRoomsClient, SevenRoomsClientConfig
 
 
 _SEVENROOMS_CAPABILITIES = ProviderCapabilities(
@@ -21,13 +22,13 @@ _SEVENROOMS_CAPABILITIES = ProviderCapabilities(
     create=True,
     modify=True,
     cancel=True,
-    custom_duration=True,
+    custom_duration=False,
     request_to_book=False,
     waitlist=False,
     deposits=False,
     guest_recognition=True,
     webhooks=True,
-    idempotency_keys=True,
+    idempotency_keys=False,
 )
 
 
@@ -42,6 +43,15 @@ class SevenRoomsProvider:
     ) -> None:
         self._context = context
         self._deps = deps
+        credentials = context.credentials or {}
+        settings = context.settings or {}
+
+        self._client = SevenRoomsClient(
+            SevenRoomsClientConfig(
+                api_key=credentials.get("api_key"),
+                venue_id=settings.get("venue_id"),
+            )
+        )
 
     async def get_availability(
         self,
@@ -74,11 +84,13 @@ class SevenRoomsProvider:
         raise NotImplementedError("SevenRooms get not implemented yet")
 
     async def health_check(self) -> ProviderHealth:
+        healthy = await self._client.health_check()
+
         return ProviderHealth(
             provider=ProviderType.SEVENROOMS,
-            healthy=True,
+            healthy=healthy,
             checked_at=datetime.now(UTC),
-            detail="Skeleton provider loaded",
+            detail="SevenRooms client configured" if healthy else "Missing SevenRooms API key",
         )
 
 
