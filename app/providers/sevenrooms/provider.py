@@ -15,6 +15,7 @@ from ..contract.reservation import (
 )
 from ..registry import default_registry
 from .client import SevenRoomsClient, SevenRoomsClientConfig
+from ..contract.diagnostics import ProviderDiagnostics
 
 
 _SEVENROOMS_CAPABILITIES = ProviderCapabilities(
@@ -92,6 +93,9 @@ class SevenRoomsProvider:
             checked_at=datetime.now(UTC),
             detail="SevenRooms client configured" if healthy else "Missing SevenRooms API key",
         )
+    
+    async def diagnostics(self) -> ProviderDiagnostics:
+        return await self._client.diagnostics()
 
 
 def build_sevenrooms_provider(
