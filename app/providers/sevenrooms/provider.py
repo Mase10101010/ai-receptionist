@@ -49,8 +49,12 @@ class SevenRoomsProvider:
 
         self._client = SevenRoomsClient(
             SevenRoomsClientConfig(
-                api_key=credentials.get("api_key"),
-                venue_id=settings.get("venue_id"),
+                client_id=credentials.get("client_id"),
+                client_secret=credentials.get("client_secret"),
+                venue_id=settings.get("venue_id") or credentials.get("venue_id"),
+                venue_group_id=settings.get("venue_group_id")
+                or credentials.get("venue_group_id"),
+                base_url=settings.get("base_url", "https://api.sevenrooms.com"),
             )
         )
 
