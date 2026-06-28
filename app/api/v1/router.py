@@ -5,6 +5,7 @@ from app.api.v1.endpoints import (
     auth,
     billing,
     chat,
+    integrations,
     reservations,
     restaurants,
     tables,
@@ -28,3 +29,4 @@ api_router.include_router(restaurants.router)
 api_router.include_router(tables.router)
 api_router.include_router(billing.router)
 api_router.include_router(webhooks.router)
+api_router.include_router(integrations.router)
