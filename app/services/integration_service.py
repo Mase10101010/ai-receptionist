@@ -71,3 +71,16 @@ class IntegrationService:
 
         provider = await resolver.resolve(self.db, restaurant_id)
         return await provider.diagnostics()
+    
+    async def get_status(
+        self,
+        *,
+        restaurant_id: uuid.UUID,
+    ):
+        resolver = ProviderResolver(
+            config_store=SqlAlchemyIntegrationConfigStore(),
+            credential_decryptor=FernetCredentialDecryptor(),
+        )
+
+        provider = await resolver.resolve(self.db, restaurant_id)
+        return await provider.diagnostics()

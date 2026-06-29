@@ -39,3 +39,15 @@ async def connect_sevenrooms(
         venue_group_id=payload.venue_group_id,
         base_url=payload.base_url,
     )
+
+@router.get("/{restaurant_id}/status")
+async def get_integration_status(
+    restaurant_id: uuid.UUID,
+    current_user: CurrentUserDep,
+    db: AsyncSession = Depends(get_db),
+):
+    service = IntegrationService(db)
+
+    return await service.get_status(
+        restaurant_id=restaurant_id,
+    )
