@@ -80,3 +80,15 @@ class ProviderHttpClient:
             return {"data": data}
         
         return data 
+    
+    async def get(self, path: str, **kwargs):
+        return await self.request("GET", path, **kwargs)
+    
+    async def post(self, path: str, **kwargs):
+        return await self.request("POST", path, **kwargs)
+    
+    async def put(self, path: str, **kwargs):
+        return await self.request("PUT", path, **kwargs)
+    
+    async def delete(self, path: str, **kwargs):
+        return await self.request("DELETE", path **kwargs)
