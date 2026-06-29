@@ -3,6 +3,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
+from app.core.config import settings
 
 
 class CredentialCryptoError(RuntimeError):
@@ -19,6 +20,14 @@ class CredentialEncryptionService:
     @staticmethod
     def generate_key() -> str:
         return Fernet.generate_key().decode("utf-8")
+    
+    @classmethod
+    def from_settings(cls) -> "CredentialEncryptionService":
+        if not settings.PROVIDER_CREDENTIALS_KEY:
+            raise CredentialCryptoError(
+                "PROVIDER_CREDENTIALS_KEY is not configured"
+            )
+        return cls(settings.PROVIDER_CREDENTIALS_KEY)
 
     async def encrypt(
         self,

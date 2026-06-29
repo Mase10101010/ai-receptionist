@@ -149,6 +149,12 @@ class Settings(BaseSettings):
                 if origin.strip()
             ]
         return []
+    
+     # ── Provider credentials encryption ───────────────────────────────────
+    PROVIDER_CREDENTIALS_KEY: str = Field(
+        default="",
+        description="Fernet key used to encrypt external provider credentials",
+    )
 
 
 @lru_cache
@@ -157,3 +163,4 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
+

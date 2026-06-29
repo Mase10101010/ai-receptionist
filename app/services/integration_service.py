@@ -30,8 +30,7 @@ class IntegrationService:
         venue_group_id: str,
         base_url: str,
     ):
-        key = CredentialEncryptionService.generate_key()
-        crypto = CredentialEncryptionService(key)
+        crypto = CredentialEncryptionService.from_settings()
 
         encrypted_credentials = await crypto.encrypt(
             {
@@ -67,7 +66,7 @@ class IntegrationService:
 
         resolver = ProviderResolver(
             config_store=SqlAlchemyIntegrationConfigStore(),
-            credential_decryptor=FernetCredentialDecryptor(key),
+            credential_decryptor=FernetCredentialDecryptor(),
         )
 
         provider = await resolver.resolve(self.db, restaurant_id)
