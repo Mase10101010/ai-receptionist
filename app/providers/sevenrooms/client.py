@@ -8,6 +8,7 @@ from app.providers.contract.diagnostics import (
     ProviderDiagnostics,
 )
 from app.providers.contract.refs import ProviderType
+from app.providers.http.client import ProviderHttpClient
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,18 +23,59 @@ class SevenRoomsClientConfig:
 class SevenRoomsClient:
     def __init__(self, config: SevenRoomsClientConfig) -> None:
         self._config = config
+        self._http = ProviderHttpClient(base_url=config.base_url)
 
     @property
     def base_url(self) -> str:
         return self._config.base_url
 
-    async def health_check(self) -> bool:
-        return (
-            self._config.client_id is not None
-            and self._config.client_secret is not None
-            and self._config.venue_id is not None
-            and self._config.venue_group_id is not None
+    def _has_required_config(self) -> bool:
+        return bool(
+            self._config.client_id
+            and self._config.client_secret
+            and self._config.venue_id
+            and self._config.venue_group_id
         )
+
+    async def authenticate(self) -> str | None:
+        """Placeholder for SevenRooms OAuth/client-credentials auth.
+
+        Once official API docs are available, this method will call the
+        SevenRooms auth endpoint and return an access token.
+        """
+        if not self._config.client_id or not self._config.client_secret:
+            return None
+
+        return "mock-sevenrooms-token"
+
+    async def build_headers(self) -> dict[str, str]:
+        token = await self.authenticate()
+
+        if token is None:
+            return {}
+
+        return {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+        }
+    
+    async def get_reservation(self, reservation_id: str) -> dict | None:
+        """Fetch a SevenRooms reservation by external id.
+
+        Placeholder endpoint until official SevenRooms API documentation
+        confirms the exact path and response shape.
+        """
+        headers = await self.build_headers()
+
+        if not headers:
+            return None
+
+        raise NotImplementedError(
+            "SevenRooms get reservation endpoint not implemented yet"
+        )
+
+    async def health_check(self) -> bool:
+        return self._has_required_config()
 
     async def diagnostics(self) -> ProviderDiagnostics:
         checks: list[ProviderDiagnosticCheck] = []

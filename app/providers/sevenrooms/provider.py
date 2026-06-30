@@ -16,6 +16,7 @@ from ..contract.reservation import (
 from ..registry import default_registry
 from .client import SevenRoomsClient, SevenRoomsClientConfig
 from ..contract.diagnostics import ProviderDiagnostics
+from .mapper import to_contract_reservation 
 
 
 _SEVENROOMS_CAPABILITIES = ProviderCapabilities(
@@ -57,6 +58,8 @@ class SevenRoomsProvider:
                 base_url=settings.get("base_url", "https://api.sevenrooms.com"),
             )
         )
+        
+        self._mapper = to_contract_reservation
 
     async def get_availability(
         self,
@@ -86,7 +89,12 @@ class SevenRoomsProvider:
         self,
         ref: ProviderRef,
     ) -> Reservation | None:
-        raise NotImplementedError("SevenRooms get not implemented yet")
+        payload = await self._client.get_reservation(ref.external_id)
+        
+        if payload is None:
+            return None
+        
+        return self._mapper(payload)
 
     async def health_check(self) -> ProviderHealth:
         healthy = await self._client.health_check()
