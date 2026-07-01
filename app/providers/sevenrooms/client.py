@@ -145,3 +145,18 @@ class SevenRoomsClient:
             state=state,
             checks=checks,
         )
+    
+    async def get_availability(self, payload: dict) -> dict:
+        """Fetch SevenRooms availability.
+
+        Placeholder until official SevenRooms API documentation confirms
+        endpoint, query params, and response shape.
+        """
+        headers = await self.build_headers()
+
+        if not headers:
+            return {"slots": []}
+
+        raise NotImplementedError(
+            "SevenRooms availability endpoint not implemented yet"
+        )

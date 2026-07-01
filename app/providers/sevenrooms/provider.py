@@ -16,7 +16,7 @@ from ..contract.reservation import (
 from ..registry import default_registry
 from .client import SevenRoomsClient, SevenRoomsClientConfig
 from ..contract.diagnostics import ProviderDiagnostics
-from .mapper import to_contract_reservation 
+from .mapper import to_availability_result, to_contract_reservation 
 from collections.abc import Callable
 
 
@@ -44,11 +44,13 @@ class SevenRoomsProvider:
         context: ProviderContext,
         deps: ProviderDependencies,
         client: SevenRoomsClient | None = None,
-        mapper: Callable[[dict], Reservation] = to_contract_reservation,
+        reservation_mapper: Callable[[dict], Reservation] = to_contract_reservation,
+        availability_mapper: Callable[[dict], AvailabilityResult] = to_availability_result,
     ) -> None:
         self._context = context
         self._deps = deps
-        self._mapper = mapper 
+        self._reservation_mapper = reservation_mapper 
+        self._availability_mapper = availability_mapper
 
         credentials = context.credentials or {}
         settings = context.settings or {}
@@ -70,7 +72,18 @@ class SevenRoomsProvider:
         self,
         query: AvailabilityQuery,
     ) -> AvailabilityResult:
-        raise NotImplementedError("SevenRooms availability not implemented yet")
+        payload = await self._client.get_availability(
+            {
+                "venue_id": str(query.venue_id),
+                "party_size": query.party_size,
+                "window_start": query.window.start.isoformat(),
+                "window_end": query.window.end.isoformat(),
+                "seating_preference": query.seating_preference,
+                "channel": query.channel.value,
+            }
+        )
+
+        return self._availability_mapper(payload)
 
     async def create_reservation(
         self,
@@ -99,7 +112,7 @@ class SevenRoomsProvider:
         if payload is None:
             return None
         
-        return self._mapper(payload)
+        return self._reservation_mapper(payload)
 
     async def health_check(self) -> ProviderHealth:
         healthy = await self._client.health_check()

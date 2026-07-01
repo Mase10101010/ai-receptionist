@@ -5,6 +5,10 @@ from app.providers.contract.refs import ProviderRef, ProviderType
 from app.providers.contract.reservation import ReservationStatus
 from app.providers.sevenrooms.provider import SevenRoomsProvider
 
+from datetime import UTC, datetime
+
+from app.providers.contract.availability import AvailabilityQuery, Channel, TimeRange
+
 
 
 class FakeSevenRoomsClient:
@@ -92,3 +96,55 @@ async def test_get_reservation_returns_none_when_payload_not_found():
     )
 
     assert reservation is None
+
+class FakeSevenRoomsAvailabilityClient:
+    async def get_availability(self, payload: dict) -> dict:
+        return {
+            "slots": [
+                {
+                    "start": "2026-07-01T19:30:00Z",
+                    "duration_minutes": 90,
+                    "area": "Main Dining Room",
+                    "party_size_max": 4,
+                    "slot_token": "slot-token-123",
+                    "is_request_only": False,
+                }
+            ]
+        }
+
+
+@pytest.mark.asyncio
+async def test_get_availability_returns_contract_result():
+    provider = SevenRoomsProvider(
+        context=ProviderContext(
+            venue_id="venue-id",
+            provider_type=ProviderType.SEVENROOMS,
+            credentials={
+                "client_id": "client-id",
+                "client_secret": "client-secret",
+            },
+            settings={
+                "venue_id": "venue-id",
+                "venue_group_id": "venue-group-id",
+            },
+        ),
+        deps=ProviderDependencies(session=None),
+        client=FakeSevenRoomsAvailabilityClient(),
+    )
+
+    result = await provider.get_availability(
+        AvailabilityQuery(
+            venue_id="11111111-1111-1111-1111-111111111111",
+            party_size=2,
+            window=TimeRange(
+                start=datetime(2026, 7, 1, 18, 0, tzinfo=UTC),
+                end=datetime(2026, 7, 1, 22, 0, tzinfo=UTC),
+            ),
+            channel=Channel.CONCIERGE_CHAT,
+        )
+    )
+
+    assert len(result.slots) == 1
+    assert result.slots[0].area == "Main Dining Room"
+    assert result.slots[0].party_size_max == 4
+    assert str(result.slots[0].slot_token) == "slot-token-123"
