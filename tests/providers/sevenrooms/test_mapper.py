@@ -5,7 +5,10 @@ import pytest
 from app.providers.contract.errors import ProviderValidationError
 from app.providers.contract.refs import ProviderType
 from app.providers.contract.reservation import ReservationStatus
-from app.providers.sevenrooms.mapper import to_contract_reservation
+from app.providers.sevenrooms.mapper import (
+    to_availability_result,
+    to_contract_reservation,
+)
 
 
 def test_maps_sevenrooms_reservation_payload_to_contract_reservation():
@@ -71,3 +74,37 @@ def test_raises_validation_error_for_unknown_status():
 
     with pytest.raises(ProviderValidationError):
         to_contract_reservation(payload)
+
+def test_maps_sevenrooms_availability_payload_to_contract_result():
+    payload = {
+        "slots": [
+            {
+                "start": "2026-07-01T19:30:00Z",
+                "duration_minutes": 90,
+                "area": "Main Dining Room",
+                "party_size_max": 4,
+                "slot_token": "slot-token-123",
+                "is_request_only": False,
+            }
+        ]
+    }
+
+    result = to_availability_result(payload)
+
+    assert len(result.slots) == 1
+
+    slot = result.slots[0]
+
+    assert slot.start == datetime.fromisoformat("2026-07-01T19:30:00+00:00")
+    assert slot.duration.total_seconds() == 90 * 60
+    assert slot.area == "Main Dining Room"
+    assert slot.party_size_max == 4
+    assert str(slot.slot_token) == "slot-token-123"
+    assert slot.is_request_only is False
+
+
+def test_raises_validation_error_when_availability_slots_are_missing():
+    payload = {}
+
+    with pytest.raises(ProviderValidationError):
+        to_availability_result(payload)

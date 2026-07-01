@@ -5,6 +5,11 @@ from app.providers.contract.errors import ProviderValidationError
 from app.providers.contract.guest import GuestProfile
 from app.providers.contract.refs import ProviderRef, ProviderType
 from app.providers.contract.reservation import Reservation, ReservationStatus
+from app.providers.contract.availability import (
+    AvailabilityResult,
+    AvailabilitySlot,
+    SlotToken,
+)
 
 
 _STATUS_MAP: dict[str, ReservationStatus] = {
@@ -152,4 +157,45 @@ def to_contract_reservation(payload: dict[str, Any]) -> Reservation:
         source=ProviderType.SEVENROOMS,
         created_at=created_at,
         updated_at=updated_at,
+    )
+
+def to_availability_slot(payload: dict[str, Any]) -> AvailabilitySlot:
+    start = _parse_datetime(payload.get("start"), "start")
+
+    duration_minutes = payload.get("duration_minutes")
+    party_size_max = payload.get("party_size_max")
+    slot_token = payload.get("slot_token")
+
+    return AvailabilitySlot(
+        start=start,
+        duration=timedelta(minutes=duration_minutes)
+        if isinstance(duration_minutes, int) and duration_minutes > 0
+        else None,
+        area=payload.get("area"),
+        party_size_max=party_size_max
+        if isinstance(party_size_max, int) and party_size_max > 0
+        else None,
+        slot_token=SlotToken(value=slot_token)
+        if isinstance(slot_token, str) and slot_token.strip()
+        else None,
+        is_request_only=bool(payload.get("is_request_only", False)),
+    )
+
+
+def to_availability_result(payload: dict[str, Any]) -> AvailabilityResult:
+    slots_payload = payload.get("slots")
+
+    if not isinstance(slots_payload, list):
+        raise ProviderValidationError(
+            "Missing SevenRooms availability slots list",
+            provider=ProviderType.SEVENROOMS,
+        )
+
+    return AvailabilityResult(
+        slots=[
+            to_availability_slot(slot)
+            for slot in slots_payload
+            if isinstance(slot, dict)
+        ],
+        queried_at=_now(),
     )
