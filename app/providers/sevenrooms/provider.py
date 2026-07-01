@@ -89,7 +89,31 @@ class SevenRoomsProvider:
         self,
         request: CreateReservationRequest,
     ) -> Reservation:
-        raise NotImplementedError("SevenRooms create not implemented yet")
+        payload = await self._client.create_reservation(
+            {
+                "venue_id": str(request.venue_id),
+                "guest": {
+                    "full_name": request.guest.full_name,
+                    "phone": request.guest.phone,
+                    "email": request.guest.email,
+                    "notes": request.guest.notes,
+                },
+                "party_size": request.party_size,
+                "start": request.start.isoformat(),
+                "duration_minutes": int(request.duration.total_seconds() // 60)
+                if request.duration
+                else None,
+                "slot_token": str(request.slot_token)
+                if request.slot_token
+                else None,
+                "special_requests": request.special_requests,
+                "tags": request.tags,
+                "channel": request.channel.value,
+                "client_token": str(request.client_token),
+            }
+        )
+
+        return self._reservation_mapper(payload)
 
     async def update_reservation(
         self,

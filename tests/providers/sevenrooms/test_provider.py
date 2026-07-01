@@ -9,6 +9,13 @@ from datetime import UTC, datetime
 
 from app.providers.contract.availability import AvailabilityQuery, Channel, TimeRange
 
+from datetime import timedelta
+
+from app.providers.contract.availability import SlotToken
+from app.providers.contract.guest import GuestInput
+from app.providers.contract.refs import IdempotencyKey
+from app.providers.contract.reservation import CreateReservationRequest
+
 
 
 class FakeSevenRoomsClient:
@@ -148,3 +155,61 @@ async def test_get_availability_returns_contract_result():
     assert result.slots[0].area == "Main Dining Room"
     assert result.slots[0].party_size_max == 4
     assert str(result.slots[0].slot_token) == "slot-token-123"
+
+class FakeSevenRoomsCreateClient:
+    async def create_reservation(self, payload: dict) -> dict:
+        return {
+            "id": "sr-created-123",
+            "status": "confirmed",
+            "party_size": payload["party_size"],
+            "start": payload["start"],
+            "duration_minutes": payload["duration_minutes"],
+            "special_requests": payload["special_requests"],
+            "guest": payload["guest"],
+        }
+
+
+@pytest.mark.asyncio
+async def test_create_reservation_returns_contract_reservation():
+    provider = SevenRoomsProvider(
+        context=ProviderContext(
+            venue_id="venue-id",
+            provider_type=ProviderType.SEVENROOMS,
+            credentials={
+                "client_id": "client-id",
+                "client_secret": "client-secret",
+            },
+            settings={
+                "venue_id": "venue-id",
+                "venue_group_id": "venue-group-id",
+            },
+        ),
+        deps=ProviderDependencies(session=None),
+        client=FakeSevenRoomsCreateClient(),
+    )
+
+    reservation = await provider.create_reservation(
+        CreateReservationRequest(
+            venue_id="11111111-1111-1111-1111-111111111111",
+            guest=GuestInput(
+                full_name="Test Guest",
+                phone="+61400000000",
+                email="guest@example.com",
+            ),
+            party_size=2,
+            start=datetime(2026, 7, 1, 19, 30, tzinfo=UTC),
+            duration=timedelta(minutes=90),
+            slot_token=SlotToken(value="slot-token-123"),
+            special_requests="Window table if possible",
+            tags=["vip"],
+            channel=Channel.CONCIERGE_CHAT,
+            client_token=IdempotencyKey(value="create-token-123"),
+        )
+    )
+
+    assert reservation.ref.provider == ProviderType.SEVENROOMS
+    assert reservation.ref.external_id == "sr-created-123"
+    assert reservation.status == ReservationStatus.CONFIRMED
+    assert reservation.party_size == 2
+    assert reservation.guest.full_name == "Test Guest"
+    assert reservation.special_requests == "Window table if possible"
