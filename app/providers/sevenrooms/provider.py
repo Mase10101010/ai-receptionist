@@ -146,7 +146,15 @@ class SevenRoomsProvider:
         self,
         request: CancelReservationRequest,
     ) -> Reservation:
-        raise NotImplementedError("SevenRooms cancel not implemented yet")
+        payload = await self._client.cancel_reservation(
+            request.ref.external_id,
+            {
+                "reason": request.reason,
+                "client_token": str(request.client_token),
+            },
+        )
+
+        return self._reservation_mapper(payload)
 
     async def get_reservation(
         self,

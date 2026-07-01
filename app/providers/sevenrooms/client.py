@@ -198,3 +198,24 @@ class SevenRoomsClient:
         raise NotImplementedError(
             "SevenRooms update reservation endpoint not implemented yet"
         )
+    
+    async def cancel_reservation(
+        self,
+        reservation_id: str,
+        payload: dict,
+    ) -> dict:
+        """Cancel a SevenRooms reservation.
+
+        Placeholder until official SevenRooms API documentation confirms
+        endpoint, request body, and response shape.
+        """
+        headers = await self.build_headers()
+
+        if not headers:
+            raise NotImplementedError(
+                "SevenRooms cancel reservation requires authentication"
+            )
+
+        raise NotImplementedError(
+            "SevenRooms cancel reservation endpoint not implemented yet"
+        )

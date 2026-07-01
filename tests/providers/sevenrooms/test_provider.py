@@ -14,7 +14,7 @@ from datetime import timedelta
 from app.providers.contract.availability import SlotToken
 from app.providers.contract.guest import GuestInput
 from app.providers.contract.refs import IdempotencyKey
-from app.providers.contract.reservation import CreateReservationRequest
+from app.providers.contract.reservation import CreateReservationRequest, CancelReservationRequest
 
 from app.providers.contract.reservation import (
     CreateReservationRequest,
@@ -279,3 +279,54 @@ async def test_update_reservation_returns_contract_reservation():
     assert reservation.party_size == 3
     assert reservation.guest.full_name == "Updated Guest"
     assert reservation.special_requests == "Updated request"
+
+class FakeSevenRoomsCancelClient:
+    async def cancel_reservation(self, reservation_id: str, payload: dict) -> dict:
+        return {
+            "id": reservation_id,
+            "status": "cancelled",
+            "party_size": 2,
+            "start": "2026-07-01T19:30:00Z",
+            "duration_minutes": 90,
+            "special_requests": payload["reason"],
+            "guest": {
+                "full_name": "Cancelled Guest",
+                "email": "cancelled@example.com",
+            },
+        }
+
+
+@pytest.mark.asyncio
+async def test_cancel_reservation_returns_contract_reservation():
+    provider = SevenRoomsProvider(
+        context=ProviderContext(
+            venue_id="venue-id",
+            provider_type=ProviderType.SEVENROOMS,
+            credentials={
+                "client_id": "client-id",
+                "client_secret": "client-secret",
+            },
+            settings={
+                "venue_id": "venue-id",
+                "venue_group_id": "venue-group-id",
+            },
+        ),
+        deps=ProviderDependencies(session=None),
+        client=FakeSevenRoomsCancelClient(),
+    )
+
+    reservation = await provider.cancel_reservation(
+        CancelReservationRequest(
+            ref=ProviderRef(
+                provider=ProviderType.SEVENROOMS,
+                external_id="sr-res-123",
+            ),
+            reason="Guest requested cancellation",
+            client_token=IdempotencyKey(value="cancel-token-123"),
+        )
+    )
+
+    assert reservation.ref.external_id == "sr-res-123"
+    assert reservation.status == ReservationStatus.CANCELLED
+    assert reservation.guest.full_name == "Cancelled Guest"
+    assert reservation.special_requests == "Guest requested cancellation"
