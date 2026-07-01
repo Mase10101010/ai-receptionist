@@ -16,6 +16,13 @@ from app.providers.contract.guest import GuestInput
 from app.providers.contract.refs import IdempotencyKey
 from app.providers.contract.reservation import CreateReservationRequest
 
+from app.providers.contract.reservation import (
+    CreateReservationRequest,
+    ReservationChanges,
+    ReservationStatus,
+    UpdateReservationRequest,
+)
+
 
 
 class FakeSevenRoomsClient:
@@ -213,3 +220,62 @@ async def test_create_reservation_returns_contract_reservation():
     assert reservation.party_size == 2
     assert reservation.guest.full_name == "Test Guest"
     assert reservation.special_requests == "Window table if possible"
+
+class FakeSevenRoomsUpdateClient:
+    async def update_reservation(self, reservation_id: str, payload: dict) -> dict:
+        return {
+            "id": reservation_id,
+            "status": "confirmed",
+            "party_size": payload["party_size"],
+            "start": payload["start"],
+            "duration_minutes": payload["duration_minutes"],
+            "special_requests": payload["special_requests"],
+            "tags": payload["tags"],
+            "guest": {
+                "full_name": "Updated Guest",
+                "email": "updated@example.com",
+            },
+        }
+
+
+@pytest.mark.asyncio
+async def test_update_reservation_returns_contract_reservation():
+    provider = SevenRoomsProvider(
+        context=ProviderContext(
+            venue_id="venue-id",
+            provider_type=ProviderType.SEVENROOMS,
+            credentials={
+                "client_id": "client-id",
+                "client_secret": "client-secret",
+            },
+            settings={
+                "venue_id": "venue-id",
+                "venue_group_id": "venue-group-id",
+            },
+        ),
+        deps=ProviderDependencies(session=None),
+        client=FakeSevenRoomsUpdateClient(),
+    )
+
+    reservation = await provider.update_reservation(
+        UpdateReservationRequest(
+            ref=ProviderRef(
+                provider=ProviderType.SEVENROOMS,
+                external_id="sr-res-123",
+            ),
+            changes=ReservationChanges(
+                start=datetime(2026, 7, 1, 20, 0, tzinfo=UTC),
+                party_size=3,
+                duration=timedelta(minutes=120),
+                special_requests="Updated request",
+                tags=["vip", "updated"],
+            ),
+            client_token=IdempotencyKey(value="update-token-123"),
+        )
+    )
+
+    assert reservation.ref.external_id == "sr-res-123"
+    assert reservation.status == ReservationStatus.CONFIRMED
+    assert reservation.party_size == 3
+    assert reservation.guest.full_name == "Updated Guest"
+    assert reservation.special_requests == "Updated request"

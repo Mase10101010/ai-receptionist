@@ -119,7 +119,28 @@ class SevenRoomsProvider:
         self,
         request: UpdateReservationRequest,
     ) -> Reservation:
-        raise NotImplementedError("SevenRooms update not implemented yet")
+        changes = request.changes
+
+        payload = await self._client.update_reservation(
+            request.ref.external_id,
+            {
+                "start": changes.start.isoformat()
+                if changes.start
+                else None,
+                "party_size": changes.party_size,
+                "duration_minutes": int(changes.duration.total_seconds() // 60)
+                if changes.duration
+                else None,
+                "special_requests": changes.special_requests,
+                "tags": changes.tags,
+                "slot_token": str(changes.slot_token)
+                if changes.slot_token
+                else None,
+                "client_token": str(request.client_token),
+            },
+        )
+
+        return self._reservation_mapper(payload)
 
     async def cancel_reservation(
         self,
