@@ -38,9 +38,10 @@ async def test_get_reservation_returns_contract_reservation():
             },
         ),
         deps=ProviderDependencies(session=None),
+        client = FakeSevenRoomsClient()
     )
 
-    provider._client = FakeSevenRoomsClient()
+    
 
     reservation = await provider.get_reservation(
         ProviderRef(
@@ -78,9 +79,10 @@ async def test_get_reservation_returns_none_when_payload_not_found():
             },
         ),
         deps=ProviderDependencies(session=None),
+        client = FakeSevenRoomsClientNotFound()
     )
 
-    provider._client = FakeSevenRoomsClientNotFound()
+    
 
     reservation = await provider.get_reservation(
         ProviderRef(

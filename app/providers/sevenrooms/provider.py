@@ -17,6 +17,7 @@ from ..registry import default_registry
 from .client import SevenRoomsClient, SevenRoomsClientConfig
 from ..contract.diagnostics import ProviderDiagnostics
 from .mapper import to_contract_reservation 
+from collections.abc import Callable
 
 
 _SEVENROOMS_CAPABILITIES = ProviderCapabilities(
@@ -42,13 +43,17 @@ class SevenRoomsProvider:
         self,
         context: ProviderContext,
         deps: ProviderDependencies,
+        client: SevenRoomsClient | None = None,
+        mapper: Callable[[dict], Reservation] = to_contract_reservation,
     ) -> None:
         self._context = context
         self._deps = deps
+        self._mapper = mapper 
+
         credentials = context.credentials or {}
         settings = context.settings or {}
 
-        self._client = SevenRoomsClient(
+        self._client = client or SevenRoomsClient(
             SevenRoomsClientConfig(
                 client_id=credentials.get("client_id"),
                 client_secret=credentials.get("client_secret"),
