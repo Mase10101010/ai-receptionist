@@ -264,6 +264,42 @@ class FakeProviderRaisesUnexpectedError(FakeProvider):
 class FakeResolverRaisesUnexpectedError:
     async def resolve(self, session, venue_id):
         return FakeProviderRaisesUnexpectedError()
+    
+class FakeProviderCreateFails(FakeProvider):
+    async def create_reservation(
+        self,
+        request: CreateReservationRequest,
+    ) -> Reservation:
+        raise RuntimeError("Create failed")
+
+
+class FakeResolverCreateFails:
+    async def resolve(self, session, venue_id):
+        return FakeProviderCreateFails()
+    
+class FakeProviderUpdateFails(FakeProvider):
+    async def update_reservation(
+        self,
+        request: UpdateReservationRequest,
+    ) -> Reservation:
+        raise RuntimeError("Update failed")
+
+
+class FakeResolverUpdateFails:
+    async def resolve(self, session, venue_id):
+        return FakeProviderUpdateFails()
+
+class FakeProviderCancelFails(FakeProvider):
+    async def cancel_reservation(
+        self,
+        request: CancelReservationRequest,
+    ) -> Reservation:
+        raise RuntimeError("Cancel failed")
+
+
+class FakeResolverCancelFails:
+    async def resolve(self, session, venue_id):
+        return FakeProviderCancelFails()
 
 
 @pytest.mark.asyncio
@@ -345,6 +381,7 @@ async def test_service_resolves_provider_for_update_reservation():
     service = AliasConnectReservationService(
         session=None,
         resolver=FakeResolver(),
+        operation_store_factory=FakeOperationStore,
     )
 
     reservation = await service.update_reservation(
@@ -372,6 +409,7 @@ async def test_service_resolves_provider_for_cancel_reservation():
     service = AliasConnectReservationService(
         session=None,
         resolver=FakeResolver(),
+        operation_store_factory=FakeOperationStore,
     )
 
     reservation = await service.cancel_reservation(
@@ -522,3 +560,155 @@ async def test_create_reservation_tracks_successful_operation():
     assert store.succeeded is True
     assert store.failed is False
     assert store.last_operation.external_ref == "created-123"
+
+@pytest.mark.asyncio
+async def test_update_reservation_tracks_successful_operation():
+    service = AliasConnectReservationService(
+        session=None,
+        resolver=FakeResolver(),
+        operation_store_factory=FakeOperationStore,
+    )
+
+    await service.update_reservation(
+        AliasVenueId(UUID("11111111-1111-1111-1111-111111111111")),
+        UpdateReservationRequest(
+            ref=ProviderRef(
+                provider=ProviderType.SEVENROOMS,
+                external_id="updated-123",
+            ),
+            changes=ReservationChanges(
+                party_size=3,
+                special_requests="Updated request",
+            ),
+            client_token=IdempotencyKey(value="update-tracking-test"),
+        ),
+    )
+
+    store = FakeOperationStore.last_instance
+
+    assert store.created is True
+    assert store.succeeded is True
+    assert store.failed is False
+    assert store.last_operation.external_ref == "updated-123"
+
+@pytest.mark.asyncio
+async def test_cancel_reservation_tracks_successful_operation():
+    service = AliasConnectReservationService(
+        session=None,
+        resolver=FakeResolver(),
+        operation_store_factory=FakeOperationStore,
+    )
+
+    await service.cancel_reservation(
+        AliasVenueId(UUID("11111111-1111-1111-1111-111111111111")),
+        CancelReservationRequest(
+            ref=ProviderRef(
+                provider=ProviderType.SEVENROOMS,
+                external_id="cancelled-123",
+            ),
+            reason="Guest requested cancellation",
+            client_token=IdempotencyKey(value="cancel-tracking-test"),
+        ),
+    )
+
+    store = FakeOperationStore.last_instance
+
+    assert store.created is True
+    assert store.succeeded is True
+    assert store.failed is False
+    assert store.last_operation.external_ref == "cancelled-123"
+
+@pytest.mark.asyncio
+async def test_create_reservation_tracks_failed_operation():
+    service = AliasConnectReservationService(
+        session=None,
+        resolver=FakeResolverCreateFails(),
+        operation_store_factory=FakeOperationStore,
+    )
+
+    with pytest.raises(UnknownProviderError):
+        await service.create_reservation(
+            CreateReservationRequest(
+                venue_id=AliasVenueId(
+                    UUID("11111111-1111-1111-1111-111111111111")
+                ),
+                guest=GuestInput(
+                    full_name="Test Guest",
+                    email="guest@example.com",
+                ),
+                party_size=2,
+                start=datetime(2026, 7, 1, 19, 30, tzinfo=UTC),
+                duration=timedelta(minutes=90),
+                channel=Channel.CONCIERGE_CHAT,
+                client_token=IdempotencyKey(value="create-failure-test"),
+            )
+        )
+
+    store = FakeOperationStore.last_instance
+
+    assert store.created is True
+    assert store.succeeded is False
+    assert store.failed is True
+    assert store.last_operation.error_detail is not None
+
+@pytest.mark.asyncio
+async def test_update_reservation_tracks_failed_operation():
+    service = AliasConnectReservationService(
+        session=None,
+        resolver=FakeResolverUpdateFails(),
+        operation_store_factory=FakeOperationStore,
+    )
+
+    with pytest.raises(UnknownProviderError):
+        await service.update_reservation(
+            AliasVenueId(UUID("11111111-1111-1111-1111-111111111111")),
+            UpdateReservationRequest(
+                ref=ProviderRef(
+                    provider=ProviderType.SEVENROOMS,
+                    external_id="updated-123",
+                ),
+                changes=ReservationChanges(
+                    party_size=3,
+                ),
+                client_token=IdempotencyKey(
+                    value="update-failure-test",
+                ),
+            ),
+        )
+
+    store = FakeOperationStore.last_instance
+
+    assert store.created is True
+    assert store.succeeded is False
+    assert store.failed is True
+    assert store.last_operation.error_detail is not None
+
+@pytest.mark.asyncio
+async def test_cancel_reservation_tracks_failed_operation():
+    service = AliasConnectReservationService(
+        session=None,
+        resolver=FakeResolverCancelFails(),
+        operation_store_factory=FakeOperationStore,
+    )
+
+    with pytest.raises(UnknownProviderError):
+        await service.cancel_reservation(
+            AliasVenueId(UUID("11111111-1111-1111-1111-111111111111")),
+            CancelReservationRequest(
+                ref=ProviderRef(
+                    provider=ProviderType.SEVENROOMS,
+                    external_id="cancelled-123",
+                ),
+                reason="Test cancellation failure",
+                client_token=IdempotencyKey(
+                    value="cancel-failure-test",
+                ),
+            ),
+        )
+
+    store = FakeOperationStore.last_instance
+
+    assert store.created is True
+    assert store.succeeded is False
+    assert store.failed is True
+    assert store.last_operation.error_detail is not None

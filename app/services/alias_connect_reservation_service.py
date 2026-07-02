@@ -127,9 +127,32 @@ class AliasConnectReservationService:
             "update_reservation",
             provider,
         )
-        return await self._execute_provider_operation(
-            lambda: provider.update_reservation(request)
+
+        store = self._operation_store()
+        operation = await store.create_operation(
+            idempotency_key=str(request.client_token),
+            restaurant_id=venue_id,
+            provider_type=provider.provider_type,
+            operation_type=OperationType.UPDATE_RESERVATION,
         )
+
+        try:
+            reservation = await self._execute_provider_operation(
+                lambda: provider.update_reservation(request)
+            )
+        except Exception as exc:
+            await store.mark_failed(
+                operation,
+                error_detail=str(exc),
+            )
+            raise
+
+        await store.mark_succeeded(
+            operation,
+            external_ref=reservation.ref.external_id,
+        )
+
+        return reservation
 
     async def cancel_reservation(
         self,
@@ -145,9 +168,32 @@ class AliasConnectReservationService:
             "cancel_reservation",
             provider,
         )
-        return await self._execute_provider_operation(
-            lambda: provider.cancel_reservation(request)
+
+        store = self._operation_store()
+        operation = await store.create_operation(
+            idempotency_key=str(request.client_token),
+            restaurant_id=venue_id,
+            provider_type=provider.provider_type,
+            operation_type=OperationType.CANCEL_RESERVATION,
         )
+
+        try:
+            reservation = await self._execute_provider_operation(
+                lambda: provider.cancel_reservation(request)
+            )
+        except Exception as exc:
+            await store.mark_failed(
+                operation,
+                error_detail=str(exc),
+            )
+            raise
+
+        await store.mark_succeeded(
+            operation,
+            external_ref=reservation.ref.external_id,
+        )
+
+        return reservation
     
     def _require_capability(
         self,
