@@ -149,14 +149,45 @@ class FakeOperation:
 
 
 class FakeOperationStore:
+    last_instance = None
+
     def __init__(self, session):
         self.created = False
         self.succeeded = False
         self.failed = False
+        self.last_operation = None
+
+        FakeOperationStore.last_instance = self
 
     async def create_operation(self, **kwargs):
         self.created = True
-        return FakeOperation()
+        self.last_operation = FakeOperation()
+        return self.last_operation
+
+    async def mark_succeeded(
+        self,
+        operation,
+        *,
+        external_ref=None,
+    ):
+        self.succeeded = True
+        operation.external_ref = external_ref
+        return operation
+
+    async def mark_failed(
+        self,
+        operation,
+        *,
+        error_detail=None,
+    ):
+        self.failed = True
+        operation.error_detail = error_detail
+        return operation
+
+    async def create_operation(self, **kwargs):
+        self.created = True
+        self.last_operation = FakeOperation()
+        return self.last_operation
 
     async def mark_succeeded(
         self,
@@ -459,3 +490,35 @@ async def test_service_wraps_unexpected_provider_errors():
                 external_id="boom-123",
             ),
         )
+
+@pytest.mark.asyncio
+async def test_create_reservation_tracks_successful_operation():
+    service = AliasConnectReservationService(
+        session=None,
+        resolver=FakeResolver(),
+        operation_store_factory=FakeOperationStore,
+    )
+
+    await service.create_reservation(
+        CreateReservationRequest(
+            venue_id=AliasVenueId(
+                UUID("11111111-1111-1111-1111-111111111111")
+            ),
+            guest=GuestInput(
+                full_name="Test Guest",
+                email="guest@example.com",
+            ),
+            party_size=2,
+            start=datetime(2026, 7, 1, 19, 30, tzinfo=UTC),
+            duration=timedelta(minutes=90),
+            channel=Channel.CONCIERGE_CHAT,
+            client_token=IdempotencyKey(value="tracking-test"),
+        )
+    )
+
+    store = FakeOperationStore.last_instance
+
+    assert store.created is True
+    assert store.succeeded is True
+    assert store.failed is False
+    assert store.last_operation.external_ref == "created-123"
