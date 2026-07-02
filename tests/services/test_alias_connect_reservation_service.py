@@ -27,8 +27,18 @@ from app.providers.contract.reservation import (
     UpdateReservationRequest,
 )
 
+from app.providers.contract.capabilities import (
+    ProviderCapabilities,
+)
+from app.providers.contract.errors import UnsupportedOperation
+
 
 class FakeProvider:
+    capabilities = ProviderCapabilities(
+        create=True,
+        modify=True,
+        cancel=True,
+    )
     async def get_availability(
         self,
         query: AvailabilityQuery,
@@ -131,6 +141,43 @@ class FakeResolver:
         venue_id,
     ):
         return FakeProvider()
+    
+class FakeProviderWithoutCreate(FakeProvider):
+    capabilities = ProviderCapabilities()
+
+
+class FakeResolverWithoutCreate:
+    async def resolve(
+        self,
+        session,
+        venue_id,
+    ):
+        return FakeProviderWithoutCreate()
+    
+class FakeProviderWithoutModify(FakeProvider):
+    capabilities = ProviderCapabilities(
+        create=True,
+        modify=False,
+        cancel=True,
+    )
+
+
+class FakeResolverWithoutModify:
+    async def resolve(self, session, venue_id):
+        return FakeProviderWithoutModify()
+
+
+class FakeProviderWithoutCancel(FakeProvider):
+    capabilities = ProviderCapabilities(
+        create=True,
+        modify=True,
+        cancel=False,
+    )
+
+
+class FakeResolverWithoutCancel:
+    async def resolve(self, session, venue_id):
+        return FakeProviderWithoutCancel()
 
 
 @pytest.mark.asyncio
@@ -256,3 +303,70 @@ async def test_service_resolves_provider_for_cancel_reservation():
     assert reservation.status == ReservationStatus.CANCELLED
     assert reservation.guest.full_name == "Cancelled Guest"
     assert reservation.special_requests == "Guest requested cancellation"
+
+@pytest.mark.asyncio
+async def test_create_reservation_fails_when_capability_not_supported():
+    service = AliasConnectReservationService(
+        session=None,
+        resolver=FakeResolverWithoutCreate(),
+    )
+
+    with pytest.raises(UnsupportedOperation):
+        await service.create_reservation(
+            CreateReservationRequest(
+                venue_id=AliasVenueId(
+                    UUID("11111111-1111-1111-1111-111111111111")
+                ),
+                guest=GuestInput(
+                    full_name="Test Guest",
+                    email="guest@example.com",
+                ),
+                party_size=2,
+                start=datetime(2026, 7, 1, 19, 30, tzinfo=UTC),
+                duration=timedelta(minutes=90),
+                channel=Channel.CONCIERGE_CHAT,
+                client_token=IdempotencyKey(value="capability-test"),
+            )
+        )
+
+@pytest.mark.asyncio
+async def test_update_reservation_fails_when_capability_not_supported():
+    service = AliasConnectReservationService(
+        session=None,
+        resolver=FakeResolverWithoutModify(),
+    )
+
+    with pytest.raises(UnsupportedOperation):
+        await service.update_reservation(
+            AliasVenueId(UUID("11111111-1111-1111-1111-111111111111")),
+            UpdateReservationRequest(
+                ref=ProviderRef(
+                    provider=ProviderType.SEVENROOMS,
+                    external_id="update-test",
+                ),
+                changes=ReservationChanges(
+                    party_size=4,
+                ),
+                client_token=IdempotencyKey(value="update-capability"),
+            ),
+        )
+
+@pytest.mark.asyncio
+async def test_cancel_reservation_fails_when_capability_not_supported():
+    service = AliasConnectReservationService(
+        session=None,
+        resolver=FakeResolverWithoutCancel(),
+    )
+
+    with pytest.raises(UnsupportedOperation):
+        await service.cancel_reservation(
+            AliasVenueId(UUID("11111111-1111-1111-1111-111111111111")),
+            CancelReservationRequest(
+                ref=ProviderRef(
+                    provider=ProviderType.SEVENROOMS,
+                    external_id="cancel-test",
+                ),
+                reason="Test",
+                client_token=IdempotencyKey(value="cancel-capability"),
+            ),
+        )

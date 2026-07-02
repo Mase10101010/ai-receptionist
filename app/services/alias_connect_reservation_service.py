@@ -22,6 +22,8 @@ from app.providers.contract.reservation import (
 )
 from app.providers.resolver import ProviderResolver
 
+from app.providers.contract.errors import UnsupportedOperation
+
 
 class AliasConnectReservationService:
     def __init__(
@@ -61,7 +63,13 @@ class AliasConnectReservationService:
             self._session,
             request.venue_id,
         )
+        self._require_capability(
+            provider.capabilities.create,
+            "create_reservation",
+            provider,
+        )
         return await provider.create_reservation(request)
+    
 
     async def update_reservation(
         self,
@@ -71,6 +79,11 @@ class AliasConnectReservationService:
         provider = await self._resolver.resolve(
             self._session,
             venue_id,
+        )
+        self._require_capability(
+            provider.capabilities.modify,
+            "update_reservation",
+            provider,
         )
         return await provider.update_reservation(request)
 
@@ -83,4 +96,22 @@ class AliasConnectReservationService:
             self._session,
             venue_id,
         )
+        self._require_capability(
+            provider.capabilities.cancel,
+            "cancel_reservation",
+            provider,
+        )
         return await provider.cancel_reservation(request)
+    
+    def _require_capability(
+        self,
+        supported: bool,
+        operation: str,
+        provider,
+    ) -> None:
+        if supported:
+            return
+
+        raise UnsupportedOperation(
+            f"Provider does not support operation: {operation}",
+        )
