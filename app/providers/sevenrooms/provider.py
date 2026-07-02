@@ -36,6 +36,7 @@ _SEVENROOMS_CAPABILITIES = ProviderCapabilities(
 
 
 class SevenRoomsProvider:
+    provider_type = ProviderType.SEVENROOMS
     capabilities = _SEVENROOMS_CAPABILITIES
     source_of_truth = SourceOfTruth.EXTERNAL
 

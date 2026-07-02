@@ -53,6 +53,7 @@ class ReservationProvider(Protocol):
 
     capabilities: ProviderCapabilities
     source_of_truth: SourceOfTruth
+    provider_type: ProviderType
 
     async def get_availability(
         self, query: AvailabilityQuery

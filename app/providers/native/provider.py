@@ -74,6 +74,7 @@ def _translate_errors() -> Iterator[None]:
 
 
 class AliasNativeProvider:
+    provider_type = ProviderType.ALIAS_NATIVE
     capabilities: ProviderCapabilities = _NATIVE_CAPABILITIES
     source_of_truth: SourceOfTruth = SourceOfTruth.ALIAS
 

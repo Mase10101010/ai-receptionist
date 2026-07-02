@@ -33,6 +33,7 @@ from app.providers.contract.capabilities import (
 from app.providers.contract.errors import UnsupportedOperation, ProviderNotFound, UnknownProviderError
 
 class FakeProvider:
+    provider_type = ProviderType.SEVENROOMS
     capabilities = ProviderCapabilities(
         create=True,
         modify=True,
@@ -141,6 +142,42 @@ class FakeResolver:
     ):
         return FakeProvider()
     
+class FakeOperation:
+    def __init__(self):
+        self.external_ref = None
+        self.error_detail = None
+
+
+class FakeOperationStore:
+    def __init__(self, session):
+        self.created = False
+        self.succeeded = False
+        self.failed = False
+
+    async def create_operation(self, **kwargs):
+        self.created = True
+        return FakeOperation()
+
+    async def mark_succeeded(
+        self,
+        operation,
+        *,
+        external_ref=None,
+    ):
+        self.succeeded = True
+        operation.external_ref = external_ref
+        return operation
+
+    async def mark_failed(
+        self,
+        operation,
+        *,
+        error_detail=None,
+    ):
+        self.failed = True
+        operation.error_detail = error_detail
+        return operation
+    
 class FakeProviderWithoutCreate(FakeProvider):
     capabilities = ProviderCapabilities()
 
@@ -227,6 +264,7 @@ async def test_service_resolves_provider_for_create_reservation():
     service = AliasConnectReservationService(
         session=None,
         resolver=FakeResolver(),
+        operation_store_factory=FakeOperationStore,
     )
 
     reservation = await service.create_reservation(
