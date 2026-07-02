@@ -22,7 +22,11 @@ from app.providers.contract.reservation import (
 )
 from app.providers.resolver import ProviderResolver
 
-from app.providers.contract.errors import UnsupportedOperation
+from app.providers.contract.errors import (
+    ProviderError,
+    UnknownProviderError,
+    UnsupportedOperation,
+)
 
 
 class AliasConnectReservationService:
@@ -42,7 +46,9 @@ class AliasConnectReservationService:
             self._session,
             query.venue_id,
         )
-        return await provider.get_availability(query)
+        return await self._execute_provider_operation(
+            lambda: provider.get_availability(query)
+        )
 
     async def get_reservation(
         self,
@@ -53,7 +59,9 @@ class AliasConnectReservationService:
             self._session,
             venue_id,
         )
-        return await provider.get_reservation(ref)
+        return await self._execute_provider_operation(
+            lambda: provider.get_reservation(ref)
+        )
 
     async def create_reservation(
         self,
@@ -68,7 +76,9 @@ class AliasConnectReservationService:
             "create_reservation",
             provider,
         )
-        return await provider.create_reservation(request)
+        return await self._execute_provider_operation(
+            lambda: provider.create_reservation(request)
+        )
     
 
     async def update_reservation(
@@ -85,7 +95,9 @@ class AliasConnectReservationService:
             "update_reservation",
             provider,
         )
-        return await provider.update_reservation(request)
+        return await self._execute_provider_operation(
+            lambda: provider.update_reservation(request)
+        )
 
     async def cancel_reservation(
         self,
@@ -101,7 +113,9 @@ class AliasConnectReservationService:
             "cancel_reservation",
             provider,
         )
-        return await provider.cancel_reservation(request)
+        return await self._execute_provider_operation(
+            lambda: provider.cancel_reservation(request)
+        )
     
     def _require_capability(
         self,
@@ -115,3 +129,16 @@ class AliasConnectReservationService:
         raise UnsupportedOperation(
             f"Provider does not support operation: {operation}",
         )
+    
+    async def _execute_provider_operation(
+        self,
+        operation,
+    ):
+        try:
+            return await operation()
+        except ProviderError:
+            raise
+        except Exception as exc:
+            raise UnknownProviderError(
+                "Unexpected provider operation failure",
+            ) from exc

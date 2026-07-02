@@ -30,8 +30,7 @@ from app.providers.contract.reservation import (
 from app.providers.contract.capabilities import (
     ProviderCapabilities,
 )
-from app.providers.contract.errors import UnsupportedOperation
-
+from app.providers.contract.errors import UnsupportedOperation, ProviderNotFound, UnknownProviderError
 
 class FakeProvider:
     capabilities = ProviderCapabilities(
@@ -178,6 +177,25 @@ class FakeProviderWithoutCancel(FakeProvider):
 class FakeResolverWithoutCancel:
     async def resolve(self, session, venue_id):
         return FakeProviderWithoutCancel()
+    
+class FakeProviderRaisesProviderError(FakeProvider):
+    async def get_reservation(self, ref: ProviderRef) -> Reservation | None:
+        raise ProviderNotFound("Reservation not found")
+
+
+class FakeResolverRaisesProviderError:
+    async def resolve(self, session, venue_id):
+        return FakeProviderRaisesProviderError()
+
+
+class FakeProviderRaisesUnexpectedError(FakeProvider):
+    async def get_reservation(self, ref: ProviderRef) -> Reservation | None:
+        raise RuntimeError("Raw provider crash")
+
+
+class FakeResolverRaisesUnexpectedError:
+    async def resolve(self, session, venue_id):
+        return FakeProviderRaisesUnexpectedError()
 
 
 @pytest.mark.asyncio
@@ -368,5 +386,38 @@ async def test_cancel_reservation_fails_when_capability_not_supported():
                 ),
                 reason="Test",
                 client_token=IdempotencyKey(value="cancel-capability"),
+            ),
+        )
+
+@pytest.mark.asyncio
+async def test_service_preserves_normalized_provider_errors():
+    service = AliasConnectReservationService(
+        session=None,
+        resolver=FakeResolverRaisesProviderError(),
+    )
+
+    with pytest.raises(ProviderNotFound):
+        await service.get_reservation(
+            AliasVenueId(UUID("11111111-1111-1111-1111-111111111111")),
+            ProviderRef(
+                provider=ProviderType.SEVENROOMS,
+                external_id="missing-123",
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_service_wraps_unexpected_provider_errors():
+    service = AliasConnectReservationService(
+        session=None,
+        resolver=FakeResolverRaisesUnexpectedError(),
+    )
+
+    with pytest.raises(UnknownProviderError):
+        await service.get_reservation(
+            AliasVenueId(UUID("11111111-1111-1111-1111-111111111111")),
+            ProviderRef(
+                provider=ProviderType.SEVENROOMS,
+                external_id="boom-123",
             ),
         )
