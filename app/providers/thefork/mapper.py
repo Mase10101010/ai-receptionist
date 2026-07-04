@@ -1,0 +1,200 @@
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+from app.providers.contract.availability import (
+    AvailabilityResult,
+    AvailabilitySlot,
+    SlotToken,
+)
+from app.providers.contract.errors import ProviderValidationError
+from app.providers.contract.guest import GuestProfile
+from app.providers.contract.refs import ProviderRef, ProviderType
+from app.providers.contract.reservation import Reservation, ReservationStatus
+
+
+_STATUS_MAP: dict[str, ReservationStatus] = {
+    "pending": ReservationStatus.REQUESTED,
+    "requested": ReservationStatus.REQUESTED,
+    "confirmed": ReservationStatus.CONFIRMED,
+    "accepted": ReservationStatus.CONFIRMED,
+    "seated": ReservationStatus.SEATED,
+    "completed": ReservationStatus.COMPLETED,
+    "finished": ReservationStatus.COMPLETED,
+    "cancelled": ReservationStatus.CANCELLED,
+    "canceled": ReservationStatus.CANCELLED,
+    "no_show": ReservationStatus.NO_SHOW,
+    "noshow": ReservationStatus.NO_SHOW,
+    "waitlisted": ReservationStatus.WAITLISTED,
+}
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _ensure_aware(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value
+
+
+def _parse_datetime(value: Any, field_name: str) -> datetime:
+    if isinstance(value, datetime):
+        return _ensure_aware(value)
+
+    if isinstance(value, str) and value.strip():
+        try:
+            normalized = value.replace("Z", "+00:00")
+            return _ensure_aware(datetime.fromisoformat(normalized))
+        except ValueError as exc:
+            raise ProviderValidationError(
+                f"Invalid TheFork datetime field: {field_name}",
+                provider=ProviderType.THEFORK,
+            ) from exc
+
+    raise ProviderValidationError(
+        f"Missing TheFork datetime field: {field_name}",
+        provider=ProviderType.THEFORK,
+    )
+
+
+def _require_str(payload: dict[str, Any], field_name: str) -> str:
+    value = payload.get(field_name)
+
+    if isinstance(value, str) and value.strip():
+        return value
+
+    raise ProviderValidationError(
+        f"Missing TheFork required field: {field_name}",
+        provider=ProviderType.THEFORK,
+    )
+
+
+def _require_int(payload: dict[str, Any], field_name: str) -> int:
+    value = payload.get(field_name)
+
+    if isinstance(value, int) and value > 0:
+        return value
+
+    raise ProviderValidationError(
+        f"Missing or invalid TheFork required field: {field_name}",
+        provider=ProviderType.THEFORK,
+    )
+
+
+def _map_status(value: Any) -> ReservationStatus:
+    if not isinstance(value, str) or not value.strip():
+        raise ProviderValidationError(
+            "Missing TheFork required field: status",
+            provider=ProviderType.THEFORK,
+        )
+
+    normalized = value.strip().lower()
+
+    try:
+        return _STATUS_MAP[normalized]
+    except KeyError as exc:
+        raise ProviderValidationError(
+            f"Unmapped TheFork reservation status: {value}",
+            provider=ProviderType.THEFORK,
+        ) from exc
+
+
+def to_guest_profile(payload: dict[str, Any]) -> GuestProfile:
+    guest = payload.get("guest")
+
+    if not isinstance(guest, dict):
+        raise ProviderValidationError(
+            "Missing TheFork guest object",
+            provider=ProviderType.THEFORK,
+        )
+
+    return GuestProfile(
+        full_name=_require_str(guest, "full_name"),
+        phone=guest.get("phone"),
+        email=guest.get("email"),
+        tags=guest.get("tags") or [],
+        notes=guest.get("notes"),
+    )
+
+
+def to_contract_reservation(payload: dict[str, Any]) -> Reservation:
+    external_id = _require_str(payload, "id")
+    party_size = _require_int(payload, "party_size")
+    start = _parse_datetime(payload.get("start"), "start")
+
+    created_at = (
+        _parse_datetime(payload.get("created_at"), "created_at")
+        if payload.get("created_at")
+        else _now()
+    )
+    updated_at = (
+        _parse_datetime(payload.get("updated_at"), "updated_at")
+        if payload.get("updated_at")
+        else created_at
+    )
+
+    duration_minutes = payload.get("duration_minutes")
+
+    return Reservation(
+        ref=ProviderRef(
+            provider=ProviderType.THEFORK,
+            external_id=external_id,
+        ),
+        alias_id=None,
+        status=_map_status(payload.get("status")),
+        guest=to_guest_profile(payload),
+        party_size=party_size,
+        start=start,
+        duration=timedelta(minutes=duration_minutes)
+        if isinstance(duration_minutes, int) and duration_minutes > 0
+        else None,
+        area=payload.get("area"),
+        special_requests=payload.get("special_requests"),
+        tags=payload.get("tags") or [],
+        source=ProviderType.THEFORK,
+        created_at=created_at,
+        updated_at=updated_at,
+    )
+
+
+def to_availability_slot(payload: dict[str, Any]) -> AvailabilitySlot:
+    start = _parse_datetime(payload.get("start"), "start")
+
+    duration_minutes = payload.get("duration_minutes")
+    party_size_max = payload.get("party_size_max")
+    slot_token = payload.get("slot_token")
+
+    return AvailabilitySlot(
+        start=start,
+        duration=timedelta(minutes=duration_minutes)
+        if isinstance(duration_minutes, int) and duration_minutes > 0
+        else None,
+        area=payload.get("area"),
+        party_size_max=party_size_max
+        if isinstance(party_size_max, int) and party_size_max > 0
+        else None,
+        slot_token=SlotToken(value=slot_token)
+        if isinstance(slot_token, str) and slot_token.strip()
+        else None,
+        is_request_only=bool(payload.get("is_request_only", False)),
+    )
+
+
+def to_availability_result(payload: dict[str, Any]) -> AvailabilityResult:
+    slots_payload = payload.get("slots")
+
+    if not isinstance(slots_payload, list):
+        raise ProviderValidationError(
+            "Missing TheFork availability slots list",
+            provider=ProviderType.THEFORK,
+        )
+
+    return AvailabilityResult(
+        slots=[
+            to_availability_slot(slot)
+            for slot in slots_payload
+            if isinstance(slot, dict)
+        ],
+        queried_at=_now(),
+    )
