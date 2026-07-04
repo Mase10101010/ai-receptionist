@@ -33,6 +33,12 @@ from collections.abc import Callable
 from app.models.integration import OperationType
 from app.providers.operation_store import SqlAlchemyOperationStore
 
+from time import perf_counter
+
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
+
 
 class AliasConnectReservationService:
     def __init__(
@@ -94,6 +100,8 @@ class AliasConnectReservationService:
             operation_type=OperationType.CREATE_RESERVATION,
         )
 
+        started_at = perf_counter()
+
         try:
             reservation = await self._execute_provider_operation(
                 lambda: provider.create_reservation(request)
@@ -103,11 +111,27 @@ class AliasConnectReservationService:
                 operation,
                 error_detail=str(exc),
             )
+            self._log_operation_result(
+                provider_type=provider.provider_type,
+                operation="create_reservation",
+                restaurant_id=request.venue_id,
+                result="failed",
+                duration_ms=(perf_counter() - started_at) * 1000,
+                error=exc.__class__.__name__,
+            )
             raise
 
         await store.mark_succeeded(
             operation,
             external_ref=reservation.ref.external_id,
+        )
+
+        self._log_operation_result(
+            provider_type=provider.provider_type,
+            operation="create_reservation",
+            restaurant_id=request.venue_id,
+            result="succeeded",
+            duration_ms=(perf_counter() - started_at) * 1000,
         )
 
         return reservation
@@ -136,6 +160,8 @@ class AliasConnectReservationService:
             operation_type=OperationType.UPDATE_RESERVATION,
         )
 
+        started_at = perf_counter()
+
         try:
             reservation = await self._execute_provider_operation(
                 lambda: provider.update_reservation(request)
@@ -145,11 +171,27 @@ class AliasConnectReservationService:
                 operation,
                 error_detail=str(exc),
             )
+            self._log_operation_result(
+                provider_type=provider.provider_type,
+                operation="update_reservation",
+                restaurant_id=venue_id,
+                result="failed",
+                duration_ms=(perf_counter() - started_at) * 1000,
+                error=exc.__class__.__name__,
+            )
             raise
 
         await store.mark_succeeded(
             operation,
             external_ref=reservation.ref.external_id,
+        )
+
+        self._log_operation_result(
+            provider_type=provider.provider_type,
+            operation="update_reservation",
+            restaurant_id=venue_id,
+            result="succeeded",
+            duration_ms=(perf_counter() - started_at) * 1000,
         )
 
         return reservation
@@ -177,6 +219,8 @@ class AliasConnectReservationService:
             operation_type=OperationType.CANCEL_RESERVATION,
         )
 
+        started_at = perf_counter()
+
         try:
             reservation = await self._execute_provider_operation(
                 lambda: provider.cancel_reservation(request)
@@ -186,11 +230,27 @@ class AliasConnectReservationService:
                 operation,
                 error_detail=str(exc),
             )
+            self._log_operation_result(
+                provider_type=provider.provider_type,
+                operation="cancel_reservation",
+                restaurant_id=venue_id,
+                result="failed",
+                duration_ms=(perf_counter() - started_at) * 1000,
+                error=exc.__class__.__name__,
+            )
             raise
 
         await store.mark_succeeded(
             operation,
             external_ref=reservation.ref.external_id,
+        )
+
+        self._log_operation_result(
+            provider_type=provider.provider_type,
+            operation="cancel_reservation",
+            restaurant_id=venue_id,
+            result="succeeded",
+            duration_ms=(perf_counter() - started_at) * 1000,
         )
 
         return reservation
@@ -223,3 +283,25 @@ class AliasConnectReservationService:
         
     def _operation_store(self) -> SqlAlchemyOperationStore:
         return self._operation_store_factory(self._session)
+    
+    def _log_operation_result(
+        self,
+        *,
+        provider_type,
+        operation: str,
+        restaurant_id,
+        result: str,
+        duration_ms: float,
+        error: str | None = None,
+    ) -> None:
+        logger.info(
+            "alias_connect_operation",
+            extra={
+                "provider": getattr(provider_type, "value", str(provider_type)),
+                "operation": operation,
+                "restaurant_id": str(restaurant_id),
+                "result": result,
+                "duration_ms": round(duration_ms, 2),
+                "error": error,
+            },
+        )
