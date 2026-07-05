@@ -62,6 +62,9 @@ class TheForkProvider:
                 restaurant_id=settings.get("restaurant_id")
                 or credentials.get("restaurant_id"),
                 base_url=settings.get("base_url", "https://api.thefork.com"),
+                token_url=settings.get("token_url")
+                or credentials.get("token_url"),
+                scopes=tuple(settings.get("scopes") or ()),
             )
         )
 

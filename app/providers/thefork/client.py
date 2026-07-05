@@ -17,6 +17,8 @@ class TheForkClientConfig:
     client_secret: str | None = None
     restaurant_id: str | None = None
     base_url: str = "https://api.thefork.com"
+    token_url: str | None = None
+    scopes: tuple[str, ...] = ()
 
 
 class TheForkClient:
@@ -35,7 +37,29 @@ class TheForkClient:
         if not self._config.client_id or not self._config.client_secret:
             return None
 
-        return "mock-thefork-token"
+        if not self._config.token_url:
+            return "mock-thefork-token"
+
+        payload = {
+            "grant_type": "client_credentials",
+            "client_id": self._config.client_id,
+            "client_secret": self._config.client_secret,
+        }
+
+        if self._config.scopes:
+            payload["scope"] = " ".join(self._config.scopes)
+
+        response = await self._http.post(
+            self._config.token_url,
+            json=payload,
+        )
+
+        token = response.get("access_token")
+
+        if not isinstance(token, str) or not token:
+            return None
+
+        return token
 
     async def build_headers(self) -> dict[str, str]:
         token = await self.authenticate()
