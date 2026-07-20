@@ -54,6 +54,12 @@ class TableService:
             table_code=self._generate_table_code(),
             table_number=payload.table_number,
             seats=payload.seats,
+            x=payload.x,
+            y=payload.y,
+            width=payload.width,
+            height=payload.height,
+            shape=payload.shape,
+            rotation=payload.rotation,
             is_active=True,
         )
 
