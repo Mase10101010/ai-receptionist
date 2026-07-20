@@ -51,6 +51,42 @@ class Table(Base):
         nullable=False,
     )
 
+    x: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        nullable=False,
+    )
+
+    y: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        nullable=False,
+    )
+
+    width: Mapped[int] = mapped_column(
+        Integer,
+        default=80,
+        nullable=False,
+    )
+
+    height: Mapped[int] = mapped_column(
+        Integer,
+        default=80,
+        nullable=False,
+    )
+
+    shape: Mapped[str] = mapped_column(
+        String(20),
+        default="square",
+        nullable=False,
+    )
+
+    rotation: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        nullable=False,
+    )
+
     is_active: Mapped[bool] = mapped_column(
         Boolean,
         default=True,
