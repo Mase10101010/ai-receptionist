@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import CurrentUserDep
@@ -8,6 +8,7 @@ from app.db.session import get_db
 from app.repositories.restaurant_repository import RestaurantRepository
 from app.repositories.table_repository import TableRepository
 from app.schemas.table import TableCreate, TableResponse, TableUpdate
+from app.repositories.floor_plan_repository import FloorPlanRepository
 from app.services.table_service import TableService
 
 router = APIRouter(
@@ -22,6 +23,7 @@ def get_table_service(
     return TableService(
         repository=TableRepository(db),
         restaurant_repository=RestaurantRepository(db),
+        floor_plan_repository=FloorPlanRepository(db),
     )
 
 
@@ -29,14 +31,19 @@ def get_table_service(
 async def list_tables(
     restaurant_id: uuid.UUID,
     current_user: CurrentUserDep,
+    floor_plan_id: uuid.UUID | None = Query(default=None),
     service: TableService = Depends(get_table_service),
 ) -> list[TableResponse]:
     tables = await service.list_tables(
         restaurant_id=restaurant_id,
         owner_id=current_user.id,
+        floor_plan_id=floor_plan_id,
     )
 
-    return [TableResponse.model_validate(table) for table in tables]
+    return [
+        TableResponse.model_validate(table)
+        for table in tables
+    ]
 
 
 @router.post("", response_model=TableResponse)

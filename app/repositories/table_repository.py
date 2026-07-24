@@ -91,3 +91,23 @@ class TableRepository:
     async def delete(self, table: Table) -> None:
         await self.db.delete(table)
         await self.db.flush()
+
+    async def list_by_floor_plan(
+        self,
+        restaurant_id: uuid.UUID,
+        floor_plan_id: uuid.UUID,
+        include_inactive: bool = False,
+    ) -> list[Table]:
+        stmt = (
+            select(Table)
+            .where(
+                Table.restaurant_id == restaurant_id,
+                Table.floor_plan_id == floor_plan_id,
+            )
+            .order_by(Table.table_number.asc())
+        )
+        if not include_inactive:
+            stmt = stmt.where(Table.is_active == True)
+
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())

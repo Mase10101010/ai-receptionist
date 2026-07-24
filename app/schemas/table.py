@@ -9,6 +9,7 @@ TableShape = Literal["square", "round", "rectangle"]
 
 
 class TableCreate(BaseModel):
+    floor_plan_id: uuid.UUID
     table_number: str = Field(..., min_length=1, max_length=50)
     seats: int = Field(..., ge=1)
 
@@ -18,12 +19,14 @@ class TableCreate(BaseModel):
     height: int = Field(default=80, ge=40, le=400)
     shape: TableShape = "square"
     rotation: int = Field(default=0, ge=0, lt=360)
+    
 
 
 class TableUpdate(BaseModel):
     table_number: str | None = Field(default=None, min_length=1, max_length=50)
     seats: int | None = Field(default=None, ge=1)
     is_active: bool | None = None
+    floor_plan_id: uuid.UUID | None = None
 
     x: int | None = Field(default=None, ge=0)
     y: int | None = Field(default=None, ge=0)
@@ -38,6 +41,7 @@ class TableResponse(BaseModel):
 
     id: uuid.UUID
     restaurant_id: uuid.UUID
+    floor_plan_id: uuid.UUID
     table_code: str
     table_number: str
     seats: int
