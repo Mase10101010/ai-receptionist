@@ -13,6 +13,10 @@ from app.repositories.restaurant_repository import (
 from app.repositories.service_area_repository import (
     ServiceAreaRepository,
 )
+
+from app.repositories.table_placement_repository import (
+    TablePlacementRepository,
+)
 from app.schemas.floor_plan import (
     FloorPlanCreate,
     FloorPlanUpdate,
@@ -23,10 +27,12 @@ class FloorPlanService:
     def __init__(
         self,
         repository: FloorPlanRepository,
+        placement_repository: TablePlacementRepository,
         service_area_repository: ServiceAreaRepository,
         restaurant_repository: RestaurantRepository,
     ) -> None:
         self.repository = repository
+        self.placement_repository = placement_repository
         self.service_area_repository = service_area_repository
         self.restaurant_repository = restaurant_repository
 
@@ -151,6 +157,50 @@ class FloorPlanService:
                 service_area_id=area_id,
             )
 
+        active_plans = [
+            plan
+            for plan in existing_plans
+            if plan.is_active
+        ]
+
+        plans_with_counts = []
+
+        for plan in active_plans:
+            placement_count = (
+                await self.placement_repository.count_by_floor_plan(
+                    plan.id,
+                )
+            )
+
+            plans_with_counts.append(
+                (plan, placement_count),
+            )
+
+        default_with_tables = next(
+            (
+                plan
+                for plan, placement_count in plans_with_counts
+                if plan.is_default and placement_count > 0
+            ),
+            None,
+        )
+
+        if default_with_tables is not None:
+            source_floor_plan = default_with_tables
+        else:
+            source_floor_plan = next(
+                (
+                    plan
+                    for plan, placement_count in sorted(
+                        plans_with_counts,
+                        key=lambda item: item[1],
+                        reverse=True,
+                    )
+                    if placement_count > 0
+                ),
+                None,
+            )
+        
         floor_plan = FloorPlan(
             service_area_id=area_id,
             name=normalized_name,
@@ -161,7 +211,15 @@ class FloorPlanService:
             is_active=True,
         )
 
-        return await self.repository.create(floor_plan)
+        floor_plan = await self.repository.create(floor_plan)
+
+        if source_floor_plan is not None:
+            await self.placement_repository.copy_floor_plan(
+                source_floor_plan_id=source_floor_plan.id,
+                target_floor_plan_id=floor_plan.id,
+            )
+
+        return floor_plan
 
     async def update_floor_plan(
         self,

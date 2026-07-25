@@ -12,6 +12,7 @@ from app.api.v1.endpoints import (
     service_areas,
     tables,
     webhooks,
+    table_placements,
 ) 
 
 
@@ -19,6 +20,9 @@ api_router = APIRouter()
 
 api_router.include_router(auth.router)
 api_router.include_router(chat.router)
+api_router.include_router(
+    table_placements.router,
+)
 api_router.include_router(reservations.router)
 api_router.include_router(restaurants.router)
 api_router.include_router(service_areas.router)

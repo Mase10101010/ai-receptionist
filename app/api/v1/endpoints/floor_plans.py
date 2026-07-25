@@ -19,6 +19,10 @@ from app.schemas.floor_plan import (
     FloorPlanResponse,
     FloorPlanUpdate,
 )
+
+from app.repositories.table_placement_repository import (
+    TablePlacementRepository,
+)
 from app.services.floor_plan_service import FloorPlanService
 
 
@@ -37,6 +41,7 @@ def get_floor_plan_service(
 ) -> FloorPlanService:
     return FloorPlanService(
         repository=FloorPlanRepository(db),
+        placement_repository=TablePlacementRepository(db),
         service_area_repository=ServiceAreaRepository(db),
         restaurant_repository=RestaurantRepository(db),
     )

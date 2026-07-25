@@ -8,7 +8,6 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
-    String,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID
@@ -17,14 +16,14 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
 
-class ServiceArea(Base):
-    __tablename__ = "service_areas"
+class TablePlacement(Base):
+    __tablename__ = "table_placements"
 
     __table_args__ = (
         UniqueConstraint(
-            "restaurant_id",
-            "name",
-            name="uq_service_areas_restaurant_name",
+            "floor_plan_id",
+            "table_id",
+            name="uq_table_placements_floor_plan_table",
         ),
     )
 
@@ -34,40 +33,57 @@ class ServiceArea(Base):
         default=uuid.uuid4,
     )
 
-    restaurant_id: Mapped[uuid.UUID] = mapped_column(
+    floor_plan_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey(
-            "restaurants.id",
+            "floor_plans.id",
             ondelete="CASCADE",
         ),
         nullable=False,
         index=True,
     )
 
-    name: Mapped[str] = mapped_column(
-        String(100),
+    table_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "tables.id",
+            ondelete="CASCADE",
+        ),
         nullable=False,
+        index=True,
     )
 
-    area_type: Mapped[str] = mapped_column(
-        String(50),
-        default="indoor",
-        nullable=False,
-    )
-
-    color: Mapped[str] = mapped_column(
-        String(20),
-        default="#7FE3E6",
-        nullable=False,
-    )
-
-    sort_order: Mapped[int] = mapped_column(
+    x: Mapped[int] = mapped_column(
         Integer,
         default=0,
         nullable=False,
     )
 
-    is_active: Mapped[bool] = mapped_column(
+    y: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        nullable=False,
+    )
+
+    width: Mapped[int] = mapped_column(
+        Integer,
+        default=80,
+        nullable=False,
+    )
+
+    height: Mapped[int] = mapped_column(
+        Integer,
+        default=80,
+        nullable=False,
+    )
+
+    rotation: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        nullable=False,
+    )
+
+    is_visible: Mapped[bool] = mapped_column(
         Boolean,
         default=True,
         nullable=False,
@@ -86,19 +102,12 @@ class ServiceArea(Base):
         nullable=False,
     )
 
-    restaurant = relationship(
-        "Restaurant",
-        back_populates="service_areas",
-    )
-
-    floor_plans = relationship(
+    floor_plan = relationship(
         "FloorPlan",
-        back_populates="service_area",
-        cascade="all, delete-orphan",
-        order_by="FloorPlan.sort_order",
+        back_populates="table_placements",
     )
 
-    tables = relationship(
+    table = relationship(
         "Table",
-        back_populates="service_area",
+        back_populates="placements",
     )

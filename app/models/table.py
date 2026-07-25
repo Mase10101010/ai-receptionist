@@ -35,6 +35,16 @@ class Table(Base):
         index=True,
     )
 
+    service_area_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "service_areas.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
     floor_plan_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey(
@@ -108,7 +118,13 @@ class Table(Base):
         back_populates="tables",
     )
 
-    floor_plan = relationship(
-        "FloorPlan",
+    service_area = relationship(
+        "ServiceArea",
         back_populates="tables",
+    )
+
+    placements = relationship(
+        "TablePlacement",
+        back_populates="table",
+        cascade="all, delete-orphan",
     )

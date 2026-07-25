@@ -6,6 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import CurrentUserDep
 from app.db.session import get_db
 from app.repositories.restaurant_repository import RestaurantRepository
+from app.repositories.table_placement_repository import (
+    TablePlacementRepository,
+)
 from app.repositories.table_repository import TableRepository
 from app.schemas.table import TableCreate, TableResponse, TableUpdate
 from app.repositories.floor_plan_repository import FloorPlanRepository
@@ -22,6 +25,7 @@ def get_table_service(
 ) -> TableService:
     return TableService(
         repository=TableRepository(db),
+        placement_repository=TablePlacementRepository(db),
         restaurant_repository=RestaurantRepository(db),
         floor_plan_repository=FloorPlanRepository(db),
     )
@@ -40,11 +44,19 @@ async def list_tables(
         floor_plan_id=floor_plan_id,
     )
 
+    if floor_plan_id is not None:
+        return [
+            TableResponse.from_table_and_placement(
+                table,
+                placement,
+            )
+            for table, placement in tables
+        ]
+
     return [
         TableResponse.model_validate(table)
         for table in tables
     ]
-
 
 @router.post("", response_model=TableResponse)
 async def create_table(
@@ -64,7 +76,10 @@ async def create_table(
     return TableResponse.model_validate(table)
 
 
-@router.patch("/{table_id}", response_model=TableResponse)
+@router.patch(
+    "/{table_id}",
+    response_model=TableResponse,
+)
 async def update_table(
     restaurant_id: uuid.UUID,
     table_id: uuid.UUID,
@@ -79,9 +94,20 @@ async def update_table(
         payload=payload,
     )
 
+    placement = await service.placement_repository.get(
+        table_id=table.id,
+        floor_plan_id=table.floor_plan_id,
+    )
+
     await service.repository.db.commit()
 
-    return TableResponse.model_validate(table)
+    if placement is None:
+        return TableResponse.model_validate(table)
+
+    return TableResponse.from_table_and_placement(
+        table,
+        placement,
+    )
 
 
 @router.delete("/{table_id}", status_code=204)

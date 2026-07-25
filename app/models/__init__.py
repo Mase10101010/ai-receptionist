@@ -9,6 +9,7 @@ from app.models.reservation import Reservation, ReservationStatus
 from app.models.restaurant import Restaurant
 from app.models.service_area import ServiceArea
 from app.models.floor_plan import FloorPlan
+from app.models.table_placement import TablePlacement
 from app.models.table import Table
 from app.models.user import User
 from app.models.integration import (
@@ -32,6 +33,7 @@ __all__ = [
     "ServiceArea",
     "FloorPlan",
     "Table",
+    "TablePlacement",
     "IntegrationMode",
     "IntegrationOperation",
     "IntegrationStatus",

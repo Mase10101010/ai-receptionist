@@ -98,7 +98,8 @@ class FloorPlan(Base):
         back_populates="floor_plans",
     )
 
-    tables = relationship(
-        "Table",
+    table_placements = relationship(
+        "TablePlacement",
         back_populates="floor_plan",
+        cascade="all, delete-orphan",
     )

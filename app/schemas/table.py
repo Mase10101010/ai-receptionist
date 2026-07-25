@@ -56,3 +56,27 @@ class TableResponse(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+
+    @classmethod
+    def from_table_and_placement(
+        cls,
+        table,
+        placement,
+    ) -> "TableResponse":
+        return cls(
+            id=table.id,
+            restaurant_id=table.restaurant_id,
+            floor_plan_id=placement.floor_plan_id,
+            table_code=table.table_code,
+            table_number=table.table_number,
+            seats=table.seats,
+            x=placement.x,
+            y=placement.y,
+            width=placement.width,
+            height=placement.height,
+            shape=table.shape,
+            rotation=placement.rotation,
+            is_active=table.is_active,
+            created_at=table.created_at,
+            updated_at=table.updated_at,
+        )

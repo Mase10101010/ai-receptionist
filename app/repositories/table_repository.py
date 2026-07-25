@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.table import Table
+from app.models.table_placement import TablePlacement
 
 
 class TableRepository:
@@ -97,12 +98,17 @@ class TableRepository:
         restaurant_id: uuid.UUID,
         floor_plan_id: uuid.UUID,
         include_inactive: bool = False,
-    ) -> list[Table]:
+    ) -> list[tuple[Table, TablePlacement]]:
         stmt = (
-            select(Table)
+            select(Table, TablePlacement)
+            .join(
+                TablePlacement,
+                TablePlacement.table_id == Table.id,
+            )
             .where(
                 Table.restaurant_id == restaurant_id,
-                Table.floor_plan_id == floor_plan_id,
+                TablePlacement.floor_plan_id == floor_plan_id,
+                TablePlacement.is_visible == True,
             )
             .order_by(Table.table_number.asc())
         )
@@ -110,4 +116,25 @@ class TableRepository:
             stmt = stmt.where(Table.is_active == True)
 
         result = await self.db.execute(stmt)
-        return list(result.scalars().all())
+        return list(result.all())
+
+    async def get_with_placement(
+        self,
+        table_id: uuid.UUID,
+        restaurant_id: uuid.UUID,
+        floor_plan_id: uuid.UUID,
+    ) -> tuple[Table, TablePlacement] | None:
+        result = await self.db.execute(
+            select(Table, TablePlacement)
+            .join(
+                TablePlacement,
+                TablePlacement.table_id == Table.id,
+            )
+            .where(
+                Table.id == table_id,
+                Table.restaurant_id == restaurant_id,
+                TablePlacement.floor_plan_id == floor_plan_id,
+            )
+        )
+
+        return result.one_or_none()
