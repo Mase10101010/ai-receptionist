@@ -23,17 +23,17 @@ class TableCreate(BaseModel):
 
 
 class TableUpdate(BaseModel):
-    table_number: str | None = Field(default=None, min_length=1, max_length=50)
-    seats: int | None = Field(default=None, ge=1)
-    is_active: bool | None = None
-    floor_plan_id: uuid.UUID | None = None
-
-    x: int | None = Field(default=None, ge=0)
-    y: int | None = Field(default=None, ge=0)
-    width: int | None = Field(default=None, ge=40, le=400)
-    height: int | None = Field(default=None, ge=40, le=400)
+    table_number: str | None = Field(
+        default=None, 
+        min_length=1, 
+        max_length=50,
+    )
+    seats: int | None = Field(
+        default=None, 
+        ge=1,
+    )
     shape: TableShape | None = None
-    rotation: int | None = Field(default=None, ge=0, lt=360)
+    is_active: bool | None = None
 
 
 class TableResponse(BaseModel):

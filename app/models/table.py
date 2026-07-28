@@ -45,15 +45,6 @@ class Table(Base):
         index=True,
     )
 
-    floor_plan_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey(
-            "floor_plans.id",
-            ondelete="CASCADE",
-        ),
-        nullable=False,
-        index=True,
-    )
 
     table_code: Mapped[str] = mapped_column(
         String(50),
@@ -71,39 +62,9 @@ class Table(Base):
         nullable=False,
     )
 
-    x: Mapped[int] = mapped_column(
-        Integer,
-        default=0,
-        nullable=False,
-    )
-
-    y: Mapped[int] = mapped_column(
-        Integer,
-        default=0,
-        nullable=False,
-    )
-
-    width: Mapped[int] = mapped_column(
-        Integer,
-        default=80,
-        nullable=False,
-    )
-
-    height: Mapped[int] = mapped_column(
-        Integer,
-        default=80,
-        nullable=False,
-    )
-
     shape: Mapped[str] = mapped_column(
         String(20),
         default="square",
-        nullable=False,
-    )
-
-    rotation: Mapped[int] = mapped_column(
-        Integer,
-        default=0,
         nullable=False,
     )
 

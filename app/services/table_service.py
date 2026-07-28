@@ -87,15 +87,6 @@ class TableService:
         table = Table(
             restaurant_id=restaurant_id,
             service_area_id=floor_plan.service_area_id,
-
-            # Campi legacy mantenuti temporaneamente.
-            floor_plan_id=payload.floor_plan_id,
-            x=payload.x,
-            y=payload.y,
-            width=payload.width,
-            height=payload.height,
-            rotation=payload.rotation,
-
             table_code=self._generate_table_code(),
             table_number=payload.table_number,
             seats=payload.seats,
@@ -180,37 +171,6 @@ class TableService:
 
         updates = payload.model_dump(exclude_unset=True)
 
-        placement_fields = {
-            "x",
-            "y",
-            "width",
-            "height",
-            "rotation",
-        }
-
-        placement_updates = {
-            key: value
-            for key, value in updates.items()
-            if key in placement_fields
-        }
-
-        table_updates = {
-            key: value
-            for key, value in updates.items()
-            if key not in placement_fields
-        }
-
-        new_floor_plan_id = table_updates.get("floor_plan_id")
-
-        if (
-            new_floor_plan_id is not None
-            and new_floor_plan_id != table.floor_plan_id
-        ):
-            await self._get_floor_plan_for_restaurant(
-                restaurant_id=restaurant_id,
-                floor_plan_id=new_floor_plan_id,
-            )
-
         new_table_number = table_updates.get("table_number")
 
         if (
@@ -227,13 +187,6 @@ class TableService:
                     "A table with this number already exists"
                 )
 
-        placement = await self.placement_repository.get(
-            table_id=table.id,
-            floor_plan_id=table.floor_plan_id,
-        )
-
-        if placement is None:
-            raise NotFoundError("Table placement not found")
 
         if placement_updates:
             await self.placement_repository.update(
