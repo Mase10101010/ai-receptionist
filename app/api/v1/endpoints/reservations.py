@@ -1,5 +1,6 @@
 """REST endpoints for managing reservations."""
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, status, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -76,16 +77,37 @@ async def list_reservations(
     ),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
-    status_filter: ReservationStatus | None = Query(None, alias="status"),
+    status_filter: ReservationStatus | None = Query(
+        None,
+        alias="status",
+    ),
+    restaurant_id: uuid.UUID | None = Query(None),
+    start: datetime | None = Query(None),
+    end: datetime | None = Query(None),
 ) -> list[ReservationResponse]:
+    if (
+        restaurant_id is not None
+        and restaurant_id not in current_user_restaurant_ids
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Restaurant is not available for the current user",
+        )
+
     items = await service.list_reservations_for_restaurants(
         restaurant_ids=current_user_restaurant_ids,
         skip=skip,
         limit=limit,
         status=status_filter,
+        restaurant_id=restaurant_id,
+        start=start,
+        end=end,
     )
 
-    return [ReservationResponse.model_validate(r) for r in items]
+    return [
+        ReservationResponse.model_validate(reservation)
+        for reservation in items
+    ]
 
 
 @router.get(

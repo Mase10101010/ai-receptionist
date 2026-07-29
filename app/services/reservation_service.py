@@ -216,12 +216,28 @@ class ReservationService:
         skip: int = 0,
         limit: int = 100,
         status: ReservationStatus | None = None,
+        restaurant_id: uuid.UUID | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
     ) -> list[Reservation]:
+        if restaurant_id is not None and restaurant_id not in restaurant_ids:
+            raise ValidationError(
+                "Restaurant is not available for the current user."
+            )
+
+        if start is not None and end is not None and start >= end:
+            raise ValidationError(
+                "Reservation window start must be before end."
+            )
+
         return await self.repository.list_by_restaurant_ids(
             restaurant_ids=restaurant_ids,
             skip=skip,
             limit=limit,
             status=status,
+            restaurant_id=restaurant_id,
+            start=start,
+            end=end,
         )
 
     async def find_upcoming_reservations_by_customer(

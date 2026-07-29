@@ -84,20 +84,43 @@ class ReservationRepository:
         skip: int = 0,
         limit: int = 100,
         status: ReservationStatus | None = None,
+        restaurant_id: uuid.UUID | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
     ) -> list[Reservation]:
         if not restaurant_ids:
             return []
 
+        stmt = select(Reservation).where(
+            Reservation.restaurant_id.in_(restaurant_ids),
+        )
+
+        if restaurant_id is not None:
+            stmt = stmt.where(
+                Reservation.restaurant_id == restaurant_id,
+            )
+
+        if status is not None:
+            stmt = stmt.where(
+                Reservation.status == status,
+            )
+
+        if start is not None:
+            stmt = stmt.where(
+                Reservation.reservation_time >= start,
+            )
+
+        if end is not None:
+            stmt = stmt.where(
+                Reservation.reservation_time < end,
+            )
+
         stmt = (
-            select(Reservation)
-            .where(Reservation.restaurant_id.in_(restaurant_ids))
-            .order_by(Reservation.reservation_time.desc())
+            stmt
+            .order_by(Reservation.reservation_time.asc())
             .offset(skip)
             .limit(limit)
         )
-
-        if status is not None:
-            stmt = stmt.where(Reservation.status == status)
 
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
