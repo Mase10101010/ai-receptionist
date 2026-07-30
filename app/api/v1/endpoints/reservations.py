@@ -11,6 +11,7 @@ from app.models.reservation import ReservationStatus
 from app.repositories.restaurant_repository import RestaurantRepository
 from app.schemas.reservation import (
     ReservationCreate,
+    ReservationMove,
     ReservationResponse,
     ReservationUpdate,
 )
@@ -147,6 +148,29 @@ async def update_reservation(
         reservation_id=reservation_id,
         restaurant_ids=current_user_restaurant_ids,
         payload=payload,
+    )
+
+    await service.repository.db.commit()
+
+    return ReservationResponse.model_validate(reservation)
+
+@router.post(
+    "/{reservation_id}/move",
+    response_model=ReservationResponse,
+    summary="Move a reservation to another table",
+)
+async def move_reservation(
+    reservation_id: uuid.UUID,
+    payload: ReservationMove,
+    service: ReservationServiceDep,
+    current_user_restaurant_ids: list[uuid.UUID] = Depends(
+        get_current_user_restaurant_ids
+    ),
+) -> ReservationResponse:
+    reservation = await service.move_reservation_for_restaurants(
+        reservation_id=reservation_id,
+        restaurant_ids=current_user_restaurant_ids,
+        table_id=payload.table_id,
     )
 
     await service.repository.db.commit()

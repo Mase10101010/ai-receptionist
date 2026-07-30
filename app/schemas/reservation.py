@@ -55,6 +55,10 @@ class ReservationUpdate(BaseModel):
     special_requests: str | None = Field(None, max_length=2000)
     status: ReservationStatus | None = None
 
+class ReservationMove(BaseModel):
+    """Payload for moving a reservation to another table."""
+
+    table_id: uuid.UUID
 
 class ReservationResponse(ReservationBase):
     """Reservation as returned by the API."""

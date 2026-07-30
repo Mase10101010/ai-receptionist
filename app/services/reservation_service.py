@@ -67,6 +67,7 @@ class ReservationService:
                 reservation_time=payload.reservation_time,
                 party_size=payload.party_size,
                 restaurant_id=payload.restaurant_id,
+                duration_minutes=payload.duration_minutes,
             )
         else:
             table_id = await self._assign_available_table(
@@ -382,6 +383,69 @@ class ReservationService:
 
         return await self.repository.update(reservation, updates)
 
+    async def move_reservation_for_restaurants(
+        self,
+        reservation_id: uuid.UUID,
+        restaurant_ids: list[uuid.UUID],
+        table_id: uuid.UUID,
+    ) -> Reservation:
+        reservation = await self.get_reservation_for_restaurants(
+            reservation_id=reservation_id,
+            restaurant_ids=restaurant_ids,
+        )
+
+        non_movable_statuses = {
+            ReservationStatus.COMPLETED,
+            ReservationStatus.CANCELLED,
+            ReservationStatus.NO_SHOW,
+        }
+
+        if reservation.status in non_movable_statuses:
+            raise ValidationError(
+                "Completed, cancelled, or no-show reservations "
+                "cannot be moved."
+            )
+
+        if reservation.restaurant_id is None:
+            raise ValidationError(
+                "Reservation is not associated with a restaurant."
+            )
+
+        if reservation.table_id == table_id:
+            return reservation
+
+        previous_table_id = reservation.table_id
+
+        validated_table_id = await self._validate_selected_table(
+            table_id=table_id,
+            reservation_time=reservation.reservation_time,
+            party_size=reservation.party_size,
+            restaurant_id=reservation.restaurant_id,
+            duration_minutes=reservation.duration_minutes,
+            exclude_id=reservation.id,
+        )
+
+        moved = await self.repository.update(
+            reservation,
+            {
+                "table_id": validated_table_id,
+            },
+        )
+
+        logger.info(
+            (
+                "Reservation moved: id=%s restaurant_id=%s "
+                "from_table_id=%s to_table_id=%s status=%s"
+            ),
+            moved.id,
+            moved.restaurant_id,
+            previous_table_id,
+            moved.table_id,
+            moved.status.value,
+        )
+
+        return moved
+
     async def cancel_reservation(self, reservation_id: uuid.UUID) -> Reservation:
         reservation = await self.get_reservation(reservation_id)
 
@@ -595,9 +659,13 @@ class ReservationService:
         reservation_time: datetime,
         party_size: int,
         restaurant_id: uuid.UUID | None = None,
+        duration_minutes: int = settings.RESERVATION_DURATION_MINUTES,
+        exclude_id: uuid.UUID | None = None,
     ) -> uuid.UUID:
         if restaurant_id is None:
-            raise ValidationError("Restaurant is required to select a table.")
+            raise ValidationError(
+                "Restaurant is required to select a table."
+            )
 
         table = await self.table_repository.get_by_id(
             table_id=table_id,
@@ -605,27 +673,53 @@ class ReservationService:
         )
 
         if table is None or not table.is_active:
-            raise ValidationError("Selected table was not found or is inactive.")
+            raise ValidationError(
+                "Selected table was not found or is inactive."
+            )
 
         if table.seats < party_size:
             raise ValidationError(
-                "Selected table does not have enough seats for this party size."
+                "Selected table does not have enough seats "
+                "for this party size."
             )
 
-        half = timedelta(minutes=settings.RESERVATION_DURATION_MINUTES)
-        window_start = reservation_time - half
-        window_end = reservation_time + half
+        requested_start = reservation_time
+        requested_end = reservation_time + timedelta(
+            minutes=duration_minutes
+        )
+
+        # Reservations can last up to 300 minutes according to the schema.
+        # We load a sufficiently wide candidate window and then perform the
+        # exact overlap check in Python.
+        lookup_start = requested_start - timedelta(minutes=300)
 
         concurrent = await self.repository.list_in_window(
-            start=window_start,
-            end=window_end,
+            start=lookup_start,
+            end=requested_end,
             restaurant_id=restaurant_id,
         )
 
-        for reservation in concurrent:
-            if reservation.table_id == table_id:
+        for existing in concurrent:
+            if exclude_id is not None and existing.id == exclude_id:
+                continue
+
+            if existing.table_id != table_id:
+                continue
+
+            existing_start = existing.reservation_time
+            existing_end = existing.reservation_time + timedelta(
+                minutes=existing.duration_minutes
+            )
+
+            overlaps = (
+                existing_start < requested_end
+                and existing_end > requested_start
+            )
+
+            if overlaps:
                 raise ConflictError(
-                    "Selected table is not available at this date and time."
+                    "Selected table is not available during "
+                    "this reservation time."
                 )
 
         return table.id
