@@ -1,7 +1,7 @@
 import uuid
 from enum import Enum
 
-from sqlalchemy import Enum as SQLEnum, ForeignKey, Index, String, Text
+from sqlalchemy import JSON, Enum as SQLEnum, ForeignKey, Index, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -104,12 +104,12 @@ class RestaurantIntegration(Base):
     )
 
     settings: Mapped[dict | None] = mapped_column(
-        JSONB,
+        JSON().with_variant(JSONB(), "postgresql"),
         nullable=True,
     )
 
     encrypted_credentials: Mapped[dict | None] = mapped_column(
-        JSONB,
+        JSON().with_variant(JSONB(), "postgresql"),
         nullable=True,
     )
 

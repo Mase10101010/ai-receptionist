@@ -98,6 +98,46 @@ class Reservation(Base):
         lazy="selectin",
     )
 
+    table_assignments = relationship(
+        "ReservationTableAssignment",
+        back_populates="reservation",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+    @property
+    def assigned_table_ids(self):
+        """
+        Return the IDs of all tables assigned to this reservation.
+        """
+        assignments = sorted(
+            self.table_assignments,
+            key=lambda assignment: not assignment.is_primary,
+        )
+
+        return [
+            assignment.table_id
+            for assignment in assignments
+        ]
+
+    @property
+    def assigned_tables(self):
+        """
+        Return all tables assigned to this reservation.
+
+        The primary table is returned first, followed by any additional tables.
+        """
+        assignments = sorted(
+            self.table_assignments,
+            key=lambda assignment: not assignment.is_primary,
+        )
+
+        return [
+            assignment.table
+            for assignment in assignments
+            if assignment.table is not None
+        ]
+
     @property
     def table_number(self) -> str | None:
         return self.table.table_number if self.table else None

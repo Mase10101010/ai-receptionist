@@ -102,3 +102,9 @@ class ServiceArea(Base):
         "Table",
         back_populates="service_area",
     )
+
+    table_combinations = relationship(
+        "TableCombination",
+        back_populates="service_area",
+        cascade="all, delete-orphan",
+    )

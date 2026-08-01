@@ -94,6 +94,13 @@ class ReservationService:
 
         created = await self.repository.create(reservation)
 
+        if table_id is not None:
+            created = await self.repository.replace_table_assignments(
+                reservation=created,
+                table_ids=[table_id],
+                primary_table_id=table_id,
+            )
+
         logger.info(
             "Reservation created: id=%s restaurant_id=%s party=%d time=%s",
             created.id,
@@ -425,11 +432,10 @@ class ReservationService:
             exclude_id=reservation.id,
         )
 
-        moved = await self.repository.update(
-            reservation,
-            {
-                "table_id": validated_table_id,
-            },
+        moved = await self.repository.replace_table_assignments(
+            reservation=reservation,
+            table_ids=[validated_table_id],
+            primary_table_id=validated_table_id,
         )
 
         logger.info(

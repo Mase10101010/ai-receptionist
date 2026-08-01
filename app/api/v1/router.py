@@ -15,6 +15,8 @@ from app.api.v1.endpoints import (
     table_placements,
 ) 
 
+from app.intelligence.router import router as intelligence_router
+
 
 api_router = APIRouter()
 
@@ -31,3 +33,4 @@ api_router.include_router(tables.router)
 api_router.include_router(billing.router)
 api_router.include_router(webhooks.router)
 api_router.include_router(integrations.router)
+api_router.include_router(intelligence_router)

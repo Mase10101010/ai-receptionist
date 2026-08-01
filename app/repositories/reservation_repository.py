@@ -4,10 +4,13 @@ Reservation repository.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.reservation import Reservation, ReservationStatus
+from app.models.reservation_table_assignment import (
+    ReservationTableAssignment,
+)
 
 
 class ReservationRepository:
@@ -194,6 +197,49 @@ class ReservationRepository:
 
         await self.db.flush()
         await self.db.refresh(reservation)
+        return reservation
+
+    async def replace_table_assignments(
+        self,
+        reservation: Reservation,
+        table_ids: list[uuid.UUID],
+        primary_table_id: uuid.UUID | None = None,
+    ) -> Reservation:
+        """
+        Replace every physical table assignment for a reservation.
+
+        Reservation.table_id remains the backward-compatible primary table.
+        """
+
+        unique_table_ids = list(dict.fromkeys(table_ids))
+
+        if primary_table_id is not None:
+            if primary_table_id not in unique_table_ids:
+                unique_table_ids.insert(0, primary_table_id)
+        elif unique_table_ids:
+            primary_table_id = unique_table_ids[0]
+
+        await self.db.execute(
+            delete(ReservationTableAssignment).where(
+                ReservationTableAssignment.reservation_id
+                == reservation.id,
+            ),
+        )
+
+        reservation.table_id = primary_table_id
+
+        for table_id in unique_table_ids:
+            self.db.add(
+                ReservationTableAssignment(
+                    reservation_id=reservation.id,
+                    table_id=table_id,
+                    is_primary=table_id == primary_table_id,
+                ),
+            )
+
+        await self.db.flush()
+        await self.db.refresh(reservation)
+
         return reservation
 
     async def delete(self, reservation: Reservation) -> None:

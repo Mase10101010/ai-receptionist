@@ -11,6 +11,11 @@ from app.models.service_area import ServiceArea
 from app.models.floor_plan import FloorPlan
 from app.models.table_placement import TablePlacement
 from app.models.table import Table
+from app.models.reservation_table_assignment import ReservationTableAssignment
+from app.models.table_combination import (
+    TableCombination,
+    TableCombinationMember,
+)
 from app.models.user import User
 from app.models.integration import (
     IntegrationMode,
@@ -28,11 +33,14 @@ __all__ = [
     "MessageRole",
     "Reservation",
     "ReservationStatus",
+    "TableCombination",
+    "TableCombinationMember",
     "User",
     "Restaurant",
     "ServiceArea",
     "FloorPlan",
     "Table",
+    "ReservationTableAssignment",
     "TablePlacement",
     "IntegrationMode",
     "IntegrationOperation",

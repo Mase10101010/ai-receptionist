@@ -172,6 +172,12 @@ class Restaurant(Base):
         cascade="all, delete-orphan",
     )
 
+    table_combinations = relationship(
+        "TableCombination",
+        back_populates="restaurant",
+        cascade="all, delete-orphan",
+    )
+
     service_areas = relationship(
         "ServiceArea",
         back_populates="restaurant",

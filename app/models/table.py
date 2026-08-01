@@ -89,3 +89,15 @@ class Table(Base):
         back_populates="table",
         cascade="all, delete-orphan",
     )
+
+    reservation_assignments = relationship(
+        "ReservationTableAssignment",
+        back_populates="table",
+        cascade="all, delete-orphan",
+    )
+
+    combination_memberships = relationship(
+        "TableCombinationMember",
+        back_populates="table",
+        cascade="all, delete-orphan",
+    )
