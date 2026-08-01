@@ -42,7 +42,11 @@ async def apply_recommendation(
     allowed_restaurant_ids = [
         restaurant.id
         for restaurant in restaurants
-        if restaurant.subscription_status == "active"
+        if restaurant.subscription_status in {
+            "active",
+            "trialing",
+            "lifetime",
+        }
     ]
 
     result = await service.apply_recommendation(

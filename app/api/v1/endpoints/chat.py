@@ -57,7 +57,11 @@ async def send_public_message(
     if restaurant is None:
         raise NotFoundError(f"Restaurant '{restaurant_slug}' not found")
     
-    if restaurant.subscription_status != "active":
+    if restaurant.subscription_status not in {
+        "active",
+        "trialing",
+        "lifetime",
+    }:
         raise NotFoundError(
             f"Restaurant '{restaurant_slug}' not found"
         )

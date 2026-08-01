@@ -119,7 +119,11 @@ async def get_active_restaurant_for_current_user(
 
     restaurant = restaurants[0]
 
-    if restaurant.subscription_status != "active":
+    if restaurant.subscription_status not in {
+        "active",
+        "trialing",
+        "lifetime",
+    }:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Active subscription required",
@@ -151,7 +155,11 @@ async def get_active_restaurant_by_id_for_current_user(
             detail="Restaurant not found",
         )
 
-    if restaurant.subscription_status != "active":
+    if restaurant.subscription_status not in {
+        "active",
+        "trialing",
+        "lifetime",
+    }:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Active subscription required",

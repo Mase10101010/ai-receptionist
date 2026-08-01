@@ -28,7 +28,11 @@ class TableService:
         self.floor_plan_repository = floor_plan_repository
 
     def _ensure_active_subscription(self, restaurant) -> None:
-        if restaurant.subscription_status not in {"active", "trialing"}:
+        if restaurant.subscription_status not in {
+            "active",
+            "trialing",
+            "lifetime",
+        }:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Active subscription required",

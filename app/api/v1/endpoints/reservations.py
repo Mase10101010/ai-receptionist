@@ -29,7 +29,11 @@ async def get_current_user_restaurant_ids(
     active_restaurants = [
         restaurant
         for restaurant in restaurants
-        if restaurant.subscription_status == "active"
+        if restaurant.subscription_status in {
+            "active",
+            "trialing",
+            "lifetime",
+        }
     ]
 
     return [restaurant.id for restaurant in active_restaurants]
