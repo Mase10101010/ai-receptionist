@@ -14,6 +14,7 @@ class IntelligenceOptimizeRequest(BaseModel):
     buffer_before_minutes: int = Field(default=0, ge=0, le=180)
     buffer_after_minutes: int = Field(default=0, ge=0, le=180)
     preferred_service_area_id: UUID | None = None
+    reservation_id: UUID | None = None
     max_alternatives: int = Field(default=5, ge=1, le=20)
 
 

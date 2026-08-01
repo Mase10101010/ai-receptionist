@@ -90,7 +90,7 @@ class IntelligenceOptimizationService:
             + timedelta(hours=12)
         )
 
-        reservations_result = await session.execute(
+        reservations_stmt = (
             select(Reservation)
             .options(
                 selectinload(
@@ -100,10 +100,28 @@ class IntelligenceOptimizationService:
             .where(
                 Reservation.restaurant_id
                 == payload.restaurant_id,
-                Reservation.status.in_(BLOCKING_STATUSES),
-                Reservation.reservation_time >= range_start,
-                Reservation.reservation_time < range_end,
+                Reservation.status.in_(
+                    BLOCKING_STATUSES,
+                ),
+                Reservation.reservation_time
+                >= range_start,
+                Reservation.reservation_time
+                < range_end,
             )
+        )
+
+        if payload.reservation_id is not None:
+            reservations_stmt = reservations_stmt.where(
+                Reservation.id
+                != payload.reservation_id,
+            )
+
+        reservations_result = await session.execute(
+            reservations_stmt
+        )
+
+        reservations = list(
+            reservations_result.scalars().unique().all()
         )
 
         reservations = list(
