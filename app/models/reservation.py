@@ -150,3 +150,29 @@ class Reservation(Base):
         Index("ix_reservations_time_status", "reservation_time", "status"),
         Index("ix_reservations_restaurant_time", "restaurant_id", "reservation_time"),
     )
+
+    @property
+    def table_ids(self) -> list[uuid.UUID]:
+        assignment_ids = [
+            assignment.table_id
+            for assignment in self.table_assignments
+        ]
+
+        if assignment_ids:
+            return assignment_ids
+
+        return [self.table_id] if self.table_id else []
+
+
+    @property
+    def table_numbers(self) -> list[str]:
+        assignment_numbers = [
+            assignment.table.table_number
+            for assignment in self.table_assignments
+            if assignment.table is not None
+        ]
+
+        if assignment_numbers:
+            return assignment_numbers
+
+        return [self.table_number] if self.table_number else []

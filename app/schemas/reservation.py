@@ -74,3 +74,5 @@ class ReservationResponse(ReservationBase):
     table_id: uuid.UUID | None = None
     table_number: str | None = None
     table_code: str | None = None
+    table_ids: list[uuid.UUID] = Field(default_factory=list)
+    table_numbers: list[str] = Field(default_factory=list)
