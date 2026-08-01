@@ -40,6 +40,7 @@ class FloorPlanService:
         if restaurant.subscription_status not in {
             "active",
             "trialing",
+            "lifetime",
         }:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
