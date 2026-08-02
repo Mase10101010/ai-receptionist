@@ -6,10 +6,24 @@ from datetime import datetime
 
 from sqlalchemy import and_, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.models.reservation import Reservation, ReservationStatus
 from app.models.reservation_table_assignment import (
     ReservationTableAssignment,
+)
+
+from app.models.reservation import Reservation, ReservationStatus
+
+
+RESERVATION_LOAD_OPTIONS = (
+    selectinload(
+        Reservation.table,
+    ),
+    selectinload(
+        Reservation.table_assignments,
+    ).selectinload(
+        ReservationTableAssignment.table,
+    ),
 )
 
 
@@ -30,8 +44,14 @@ class ReservationRepository:
         reservation_id: uuid.UUID,
         restaurant_id: uuid.UUID | None = None,
     ) -> Reservation | None:
-        stmt = select(Reservation).where(
-            Reservation.id == reservation_id,
+        stmt = (
+            select(Reservation)
+            .options(
+                *RESERVATION_LOAD_OPTIONS,
+            )
+            .where(
+                Reservation.id == reservation_id,
+            )
         )
 
         if restaurant_id is not None:
@@ -51,7 +71,11 @@ class ReservationRepository:
             return None
 
         result = await self.db.execute(
-            select(Reservation).where(
+            select(Reservation)
+            .options(
+                *RESERVATION_LOAD_OPTIONS,
+            )
+            .where(
                 Reservation.id == reservation_id,
                 Reservation.restaurant_id.in_(restaurant_ids),
             )
@@ -66,8 +90,14 @@ class ReservationRepository:
         status: ReservationStatus | None = None,
         restaurant_id: uuid.UUID | None = None,
     ) -> list[Reservation]:
-        stmt = select(Reservation).order_by(
-            Reservation.reservation_time.desc(),
+        stmt = (
+            select(Reservation)
+            .options(
+                *RESERVATION_LOAD_OPTIONS,
+            )
+            .order_by(
+                Reservation.reservation_time.desc(),
+            )
         )
 
         if status is not None:
@@ -94,8 +124,16 @@ class ReservationRepository:
         if not restaurant_ids:
             return []
 
-        stmt = select(Reservation).where(
-            Reservation.restaurant_id.in_(restaurant_ids),
+        stmt = (
+            select(Reservation)
+            .options(
+                *RESERVATION_LOAD_OPTIONS,
+            )
+            .where(
+                Reservation.restaurant_id.in_(
+                    restaurant_ids,
+                ),
+            )
         )
 
         if restaurant_id is not None:
@@ -120,13 +158,18 @@ class ReservationRepository:
 
         stmt = (
             stmt
-            .order_by(Reservation.reservation_time.asc())
+            .order_by(
+                Reservation.reservation_time.asc(),
+            )
             .offset(skip)
             .limit(limit)
         )
 
         result = await self.db.execute(stmt)
-        return list(result.scalars().all())
+
+        return list(
+            result.scalars().unique().all()
+        )
 
     async def list_in_window(
         self,
@@ -138,54 +181,89 @@ class ReservationRepository:
             ReservationStatus.NO_SHOW,
         ),
     ) -> list[Reservation]:
-        stmt = select(Reservation).where(
-            and_(
-                Reservation.reservation_time >= start,
-                Reservation.reservation_time < end,
-                Reservation.status.notin_(exclude_statuses),
+        stmt = (
+            select(Reservation)
+            .options(
+                *RESERVATION_LOAD_OPTIONS,
+            )
+            .where(
+                and_(
+                    Reservation.reservation_time >= start,
+                    Reservation.reservation_time < end,
+                    Reservation.status.notin_(
+                        exclude_statuses,
+                    ),
+                )
             )
         )
 
         if restaurant_id is not None:
-            stmt = stmt.where(Reservation.restaurant_id == restaurant_id)
+            stmt = stmt.where(
+                Reservation.restaurant_id == restaurant_id,
+            )
 
         result = await self.db.execute(stmt)
-        return list(result.scalars().all())
+
+        return list(
+            result.scalars().unique().all()
+        )
 
     async def find_upcoming_by_customer(
-            self,
-            customer_name: str | None = None,
-            customer_phone: str | None = None,
-            restaurant_id: uuid.UUID | None = None,
-            limit: int = 5,
+        self,
+        customer_name: str | None = None,
+        customer_phone: str | None = None,
+        restaurant_id: uuid.UUID | None = None,
+        limit: int = 5,
     ) -> list[Reservation]:
-        stmt = select(Reservation).where(
-            Reservation.reservation_time >= datetime.utcnow(),
-            Reservation.status.notin_(
-                (
-                    ReservationStatus.CANCELLED,
-                    ReservationStatus.NO_SHOW,
-                    ReservationStatus.COMPLETED,
-                )
-            ),
+        stmt = (
+            select(Reservation)
+            .options(
+                *RESERVATION_LOAD_OPTIONS,
+            )
+            .where(
+                Reservation.reservation_time >= datetime.utcnow(),
+                Reservation.status.notin_(
+                    (
+                        ReservationStatus.CANCELLED,
+                        ReservationStatus.NO_SHOW,
+                        ReservationStatus.COMPLETED,
+                    )
+                ),
+            )
         )
 
         if restaurant_id is not None:
-            stmt = stmt.where(Reservation.restaurant_id == restaurant_id)
+            stmt = stmt.where(
+                Reservation.restaurant_id == restaurant_id,
+            )
 
         if customer_phone:
-            stmt = stmt.where(Reservation.customer_phone == customer_phone)
-        
+            stmt = stmt.where(
+                Reservation.customer_phone == customer_phone,
+            )
+
         if customer_name:
             stmt = stmt.where(
-                func.lower(Reservation.customer_name).like(
+                func.lower(
+                    Reservation.customer_name,
+                ).like(
                     f"%{customer_name.lower()}%"
                 )
             )
-        
-        stmt = stmt.order_by(Reservation.reservation_time.asc()).limit(limit)
+
+        stmt = (
+            stmt
+            .order_by(
+                Reservation.reservation_time.asc(),
+            )
+            .limit(limit)
+        )
+
         result = await self.db.execute(stmt)
-        return list(result.scalars().all())
+
+        return list(
+            result.scalars().unique().all()
+        )
 
     async def update(
         self,
