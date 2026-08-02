@@ -76,7 +76,7 @@ class Restaurant(Base):
 
     number_of_tables: Mapped[int] = mapped_column(
         Integer,
-        default=20,
+        default=0,
         nullable=False,
     )
 

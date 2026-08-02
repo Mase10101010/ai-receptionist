@@ -15,7 +15,7 @@ class RestaurantBase(BaseModel):
     timezone: str = Field(default="Australia/Perth", max_length=100)
     opening_hour: int = Field(default=11, ge=0, le=23)
     closing_hour: int = Field(default=22, ge=0, le=23)
-    number_of_tables: int = Field(default=20, ge=1)
+    number_of_tables: int = Field(default=0, ge=0)
     table_setup: list[dict[str, Any]] | None = None
     weekly_schedule: list[dict[str, Any]] | None = None
     special_closures: list[dict[str, Any]] | None = None
@@ -36,7 +36,7 @@ class RestaurantUpdate(BaseModel):
     timezone: str | None = Field(default=None, max_length=100)
     opening_hour: int | None = Field(default=None, ge=0, le=23)
     closing_hour: int | None = Field(default=None, ge=0, le=23)
-    number_of_tables: int | None = Field(default=None, ge=1)
+    number_of_tables: int | None = Field(default=None, ge=0)
     table_setup: list[dict[str, Any]] | None = None
     weekly_schedule: list[dict[str, Any]] | None = None
     special_closures: list[dict[str, Any]] | None = None
