@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, DateTime, Integer, String, JSON
+from sqlalchemy import ForeignKey, DateTime, Integer, String, JSON, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -138,6 +138,12 @@ class Restaurant(Base):
     )
 
     has_used_trial: Mapped[bool] = mapped_column(
+        default=False,
+        nullable=False,
+    )
+
+    onboarding_completed: Mapped[bool] = mapped_column(
+        Boolean,
         default=False,
         nullable=False,
     )

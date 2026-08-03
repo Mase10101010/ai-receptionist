@@ -20,6 +20,7 @@ class RestaurantBase(BaseModel):
     weekly_schedule: list[dict[str, Any]] | None = None
     special_closures: list[dict[str, Any]] | None = None
     concierge_tone: str = Field(default="Elegant", max_length=100)
+    onboarding_completed: bool = False
 
 
 class RestaurantCreate(RestaurantBase):
@@ -42,6 +43,7 @@ class RestaurantUpdate(BaseModel):
     special_closures: list[dict[str, Any]] | None = None
     concierge_tone: str | None = Field(default=None, max_length=100)
     subscription_status: str | None = Field(default=None, max_length=50)
+    onboarding_completed: bool | None = None
 
 
 class RestaurantResponse(RestaurantBase):
