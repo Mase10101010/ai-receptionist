@@ -162,7 +162,7 @@ class TableService:
 
         if restaurant is None:
             raise NotFoundError("Restaurant not found")
-        
+
         self._ensure_active_subscription(restaurant)
 
         table = await self.repository.get_by_id(
@@ -173,9 +173,13 @@ class TableService:
         if table is None:
             raise NotFoundError("Table not found")
 
-        updates = payload.model_dump(exclude_unset=True)
+        table_updates = payload.model_dump(
+            exclude_unset=True,
+        )
 
-        new_table_number = table_updates.get("table_number")
+        new_table_number = table_updates.get(
+            "table_number",
+        )
 
         if (
             new_table_number
@@ -190,13 +194,6 @@ class TableService:
                 raise ConflictError(
                     "A table with this number already exists"
                 )
-
-
-        if placement_updates:
-            await self.placement_repository.update(
-                placement,
-                placement_updates,
-            )
 
         if table_updates:
             table = await self.repository.update(
