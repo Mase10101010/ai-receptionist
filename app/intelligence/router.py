@@ -15,6 +15,8 @@ from .schemas import (
     IntelligenceOptimizeResponse,
     IntelligenceReoptimizeRequest,
     IntelligenceReoptimizeResponse,
+    IntelligenceApplyReoptimizationRequest,
+    IntelligenceApplyReoptimizationResponse,
 )
 from .sqlalchemy_service import IntelligenceOptimizationService
 from app.api.dependencies import CurrentUserDep
@@ -68,6 +70,41 @@ async def reoptimize_reservation(
         session=session,
         payload=payload,
     )
+
+@router.post(
+    "/apply-reoptimization",
+    response_model=IntelligenceApplyReoptimizationResponse,
+)
+async def apply_reoptimization(
+    payload: IntelligenceApplyReoptimizationRequest,
+    current_user: CurrentUserDep,
+    session: AsyncSession = Depends(get_db),
+) -> IntelligenceApplyReoptimizationResponse:
+    restaurant_repository = RestaurantRepository(session)
+
+    restaurants = await restaurant_repository.list_by_owner(
+        current_user.id,
+    )
+
+    allowed_restaurant_ids = [
+        restaurant.id
+        for restaurant in restaurants
+        if restaurant.subscription_status in {
+            "active",
+            "trialing",
+            "lifetime",
+        }
+    ]
+
+    result = await service.apply_reoptimization(
+        session=session,
+        payload=payload,
+        allowed_restaurant_ids=allowed_restaurant_ids,
+    )
+
+    await session.commit()
+
+    return result
 
 @router.post(
     "/apply",

@@ -31,6 +31,9 @@ from .schemas import (
     IntelligenceReoptimizeResponse,
     IntelligenceReoptimizationPlanResponse,
     IntelligenceReservationMoveResponse,
+    IntelligenceApplyReoptimizationRequest,
+    IntelligenceApplyReoptimizationResponse,
+    IntelligenceAppliedMoveResponse,
 )
 from .sqlalchemy_adapter import (
     combinations_to_intelligence,
@@ -446,6 +449,546 @@ class IntelligenceOptimizationService:
             ],
             evaluated_plans=result.evaluated_plans,
             rejected_plans=result.rejected_plans,
+        )
+
+    async def apply_reoptimization(
+        self,
+        session: AsyncSession,
+        payload: IntelligenceApplyReoptimizationRequest,
+        allowed_restaurant_ids: list[UUID],
+    ) -> IntelligenceApplyReoptimizationResponse:
+        if (
+            payload.new_reservation_primary_table_id
+            not in payload.new_reservation_table_ids
+        ):
+            raise ValidationError(
+                "New reservation primary table must be included "
+                "in new_reservation_table_ids."
+            )
+
+        new_table_ids = list(
+            dict.fromkeys(
+                payload.new_reservation_table_ids,
+            )
+        )
+
+        move_reservation_ids = [
+            move.reservation_id
+            for move in payload.moves
+        ]
+
+        if len(move_reservation_ids) != len(
+            set(move_reservation_ids)
+        ):
+            raise ValidationError(
+                "The same reservation cannot be moved more than once."
+            )
+
+        if payload.new_reservation_id in move_reservation_ids:
+            raise ValidationError(
+                "The new reservation cannot also appear in moves."
+            )
+
+        new_reservation_result = await session.execute(
+            select(Reservation)
+            .options(
+                selectinload(
+                    Reservation.table_assignments,
+                )
+            )
+            .where(
+                Reservation.id
+                == payload.new_reservation_id,
+                Reservation.restaurant_id.in_(
+                    allowed_restaurant_ids,
+                ),
+            )
+        )
+
+        new_reservation = (
+            new_reservation_result.scalar_one_or_none()
+        )
+
+        if new_reservation is None:
+            raise NotFoundError(
+                f"Reservation {payload.new_reservation_id} not found"
+            )
+
+        if new_reservation.restaurant_id is None:
+            raise ValidationError(
+                "New reservation is not associated with a restaurant."
+            )
+
+        if new_reservation.status in {
+            ReservationStatus.COMPLETED,
+            ReservationStatus.CANCELLED,
+            ReservationStatus.NO_SHOW,
+        }:
+            raise ValidationError(
+                "Completed, cancelled, or no-show reservations "
+                "cannot be reassigned."
+            )
+
+        moved_reservations: dict[UUID, Reservation] = {}
+
+        if move_reservation_ids:
+            moved_reservations_result = await session.execute(
+                select(Reservation)
+                .options(
+                    selectinload(
+                        Reservation.table_assignments,
+                    )
+                )
+                .where(
+                    Reservation.id.in_(
+                        move_reservation_ids,
+                    ),
+                    Reservation.restaurant_id
+                    == new_reservation.restaurant_id,
+                )
+            )
+
+            moved_reservations = {
+                reservation.id: reservation
+                for reservation in (
+                    moved_reservations_result
+                    .scalars()
+                    .unique()
+                    .all()
+                )
+            }
+
+            if len(moved_reservations) != len(
+                move_reservation_ids
+            ):
+                raise ValidationError(
+                    "One or more reservations to move were not found "
+                    "or belong to another restaurant."
+                )
+
+        for reservation in moved_reservations.values():
+            if reservation.status in {
+                ReservationStatus.COMPLETED,
+                ReservationStatus.CANCELLED,
+                ReservationStatus.NO_SHOW,
+            }:
+                raise ValidationError(
+                    "Completed, cancelled, or no-show reservations "
+                    "cannot be moved."
+                )
+
+        all_selected_table_ids = set(new_table_ids)
+
+        for move in payload.moves:
+            if move.primary_table_id not in move.to_table_ids:
+                raise ValidationError(
+                    "Move primary table must be included in to_table_ids."
+                )
+
+            all_selected_table_ids.update(
+                move.to_table_ids,
+            )
+
+        tables_result = await session.execute(
+            select(Table).where(
+                Table.id.in_(
+                    all_selected_table_ids,
+                ),
+                Table.restaurant_id
+                == new_reservation.restaurant_id,
+                Table.is_active.is_(True),
+            )
+        )
+
+        tables = list(
+            tables_result.scalars().all()
+        )
+
+        table_by_id = {
+            table.id: table
+            for table in tables
+        }
+
+        if len(table_by_id) != len(
+            all_selected_table_ids
+        ):
+            raise ValidationError(
+                "One or more selected tables were not found, "
+                "are inactive, or belong to another restaurant."
+            )
+
+        def validate_same_service_area(
+            table_ids: list[UUID],
+        ) -> None:
+            service_area_ids = {
+                table_by_id[table_id].service_area_id
+                for table_id in table_ids
+            }
+
+            if len(service_area_ids) != 1:
+                raise ValidationError(
+                    "Combined tables must belong to the same service area."
+                )
+
+        validate_same_service_area(
+            new_table_ids,
+        )
+
+        new_capacity = sum(
+            table_by_id[table_id].seats
+            for table_id in new_table_ids
+        )
+
+        if new_capacity < new_reservation.party_size:
+            raise ValidationError(
+                "Selected tables do not have enough capacity "
+                "for the new reservation."
+            )
+
+        move_table_ids_by_reservation: dict[
+            UUID,
+            list[UUID],
+        ] = {}
+
+        for move in payload.moves:
+            unique_move_table_ids = list(
+                dict.fromkeys(
+                    move.to_table_ids,
+                )
+            )
+
+            validate_same_service_area(
+                unique_move_table_ids,
+            )
+
+            reservation = moved_reservations[
+                move.reservation_id
+            ]
+
+            move_capacity = sum(
+                table_by_id[table_id].seats
+                for table_id in unique_move_table_ids
+            )
+
+            if move_capacity < reservation.party_size:
+                raise ValidationError(
+                    "Selected destination tables do not have enough "
+                    f"capacity for reservation {reservation.id}."
+                )
+
+            move_table_ids_by_reservation[
+                reservation.id
+            ] = unique_move_table_ids
+
+        affected_reservation_ids = {
+            payload.new_reservation_id,
+            *move_reservation_ids,
+        }
+
+        range_start = min(
+            [
+                new_reservation.reservation_time,
+                *[
+                    reservation.reservation_time
+                    for reservation
+                    in moved_reservations.values()
+                ],
+            ]
+        ) - timedelta(hours=12)
+
+        range_end = max(
+            [
+                (
+                    new_reservation.reservation_time
+                    + timedelta(
+                        minutes=(
+                            new_reservation.duration_minutes
+                        ),
+                    )
+                ),
+                *[
+                    (
+                        reservation.reservation_time
+                        + timedelta(
+                            minutes=(
+                                reservation.duration_minutes
+                            ),
+                        )
+                    )
+                    for reservation
+                    in moved_reservations.values()
+                ],
+            ]
+        ) + timedelta(hours=12)
+
+        nearby_result = await session.execute(
+            select(Reservation)
+            .options(
+                selectinload(
+                    Reservation.table_assignments,
+                )
+            )
+            .where(
+                Reservation.restaurant_id
+                == new_reservation.restaurant_id,
+                Reservation.id.notin_(
+                    affected_reservation_ids,
+                ),
+                Reservation.status.in_(
+                    BLOCKING_STATUSES,
+                ),
+                Reservation.reservation_time
+                < range_end,
+                Reservation.reservation_time
+                >= range_start,
+            )
+        )
+
+        nearby_reservations = list(
+            nearby_result.scalars().unique().all()
+        )
+
+        proposed_assignments: list[
+            tuple[
+                Reservation,
+                list[UUID],
+            ]
+        ] = [
+            (
+                new_reservation,
+                new_table_ids,
+            )
+        ]
+
+        for reservation_id, table_ids in (
+            move_table_ids_by_reservation.items()
+        ):
+            proposed_assignments.append(
+                (
+                    moved_reservations[
+                        reservation_id
+                    ],
+                    table_ids,
+                )
+            )
+
+        for index, (
+            reservation,
+            table_ids,
+        ) in enumerate(proposed_assignments):
+            requested_start = (
+                reservation.reservation_time
+            )
+
+            requested_end = (
+                requested_start
+                + timedelta(
+                    minutes=(
+                        reservation.duration_minutes
+                    ),
+                )
+            )
+
+            selected_table_id_set = set(
+                table_ids,
+            )
+
+            for existing in nearby_reservations:
+                existing_start = (
+                    existing.reservation_time
+                )
+
+                existing_end = (
+                    existing_start
+                    + timedelta(
+                        minutes=(
+                            existing.duration_minutes
+                        ),
+                    )
+                )
+
+                overlaps = (
+                    existing_start < requested_end
+                    and existing_end > requested_start
+                )
+
+                if not overlaps:
+                    continue
+
+                existing_table_ids = set(
+                    existing.assigned_table_ids
+                    or (
+                        [existing.table_id]
+                        if existing.table_id
+                        is not None
+                        else []
+                    )
+                )
+
+                if selected_table_id_set.intersection(
+                    existing_table_ids,
+                ):
+                    raise ValidationError(
+                        "One or more selected tables are already occupied "
+                        "during the proposed reservation time."
+                    )
+
+            for (
+                other_reservation,
+                other_table_ids,
+            ) in proposed_assignments[
+                index + 1:
+            ]:
+                other_start = (
+                    other_reservation.reservation_time
+                )
+
+                other_end = (
+                    other_start
+                    + timedelta(
+                        minutes=(
+                            other_reservation.duration_minutes
+                        ),
+                    )
+                )
+
+                overlaps = (
+                    other_start < requested_end
+                    and other_end > requested_start
+                )
+
+                if (
+                    overlaps
+                    and selected_table_id_set.intersection(
+                        other_table_ids,
+                    )
+                ):
+                    raise ValidationError(
+                        "The proposed reoptimization plan assigns "
+                        "overlapping reservations to the same table."
+                    )
+
+        reservations_to_replace = [
+            new_reservation,
+            *moved_reservations.values(),
+        ]
+
+        reservation_ids_to_replace = [
+            reservation.id
+            for reservation in reservations_to_replace
+        ]
+
+        await session.execute(
+            sa.delete(
+                ReservationTableAssignment,
+            ).where(
+                ReservationTableAssignment
+                .reservation_id.in_(
+                    reservation_ids_to_replace,
+                )
+            )
+        )
+
+        new_reservation.table_id = (
+            payload.new_reservation_primary_table_id
+        )
+
+        for table_id in new_table_ids:
+            session.add(
+                ReservationTableAssignment(
+                    reservation_id=(
+                        new_reservation.id
+                    ),
+                    table_id=table_id,
+                    is_primary=(
+                        table_id
+                        == payload
+                        .new_reservation_primary_table_id
+                    ),
+                )
+            )
+
+        for move in payload.moves:
+            reservation = moved_reservations[
+                move.reservation_id
+            ]
+
+            table_ids = (
+                move_table_ids_by_reservation[
+                    move.reservation_id
+                ]
+            )
+
+            reservation.table_id = (
+                move.primary_table_id
+            )
+
+            for table_id in table_ids:
+                session.add(
+                    ReservationTableAssignment(
+                        reservation_id=(
+                            reservation.id
+                        ),
+                        table_id=table_id,
+                        is_primary=(
+                            table_id
+                            == move.primary_table_id
+                        ),
+                    )
+                )
+
+        await session.flush()
+
+        table_number_by_id = {
+            table.id: table.table_number
+            for table in tables
+        }
+
+        applied_moves = []
+
+        for move in payload.moves:
+            table_ids = (
+                move_table_ids_by_reservation[
+                    move.reservation_id
+                ]
+            )
+
+            applied_moves.append(
+                IntelligenceAppliedMoveResponse(
+                    reservation_id=(
+                        move.reservation_id
+                    ),
+                    primary_table_id=(
+                        move.primary_table_id
+                    ),
+                    table_ids=table_ids,
+                    table_numbers=[
+                        table_number_by_id[
+                            table_id
+                        ]
+                        for table_id in table_ids
+                    ],
+                )
+            )
+
+        return IntelligenceApplyReoptimizationResponse(
+            new_reservation_id=(
+                new_reservation.id
+            ),
+            new_reservation_primary_table_id=(
+                payload
+                .new_reservation_primary_table_id
+            ),
+            new_reservation_table_ids=(
+                new_table_ids
+            ),
+            new_reservation_table_numbers=[
+                table_number_by_id[
+                    table_id
+                ]
+                for table_id in new_table_ids
+            ],
+            applied_moves=applied_moves,
         )
 
     async def apply_recommendation(

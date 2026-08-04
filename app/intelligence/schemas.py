@@ -141,3 +141,51 @@ class IntelligenceReoptimizeResponse(BaseModel):
 
     engine_version: str = "aie-reoptimizer-v1"
     mode: str = "read_only"
+
+class IntelligenceReoptimizationMoveApply(BaseModel):
+    reservation_id: UUID
+    to_table_ids: list[UUID] = Field(
+        min_length=1,
+        max_length=20,
+    )
+    primary_table_id: UUID
+
+
+class IntelligenceApplyReoptimizationRequest(BaseModel):
+    new_reservation_id: UUID
+
+    new_reservation_table_ids: list[UUID] = Field(
+        min_length=1,
+        max_length=20,
+    )
+
+    new_reservation_primary_table_id: UUID
+
+    moves: list[
+        IntelligenceReoptimizationMoveApply
+    ] = Field(
+        default_factory=list,
+        max_length=5,
+    )
+
+
+class IntelligenceAppliedMoveResponse(BaseModel):
+    reservation_id: UUID
+    primary_table_id: UUID
+    table_ids: list[UUID]
+    table_numbers: list[str]
+
+
+class IntelligenceApplyReoptimizationResponse(BaseModel):
+    new_reservation_id: UUID
+
+    new_reservation_primary_table_id: UUID
+    new_reservation_table_ids: list[UUID]
+    new_reservation_table_numbers: list[str]
+
+    applied_moves: list[
+        IntelligenceAppliedMoveResponse
+    ] = Field(default_factory=list)
+
+    mode: str = "assisted_reoptimization"
+    applied: bool = True
