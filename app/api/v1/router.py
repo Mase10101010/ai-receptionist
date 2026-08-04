@@ -13,6 +13,7 @@ from app.api.v1.endpoints import (
     tables,
     webhooks,
     table_placements,
+    table_combinations,
 ) 
 
 from app.intelligence.router import router as intelligence_router
@@ -30,6 +31,9 @@ api_router.include_router(restaurants.router)
 api_router.include_router(service_areas.router)
 api_router.include_router(floor_plans.router)
 api_router.include_router(tables.router)
+api_router.include_router(
+    table_combinations.router
+)
 api_router.include_router(billing.router)
 api_router.include_router(webhooks.router)
 api_router.include_router(integrations.router)
