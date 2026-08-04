@@ -5,6 +5,11 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from app.intelligence.schemas import IntelligenceOptimizeRequest
+from app.intelligence.sqlalchemy_service import (
+    IntelligenceOptimizationService,
+)
+
 from app.core.config import settings
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.core.logging import get_logger
@@ -38,16 +43,21 @@ def _format_reservation_time_for_language(
 
 class ReservationService:
     def __init__(
-        self, 
+        self,
         repository: ReservationRepository,
         restaurant_repository: RestaurantRepository,
         table_repository: TableRepository,
         email_service: EmailService,
+        intelligence_service: IntelligenceOptimizationService | None = None,
     ) -> None:
         self.repository = repository
         self.restaurant_repository = restaurant_repository
         self.table_repository = table_repository
         self.email_service = email_service
+        self.intelligence_service = (
+            intelligence_service
+            or IntelligenceOptimizationService()
+        )
 
     async def create_reservation(self, payload: ReservationCreate) -> Reservation:
         await self._validate_reservation_time(
@@ -61,6 +71,8 @@ class ReservationService:
             restaurant_id=payload.restaurant_id,
         )
 
+        assigned_table_ids: list[uuid.UUID] = []
+
         if payload.table_id is not None:
             table_id = await self._validate_selected_table(
                 table_id=payload.table_id,
@@ -69,11 +81,17 @@ class ReservationService:
                 restaurant_id=payload.restaurant_id,
                 duration_minutes=payload.duration_minutes,
             )
+
+            assigned_table_ids = [table_id]
         else:
-            table_id = await self._assign_available_table(
+            (
+                table_id,
+                assigned_table_ids,
+            ) = await self._assign_tables_with_aie(
                 reservation_time=payload.reservation_time,
                 party_size=payload.party_size,
                 restaurant_id=payload.restaurant_id,
+                duration_minutes=payload.duration_minutes,
             )
 
         reservation = Reservation(
@@ -94,10 +112,10 @@ class ReservationService:
 
         created = await self.repository.create(reservation)
 
-        if table_id is not None:
+        if table_id is not None and assigned_table_ids:
             created = await self.repository.replace_table_assignments(
                 reservation=created,
-                table_ids=[table_id],
+                table_ids=assigned_table_ids,
                 primary_table_id=table_id,
             )
 
@@ -616,6 +634,87 @@ class ReservationService:
 
 
         return suggestions
+
+    async def _assign_tables_with_aie(
+        self,
+        reservation_time: datetime,
+        party_size: int,
+        restaurant_id: uuid.UUID | None = None,
+        duration_minutes: int = settings.RESERVATION_DURATION_MINUTES,
+    ) -> tuple[uuid.UUID | None, list[uuid.UUID]]:
+        """
+        Use AIE to choose the best valid single-table or multi-table
+        assignment for a new reservation.
+
+        Falls back to the legacy single-table allocator if AIE cannot
+        produce a recommendation.
+        """
+
+        if restaurant_id is None:
+            return None, []
+
+        try:
+            result = await self.intelligence_service.optimize(
+                session=self.repository.db,
+                payload=IntelligenceOptimizeRequest(
+                    restaurant_id=restaurant_id,
+                    reservation_id=None,
+                    requested_start=reservation_time,
+                    party_size=party_size,
+                    duration_minutes=duration_minutes,
+                    buffer_before_minutes=0,
+                    buffer_after_minutes=0,
+                    preferred_service_area_id=None,
+                    max_alternatives=3,
+                ),
+            )
+
+            recommendation = result.recommended
+
+            if (
+                result.available
+                and recommendation is not None
+                and recommendation.table_ids
+            ):
+                table_ids = list(
+                    dict.fromkeys(
+                        recommendation.table_ids,
+                    )
+                )
+
+                primary_table_id = table_ids[0]
+
+                logger.info(
+                    (
+                        "AIE automatic assignment: "
+                        "restaurant_id=%s party=%d tables=%s score=%.2f"
+                    ),
+                    restaurant_id,
+                    party_size,
+                    [str(table_id) for table_id in table_ids],
+                    recommendation.score,
+                )
+
+                return primary_table_id, table_ids
+
+        except Exception:
+            logger.exception(
+                (
+                    "AIE automatic assignment failed. "
+                    "Falling back to legacy single-table assignment."
+                )
+            )
+
+        fallback_table_id = await self._assign_available_table(
+            reservation_time=reservation_time,
+            party_size=party_size,
+            restaurant_id=restaurant_id,
+        )
+
+        if fallback_table_id is None:
+            return None, []
+
+        return fallback_table_id, [fallback_table_id]
     
     async def _assign_available_table(
         self,
