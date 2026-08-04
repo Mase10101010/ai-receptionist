@@ -56,3 +56,88 @@ class IntelligenceApplyResponse(BaseModel):
     status: str
     mode: str = "assisted"
     applied: bool = True
+
+class IntelligenceReoptimizeRequest(BaseModel):
+    restaurant_id: UUID
+    requested_start: datetime
+    party_size: int = Field(
+        ge=1,
+        le=100,
+    )
+    duration_minutes: int = Field(
+        default=90,
+        ge=15,
+        le=720,
+    )
+    reservation_id: UUID | None = None
+    buffer_before_minutes: int = Field(
+        default=0,
+        ge=0,
+        le=180,
+    )
+    buffer_after_minutes: int = Field(
+        default=0,
+        ge=0,
+        le=180,
+    )
+    preferred_service_area_id: UUID | None = None
+    max_reservations_to_move: int = Field(
+        default=1,
+        ge=1,
+        le=1,
+    )
+    max_plans: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+    )
+
+
+class IntelligenceReservationMoveResponse(BaseModel):
+    reservation_id: UUID
+
+    from_table_ids: list[UUID]
+    from_table_numbers: list[str]
+
+    to_table_ids: list[UUID]
+    to_table_numbers: list[str]
+
+    party_size: int
+    start_at: datetime
+    end_at: datetime
+
+    destination_capacity: int
+    seat_waste: int
+    explanation: str
+
+
+class IntelligenceReoptimizationPlanResponse(BaseModel):
+    new_reservation_assignment: IntelligenceAssignmentResponse
+
+    moves: list[
+        IntelligenceReservationMoveResponse
+    ] = Field(default_factory=list)
+
+    score: float
+    total_seat_waste: int
+    moved_reservations_count: int
+    explanation: str
+
+
+class IntelligenceReoptimizeResponse(BaseModel):
+    available: bool
+
+    recommended: (
+        IntelligenceReoptimizationPlanResponse
+        | None
+    ) = None
+
+    alternatives: list[
+        IntelligenceReoptimizationPlanResponse
+    ] = Field(default_factory=list)
+
+    evaluated_plans: int
+    rejected_plans: int
+
+    engine_version: str = "aie-reoptimizer-v1"
+    mode: str = "read_only"

@@ -27,13 +27,22 @@ from .schemas import (
     IntelligenceOptimizeResponse,
     IntelligenceApplyRequest,
     IntelligenceApplyResponse,
+    IntelligenceReoptimizeRequest,
+    IntelligenceReoptimizeResponse,
+    IntelligenceReoptimizationPlanResponse,
+    IntelligenceReservationMoveResponse,
 )
 from .sqlalchemy_adapter import (
     combinations_to_intelligence,
     reservations_to_intelligence,
     tables_to_intelligence,
 )
-from .types import OptimizationRequest
+from .types import (
+    OptimizationRequest,
+    ReoptimizationRequest,
+)
+
+from .reoptimizer import ReservationReoptimizer
 
 
 BLOCKING_STATUSES = (
@@ -44,8 +53,20 @@ BLOCKING_STATUSES = (
 
 
 class IntelligenceOptimizationService:
-    def __init__(self, optimizer: ReservationOptimizer | None = None) -> None:
-        self.optimizer = optimizer or ReservationOptimizer()
+    def __init__(
+        self,
+        optimizer: ReservationOptimizer | None = None,
+        reoptimizer: ReservationReoptimizer | None = None,
+    ) -> None:
+        self.optimizer = (
+            optimizer
+            or ReservationOptimizer()
+        )
+
+        self.reoptimizer = (
+            reoptimizer
+            or ReservationReoptimizer()
+        )
 
     async def optimize(
         self,
@@ -124,10 +145,6 @@ class IntelligenceOptimizationService:
             reservations_result.scalars().unique().all()
         )
 
-        reservations = list(
-            reservations_result.scalars().unique().all()
-        )
-
         result = self.optimizer.optimize(
             request=OptimizationRequest(
                 requested_start=payload.requested_start,
@@ -177,6 +194,258 @@ class IntelligenceOptimizationService:
             recommended=serialize(result.recommended) if result.recommended else None,
             alternatives=[serialize(item) for item in result.alternatives],
             rejected_candidates=result.rejected_candidates,
+        )
+
+    async def reoptimize(
+        self,
+        session: AsyncSession,
+        payload: IntelligenceReoptimizeRequest,
+    ) -> IntelligenceReoptimizeResponse:
+        tables_result = await session.execute(
+            select(Table)
+            .where(
+                Table.restaurant_id == payload.restaurant_id,
+                Table.is_active.is_(True),
+            )
+            .order_by(Table.table_number)
+        )
+
+        tables = list(
+            tables_result.scalars().all(),
+        )
+
+        combinations_result = await session.execute(
+            select(ORMTableCombination)
+            .options(
+                selectinload(
+                    ORMTableCombination.members,
+                ).selectinload(
+                    TableCombinationMember.table,
+                )
+            )
+            .where(
+                ORMTableCombination.restaurant_id
+                == payload.restaurant_id,
+                ORMTableCombination.is_active.is_(True),
+            )
+            .order_by(
+                ORMTableCombination.name,
+            )
+        )
+
+        combinations = list(
+            combinations_result.scalars().unique().all(),
+        )
+
+        range_start = (
+            payload.requested_start
+            - timedelta(hours=12)
+        )
+
+        range_end = (
+            payload.requested_start
+            + timedelta(
+                minutes=payload.duration_minutes,
+            )
+            + timedelta(hours=12)
+        )
+
+        reservations_stmt = (
+            select(Reservation)
+            .options(
+                selectinload(
+                    Reservation.table_assignments,
+                )
+            )
+            .where(
+                Reservation.restaurant_id
+                == payload.restaurant_id,
+                Reservation.status.in_(
+                    BLOCKING_STATUSES,
+                ),
+                Reservation.reservation_time
+                >= range_start,
+                Reservation.reservation_time
+                < range_end,
+            )
+        )
+
+        if payload.reservation_id is not None:
+            reservations_stmt = reservations_stmt.where(
+                Reservation.id
+                != payload.reservation_id,
+            )
+
+        reservations_result = await session.execute(
+            reservations_stmt,
+        )
+
+        reservations = list(
+            reservations_result.scalars().unique().all(),
+        )
+
+        intelligence_tables = tables_to_intelligence(
+            tables,
+        )
+
+        intelligence_reservations = (
+            reservations_to_intelligence(
+                reservations,
+            )
+        )
+
+        intelligence_combinations = (
+            combinations_to_intelligence(
+                combinations,
+            )
+        )
+
+        result = self.reoptimizer.reoptimize(
+            request=ReoptimizationRequest(
+                requested_start=payload.requested_start,
+                party_size=payload.party_size,
+                duration_minutes=payload.duration_minutes,
+                reservation_id=(
+                    str(payload.reservation_id)
+                    if payload.reservation_id
+                    else None
+                ),
+                buffer_before_minutes=(
+                    payload.buffer_before_minutes
+                ),
+                buffer_after_minutes=(
+                    payload.buffer_after_minutes
+                ),
+                preferred_area_id=(
+                    str(
+                        payload.preferred_service_area_id,
+                    )
+                    if payload.preferred_service_area_id
+                    else None
+                ),
+                preferred_floor_id=None,
+                allow_combinations=True,
+                max_reservations_to_move=(
+                    payload.max_reservations_to_move
+                ),
+                max_plans=payload.max_plans,
+            ),
+            tables=intelligence_tables,
+            reservations=intelligence_reservations,
+            combinations=intelligence_combinations,
+        )
+
+        table_number_by_id = {
+            str(table.id): table.table_number
+            for table in tables
+        }
+
+        def serialize_assignment(
+            item,
+        ) -> IntelligenceAssignmentResponse:
+            candidate = item.candidate
+
+            return IntelligenceAssignmentResponse(
+                table_ids=[
+                    UUID(table_id)
+                    for table_id in candidate.table_ids
+                ],
+                table_numbers=[
+                    table_number_by_id.get(
+                        table_id,
+                        table_id,
+                    )
+                    for table_id in candidate.table_ids
+                ],
+                start_at=candidate.start_at,
+                end_at=candidate.end_at,
+                capacity=candidate.capacity,
+                score=item.score,
+                seat_waste=item.seat_waste,
+                fragmentation_minutes=(
+                    item.fragmentation_minutes
+                ),
+                explanation=item.explanation,
+            )
+
+        def serialize_plan(
+            plan,
+        ) -> IntelligenceReoptimizationPlanResponse:
+            moves = []
+
+            for move in plan.moves:
+                moves.append(
+                    IntelligenceReservationMoveResponse(
+                        reservation_id=UUID(
+                            move.reservation_id,
+                        ),
+                        from_table_ids=[
+                            UUID(table_id)
+                            for table_id
+                            in move.from_table_ids
+                        ],
+                        from_table_numbers=[
+                            table_number_by_id.get(
+                                table_id,
+                                table_id,
+                            )
+                            for table_id
+                            in move.from_table_ids
+                        ],
+                        to_table_ids=[
+                            UUID(table_id)
+                            for table_id
+                            in move.to_table_ids
+                        ],
+                        to_table_numbers=[
+                            table_number_by_id.get(
+                                table_id,
+                                table_id,
+                            )
+                            for table_id
+                            in move.to_table_ids
+                        ],
+                        party_size=move.party_size,
+                        start_at=move.start_at,
+                        end_at=move.end_at,
+                        destination_capacity=(
+                            move.destination_capacity
+                        ),
+                        seat_waste=move.seat_waste,
+                        explanation=move.explanation,
+                    )
+                )
+
+            return IntelligenceReoptimizationPlanResponse(
+                new_reservation_assignment=(
+                    serialize_assignment(
+                        plan.new_reservation_assignment,
+                    )
+                ),
+                moves=moves,
+                score=plan.score,
+                total_seat_waste=(
+                    plan.total_seat_waste
+                ),
+                moved_reservations_count=(
+                    plan.moved_reservations_count
+                ),
+                explanation=plan.explanation,
+            )
+
+        return IntelligenceReoptimizeResponse(
+            available=result.available,
+            recommended=(
+                serialize_plan(result.recommended)
+                if result.recommended
+                else None
+            ),
+            alternatives=[
+                serialize_plan(plan)
+                for plan in result.alternatives
+            ],
+            evaluated_plans=result.evaluated_plans,
+            rejected_plans=result.rejected_plans,
         )
 
     async def apply_recommendation(
