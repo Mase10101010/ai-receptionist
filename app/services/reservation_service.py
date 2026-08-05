@@ -705,13 +705,39 @@ class ReservationService:
                 )
             )
 
-        fallback_table_id = await self._assign_available_table(
-            reservation_time=reservation_time,
-            party_size=party_size,
-            restaurant_id=restaurant_id,
-        )
+        try:
+            fallback_table_id = await self._assign_available_table(
+                reservation_time=reservation_time,
+                party_size=party_size,
+                restaurant_id=restaurant_id,
+            )
+        except ConflictError:
+            logger.info(
+                (
+                    "No direct table assignment available. "
+                    "Creating reservation without a table so that "
+                    "assisted reoptimization can be proposed: "
+                    "restaurant_id=%s party=%d time=%s"
+                ),
+                restaurant_id,
+                party_size,
+                reservation_time.isoformat(),
+            )
+
+            return None, []
 
         if fallback_table_id is None:
+            logger.info(
+                (
+                    "No suitable single table exists. "
+                    "Creating reservation without an assignment: "
+                    "restaurant_id=%s party=%d time=%s"
+                ),
+                restaurant_id,
+                party_size,
+                reservation_time.isoformat(),
+            )
+
             return None, []
 
         return fallback_table_id, [fallback_table_id]
@@ -808,12 +834,31 @@ class ReservationService:
             if exclude_id is not None and existing.id == exclude_id:
                 continue
 
-            if existing.table_id != table_id:
+            if existing.status in {
+                ReservationStatus.CANCELLED,
+                ReservationStatus.COMPLETED,
+                ReservationStatus.NO_SHOW,
+            }:
+                continue
+
+            existing_table_ids = set(
+                existing.assigned_table_ids
+                or (
+                    [existing.table_id]
+                    if existing.table_id is not None
+                    else []
+                )
+            )
+
+            if table_id not in existing_table_ids:
                 continue
 
             existing_start = existing.reservation_time
-            existing_end = existing.reservation_time + timedelta(
-                minutes=existing.duration_minutes
+            existing_end = (
+                existing.reservation_time
+                + timedelta(
+                    minutes=existing.duration_minutes,
+                )
             )
 
             overlaps = (
