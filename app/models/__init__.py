@@ -27,6 +27,12 @@ from app.models.integration import (
     RestaurantIntegration,
 )
 
+from app.models.ai_suggestion import (
+    AISuggestion,
+    AISuggestionStatus,
+    AISuggestionType,
+)
+
 __all__ = [
     "Conversation",
     "Message",
@@ -35,6 +41,9 @@ __all__ = [
     "ReservationStatus",
     "TableCombination",
     "TableCombinationMember",
+    "AISuggestion",
+    "AISuggestionStatus",
+    "AISuggestionType",
     "User",
     "Restaurant",
     "ServiceArea",

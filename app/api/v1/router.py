@@ -12,6 +12,7 @@ from app.api.v1.endpoints import (
     service_areas,
     tables,
     webhooks,
+    ai_suggestions,
     table_placements,
     table_combinations,
 ) 
@@ -38,3 +39,4 @@ api_router.include_router(billing.router)
 api_router.include_router(webhooks.router)
 api_router.include_router(integrations.router)
 api_router.include_router(intelligence_router)
+api_router.include_router(ai_suggestions.router)
