@@ -17,6 +17,10 @@ from app.api.v1.endpoints import (
     table_combinations,
 ) 
 
+from app.intelligence_features.router import (
+    router as intelligence_features_router,
+)
+
 from app.intelligence.router import router as intelligence_router
 
 
@@ -39,4 +43,7 @@ api_router.include_router(billing.router)
 api_router.include_router(webhooks.router)
 api_router.include_router(integrations.router)
 api_router.include_router(intelligence_router)
+api_router.include_router(
+    intelligence_features_router,
+)
 api_router.include_router(ai_suggestions.router)
