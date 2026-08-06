@@ -25,6 +25,17 @@ from app.repositories.reservation_repository import (
     ReservationRepository,
 )
 
+from app.intelligence_events.models import (
+    IntelligenceEventSource,
+    IntelligenceEventType,
+)
+from app.intelligence_events.repository import (
+    IntelligenceEventRepository,
+)
+from app.intelligence_events.service import (
+    IntelligenceEventService,
+)
+
 
 class AISuggestionService:
     def __init__(
@@ -42,6 +53,108 @@ class AISuggestionService:
         self.intelligence_service = (
             intelligence_service
             or IntelligenceOptimizationService()
+        )
+
+    async def _record_ai_suggestion_event(
+        self,
+        *,
+        suggestion: AISuggestion,
+        event_type: IntelligenceEventType,
+        source: IntelligenceEventSource,
+        previous_status: AISuggestionStatus | None = None,
+    ) -> None:
+        payload = suggestion.payload or {}
+        plan = payload.get("plan") or {}
+        reservation_payload = (
+            payload.get("reservation") or {}
+        )
+        assignment = (
+            plan.get(
+                "new_reservation_assignment",
+            )
+            or {}
+        )
+
+        service = IntelligenceEventService(
+            IntelligenceEventRepository(
+                self.repository.db,
+            )
+        )
+
+        await service.record(
+            restaurant_id=suggestion.restaurant_id,
+            event_type=event_type,
+            source=source,
+            entity_type="ai_suggestion",
+            entity_id=suggestion.id,
+            payload={
+                "suggestion_id": str(
+                    suggestion.id,
+                ),
+                "reservation_id": (
+                    str(suggestion.reservation_id)
+                    if suggestion.reservation_id
+                    is not None
+                    else None
+                ),
+                "suggestion_type": (
+                    suggestion.suggestion_type.value
+                ),
+                "status": suggestion.status.value,
+                "previous_status": (
+                    previous_status.value
+                    if previous_status is not None
+                    else None
+                ),
+                "score": suggestion.score,
+                "is_read": suggestion.is_read,
+                "customer_name": (
+                    reservation_payload.get(
+                        "customer_name",
+                    )
+                ),
+                "party_size": (
+                    reservation_payload.get(
+                        "party_size",
+                    )
+                ),
+                "moved_reservations_count": (
+                    plan.get(
+                        "moved_reservations_count",
+                        0,
+                    )
+                ),
+                "total_seat_waste": (
+                    plan.get(
+                        "total_seat_waste",
+                        0,
+                    )
+                ),
+                "destination_table_ids": (
+                    assignment.get(
+                        "table_ids",
+                        [],
+                    )
+                ),
+                "destination_table_numbers": (
+                    assignment.get(
+                        "table_numbers",
+                        [],
+                    )
+                ),
+                "engine_version": payload.get(
+                    "engine_version",
+                ),
+                "mode": payload.get("mode"),
+            },
+            metadata={
+                "service": (
+                    "ai_suggestion_service"
+                ),
+                "event_schema": (
+                    f"{event_type.value}.v1"
+                ),
+            },
         )
 
     async def analyze_reservation(
@@ -182,9 +295,20 @@ class AISuggestionService:
             ),
         )
 
-        return await self.repository.create(
+        created = await self.repository.create(
             suggestion,
         )
+
+        await self._record_ai_suggestion_event(
+            suggestion=created,
+            event_type=(
+                IntelligenceEventType
+                .AI_SUGGESTION_CREATED
+            ),
+            source=IntelligenceEventSource.AI,
+        )
+
+        return created
 
     async def analyze_reservation_by_id(
         self,
@@ -231,9 +355,25 @@ class AISuggestionService:
         if suggestion is None:
             return None
 
-        return await self.repository.mark_read(
+        was_already_read = suggestion.is_read
+
+        updated = await self.repository.mark_read(
             suggestion,
         )
+
+        if not was_already_read:
+            await self._record_ai_suggestion_event(
+                suggestion=updated,
+                event_type=(
+                    IntelligenceEventType
+                    .AI_SUGGESTION_READ
+                ),
+                source=(
+                    IntelligenceEventSource.MANAGER
+                ),
+            )
+
+        return updated
 
     async def dismiss(
         self,
@@ -256,10 +396,24 @@ class AISuggestionService:
         ):
             return suggestion
 
-        return await self.repository.update_status(
+        previous_status = suggestion.status
+
+        updated = await self.repository.update_status(
             suggestion=suggestion,
             status=AISuggestionStatus.DISMISSED,
         )
+
+        await self._record_ai_suggestion_event(
+            suggestion=updated,
+            event_type=(
+                IntelligenceEventType
+                .AI_SUGGESTION_DISMISSED
+            ),
+            source=IntelligenceEventSource.MANAGER,
+            previous_status=previous_status,
+        )
+
+        return updated
 
     async def accept(
         self,
@@ -282,10 +436,24 @@ class AISuggestionService:
         ):
             return suggestion
 
-        return await self.repository.update_status(
+        previous_status = suggestion.status
+
+        updated = await self.repository.update_status(
             suggestion=suggestion,
             status=AISuggestionStatus.ACCEPTED,
         )
+
+        await self._record_ai_suggestion_event(
+            suggestion=updated,
+            event_type=(
+                IntelligenceEventType
+                .AI_SUGGESTION_ACCEPTED
+            ),
+            source=IntelligenceEventSource.MANAGER,
+            previous_status=previous_status,
+        )
+
+        return updated
 
     async def expire_for_reservation(
         self,
@@ -321,11 +489,21 @@ class AISuggestionService:
                 suggestion.expires_at is not None
                 and suggestion.expires_at <= now
             ):
-                await self.repository.update_status(
+                previous_status = suggestion.status
+
+                updated = await self.repository.update_status(
                     suggestion=suggestion,
-                    status=(
-                        AISuggestionStatus.EXPIRED
+                    status=AISuggestionStatus.EXPIRED,
+                )
+
+                await self._record_ai_suggestion_event(
+                    suggestion=updated,
+                    event_type=(
+                        IntelligenceEventType
+                        .AI_SUGGESTION_EXPIRED
                     ),
+                    source=IntelligenceEventSource.SYSTEM,
+                    previous_status=previous_status,
                 )
 
                 expired_count += 1
