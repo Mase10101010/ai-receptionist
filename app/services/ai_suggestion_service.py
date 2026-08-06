@@ -332,6 +332,17 @@ class AISuggestionService:
 
         return expired_count
 
+    async def expire_for_restaurant(
+        self,
+        restaurant_id: uuid.UUID,
+    ) -> int:
+        return await (
+            self.repository
+            .expire_pending_for_restaurant(
+                restaurant_id,
+            )
+        )
+
     @staticmethod
     def _format_tables(
         table_numbers: list[str],

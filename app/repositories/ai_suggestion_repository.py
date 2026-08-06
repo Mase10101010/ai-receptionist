@@ -147,3 +147,27 @@ class AISuggestionRepository:
         await self.db.flush()
 
         return int(result.rowcount or 0)
+
+    async def expire_pending_for_restaurant(
+        self,
+        restaurant_id: uuid.UUID,
+    ) -> int:
+        result = await self.db.execute(
+            update(AISuggestion)
+            .where(
+                AISuggestion.restaurant_id
+                == restaurant_id,
+                AISuggestion.status
+                == AISuggestionStatus.PENDING,
+            )
+            .values(
+                status=AISuggestionStatus.EXPIRED,
+                updated_at=datetime.now(
+                    timezone.utc,
+                ),
+            )
+        )
+
+        await self.db.flush()
+
+        return int(result.rowcount or 0)

@@ -312,6 +312,15 @@ class ReservationService:
 
         updated = await self.repository.update(reservation, updates)
 
+        if {
+            "reservation_time",
+            "party_size",
+            "status",
+        } & updates.keys():
+            await self._expire_pending_ai_suggestions(
+                updated.restaurant_id,
+            )
+
         logger.info(
             "Reservation updated: id=%s fields=%s",
             updated.id,
@@ -409,7 +418,21 @@ class ReservationService:
                 exclude_id=reservation.id,
             )
 
-        return await self.repository.update(reservation, updates)
+        updated = await self.repository.update(
+            reservation,
+            updates,
+        )
+
+        if {
+            "reservation_time",
+            "party_size",
+            "status",
+        } & updates.keys():
+            await self._expire_pending_ai_suggestions(
+                updated.restaurant_id,
+            )
+
+        return updated
 
     async def move_reservation_for_restaurants(
         self,
@@ -459,6 +482,10 @@ class ReservationService:
             primary_table_id=validated_table_id,
         )
 
+        await self._expire_pending_ai_suggestions(
+            moved.restaurant_id,
+        )
+
         logger.info(
             (
                 "Reservation moved: id=%s restaurant_id=%s "
@@ -472,6 +499,34 @@ class ReservationService:
         )
 
         return moved
+
+    async def _expire_pending_ai_suggestions(
+        self,
+        restaurant_id: uuid.UUID | None,
+    ) -> None:
+        if restaurant_id is None:
+            return
+
+        repository = AISuggestionRepository(
+            self.repository.db,
+        )
+
+        expired_count = (
+            await repository
+            .expire_pending_for_restaurant(
+                restaurant_id,
+            )
+        )
+
+        if expired_count > 0:
+            logger.info(
+                (
+                    "Expired stale AI suggestions: "
+                    "restaurant_id=%s count=%d"
+                ),
+                restaurant_id,
+                expired_count,
+            )
 
     async def cancel_reservation(self, reservation_id: uuid.UUID) -> Reservation:
         reservation = await self.get_reservation(reservation_id)
@@ -493,6 +548,10 @@ class ReservationService:
             .expire_pending_for_reservation(
                 cancelled.id,
             )
+        )
+
+        await self._expire_pending_ai_suggestions(
+            cancelled.restaurant_id,
         )
 
         logger.info(
@@ -585,6 +644,10 @@ class ReservationService:
             .expire_pending_for_reservation(
                 cancelled.id,
             )
+        )
+
+        await self._expire_pending_ai_suggestions(
+            cancelled.restaurant_id,
         )
 
         logger.info(
