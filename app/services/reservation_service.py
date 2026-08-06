@@ -22,6 +22,16 @@ from app.repositories.restaurant_repository import RestaurantRepository
 from app.repositories.table_repository import TableRepository
 from app.schemas.reservation import ReservationCreate, ReservationUpdate
 from app.services.email_service import EmailService
+from app.intelligence_events.models import (
+    IntelligenceEventSource,
+    IntelligenceEventType,
+)
+from app.intelligence_events.repository import (
+    IntelligenceEventRepository,
+)
+from app.intelligence_events.service import (
+    IntelligenceEventService,
+)
 
 logger = get_logger(__name__)
 
@@ -60,6 +70,38 @@ class ReservationService:
         self.intelligence_service = (
             intelligence_service
             or IntelligenceOptimizationService()
+        )
+
+    async def _record_reservation_event(
+        self,
+        *,
+        reservation: Reservation,
+        event_type: IntelligenceEventType,
+        source: IntelligenceEventSource,
+        payload: dict,
+    ) -> None:
+        if reservation.restaurant_id is None:
+            return
+
+        service = IntelligenceEventService(
+            IntelligenceEventRepository(
+                self.repository.db,
+            )
+        )
+
+        await service.record(
+            restaurant_id=reservation.restaurant_id,
+            event_type=event_type,
+            source=source,
+            entity_type="reservation",
+            entity_id=reservation.id,
+            payload=payload,
+            metadata={
+                "service": "reservation_service",
+                "event_schema": (
+                    f"{event_type.value}.v1"
+                ),
+            },
         )
 
     async def create_reservation(self, payload: ReservationCreate) -> Reservation:
@@ -121,6 +163,42 @@ class ReservationService:
                 table_ids=assigned_table_ids,
                 primary_table_id=table_id,
             )
+
+        await self._record_reservation_event(
+            reservation=created,
+            event_type=(
+                IntelligenceEventType
+                .RESERVATION_CREATED
+            ),
+            source=IntelligenceEventSource.SYSTEM,
+            payload={
+                "customer_name": created.customer_name,
+                "party_size": created.party_size,
+                "reservation_time": (
+                    created.reservation_time.isoformat()
+                ),
+                "duration_minutes": (
+                    created.duration_minutes
+                ),
+                "status": created.status.value,
+                "table_id": (
+                    str(created.table_id)
+                    if created.table_id is not None
+                    else None
+                ),
+                "table_ids": [
+                    str(table_id)
+                    for table_id in (
+                        created.assigned_table_ids or []
+                    )
+                ],
+                "origin": (
+                    "manual"
+                    if created.session_id is None
+                    else "concierge"
+                ),
+            },
+        )
 
         logger.info(
             "Reservation created: id=%s restaurant_id=%s party=%d time=%s",
@@ -312,6 +390,48 @@ class ReservationService:
 
         updated = await self.repository.update(reservation, updates)
 
+        if updates:
+            await self._record_reservation_event(
+                reservation=updated,
+                event_type=(
+                    IntelligenceEventType
+                    .RESERVATION_UPDATED
+                ),
+                source=(
+                    IntelligenceEventSource.SYSTEM
+                ),
+                payload={
+                    "changed_fields": sorted(
+                        updates.keys(),
+                    ),
+                    "changes": {
+                        key: (
+                            value.isoformat()
+                            if isinstance(
+                                value,
+                                datetime,
+                            )
+                            else (
+                                value.value
+                                if hasattr(
+                                    value,
+                                    "value",
+                                )
+                                else value
+                            )
+                        )
+                        for key, value
+                        in updates.items()
+                    },
+                    "party_size": updated.party_size,
+                    "reservation_time": (
+                        updated.reservation_time
+                        .isoformat()
+                    ),
+                    "status": updated.status.value,
+                },
+            )
+
         if {
             "reservation_time",
             "party_size",
@@ -423,6 +543,46 @@ class ReservationService:
             updates,
         )
 
+        if updates:
+            await self._record_reservation_event(
+                reservation=updated,
+                event_type=(
+                    IntelligenceEventType
+                    .RESERVATION_UPDATED
+                ),
+                source=IntelligenceEventSource.MANAGER,
+                payload={
+                    "changed_fields": sorted(
+                        updates.keys(),
+                    ),
+                    "changes": {
+                        key: (
+                            value.isoformat()
+                            if isinstance(
+                                value,
+                                datetime,
+                            )
+                            else (
+                                value.value
+                                if hasattr(
+                                    value,
+                                    "value",
+                                )
+                                else value
+                            )
+                        )
+                        for key, value
+                        in updates.items()
+                    },
+                    "party_size": updated.party_size,
+                    "reservation_time": (
+                        updated.reservation_time
+                        .isoformat()
+                    ),
+                    "status": updated.status.value,
+                },
+            )
+
         if {
             "reservation_time",
             "party_size",
@@ -482,6 +642,40 @@ class ReservationService:
             primary_table_id=validated_table_id,
         )
 
+        await self._record_reservation_event(
+            reservation=moved,
+            event_type=(
+                IntelligenceEventType
+                .RESERVATION_MOVED
+            ),
+            source=IntelligenceEventSource.MANAGER,
+            payload={
+                "from_table_id": (
+                    str(previous_table_id)
+                    if previous_table_id is not None
+                    else None
+                ),
+                "to_table_id": str(
+                    moved.table_id,
+                ),
+                "from_table_ids": (
+                    [str(previous_table_id)]
+                    if previous_table_id is not None
+                    else []
+                ),
+                "to_table_ids": [
+                    str(table_id)
+                    for table_id in (
+                        moved.assigned_table_ids or []
+                    )
+                ],
+                "party_size": moved.party_size,
+                "reservation_time": (
+                    moved.reservation_time.isoformat()
+                ),
+            },
+        )
+
         await self._expire_pending_ai_suggestions(
             moved.restaurant_id,
         )
@@ -534,6 +728,8 @@ class ReservationService:
         if reservation.status == ReservationStatus.CANCELLED:
             return reservation
 
+        previous_status = reservation.status
+
         cancelled = await self.repository.update(
             reservation,
             {"status": ReservationStatus.CANCELLED},
@@ -557,6 +753,42 @@ class ReservationService:
         logger.info(
             "Reservation cancelled: id=%s",
             cancelled.id,
+        )
+
+        await self._record_reservation_event(
+            reservation=cancelled,
+            event_type=(
+                IntelligenceEventType
+                .RESERVATION_CANCELLED
+            ),
+            source=IntelligenceEventSource.SYSTEM,
+            payload={
+                "customer_name": (
+                    cancelled.customer_name
+                ),
+                "party_size": cancelled.party_size,
+                "reservation_time": (
+                    cancelled.reservation_time
+                    .isoformat()
+                ),
+                "previous_status": (
+                    previous_status.value
+                ),
+                "new_status": (
+                    cancelled.status.value
+                ),
+                "table_id": (
+                    str(cancelled.table_id)
+                    if cancelled.table_id is not None
+                    else None
+                ),
+                "table_ids": [
+                    str(table_id)
+                    for table_id in (
+                        cancelled.assigned_table_ids or []
+                    )
+                ],
+            },
         )
 
         try:
@@ -630,6 +862,8 @@ class ReservationService:
         if reservation.status == ReservationStatus.CANCELLED:
             return reservation
 
+        previous_status = reservation.status
+
         cancelled = await self.repository.update(
             reservation,
             {"status": ReservationStatus.CANCELLED},
@@ -648,6 +882,42 @@ class ReservationService:
 
         await self._expire_pending_ai_suggestions(
             cancelled.restaurant_id,
+        )
+
+        await self._record_reservation_event(
+            reservation=cancelled,
+            event_type=(
+                IntelligenceEventType
+                .RESERVATION_CANCELLED
+            ),
+            source=IntelligenceEventSource.MANAGER,
+            payload={
+                "customer_name": (
+                    cancelled.customer_name
+                ),
+                "party_size": cancelled.party_size,
+                "reservation_time": (
+                    cancelled.reservation_time
+                    .isoformat()
+                ),
+                "previous_status": (
+                    previous_status.value
+                ),
+                "new_status": (
+                    cancelled.status.value
+                ),
+                "table_id": (
+                    str(cancelled.table_id)
+                    if cancelled.table_id is not None
+                    else None
+                ),
+                "table_ids": [
+                    str(table_id)
+                    for table_id in (
+                        cancelled.assigned_table_ids or []
+                    )
+                ],
+            },
         )
 
         logger.info(
