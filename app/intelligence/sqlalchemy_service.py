@@ -240,17 +240,10 @@ class IntelligenceOptimizationService:
             and base_score
             < policy.minimum_recommended_score
         ):
-            score_gap = (
-                policy.minimum_recommended_score
-                - base_score
-            )
-
-            personalized_score -= score_gap
-
             reasons.append(
                 (
-                    "Below learned score reference: "
-                    f"-{score_gap:.2f}."
+                    "Technical score is below the current "
+                    "learned reference; manager review is advised."
                 )
             )
 
