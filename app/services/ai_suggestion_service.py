@@ -36,6 +36,10 @@ from app.intelligence_events.service import (
     IntelligenceEventService,
 )
 
+from app.intelligence_learning.service import (
+    RestaurantLearningService,
+)
+
 
 class AISuggestionService:
     def __init__(
@@ -155,6 +159,19 @@ class AISuggestionService:
                     f"{event_type.value}.v1"
                 ),
             },
+        )
+
+    async def _refresh_learning_profile(
+        self,
+        *,
+        restaurant_id: uuid.UUID,
+    ) -> None:
+        service = RestaurantLearningService(
+            session=self.repository.db,
+        )
+
+        await service.update_profile(
+            restaurant_id=restaurant_id,
         )
 
     async def analyze_reservation(
@@ -308,6 +325,10 @@ class AISuggestionService:
             source=IntelligenceEventSource.AI,
         )
 
+        await self._refresh_learning_profile(
+            restaurant_id=created.restaurant_id,
+        )
+
         return created
 
     async def analyze_reservation_by_id(
@@ -373,6 +394,10 @@ class AISuggestionService:
                 ),
             )
 
+            await self._refresh_learning_profile(
+                restaurant_id=updated.restaurant_id,
+            )
+
         return updated
 
     async def dismiss(
@@ -411,6 +436,10 @@ class AISuggestionService:
             ),
             source=IntelligenceEventSource.MANAGER,
             previous_status=previous_status,
+        )
+
+        await self._refresh_learning_profile(
+            restaurant_id=updated.restaurant_id,
         )
 
         return updated
@@ -453,6 +482,10 @@ class AISuggestionService:
             previous_status=previous_status,
         )
 
+        await self._refresh_learning_profile(
+            restaurant_id=updated.restaurant_id,
+        )
+
         return updated
 
     async def expire_for_reservation(
@@ -479,6 +512,10 @@ class AISuggestionService:
                 previous_status=(
                     AISuggestionStatus.PENDING
                 ),
+            )
+
+            await self._refresh_learning_profile(
+                restaurant_id=updated.restaurant_id,
             )
 
         return len(expired_suggestions)
@@ -523,6 +560,10 @@ class AISuggestionService:
                     previous_status=previous_status,
                 )
 
+                await self._refresh_learning_profile(
+                    restaurant_id=updated.restaurant_id,
+                )
+
                 expired_count += 1
 
         return expired_count
@@ -551,6 +592,10 @@ class AISuggestionService:
                 previous_status=(
                     AISuggestionStatus.PENDING
                 ),
+            )
+
+            await self._refresh_learning_profile(
+                restaurant_id=updated.restaurant_id,
             )
 
         return len(expired_suggestions)

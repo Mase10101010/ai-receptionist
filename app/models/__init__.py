@@ -39,6 +39,10 @@ from app.intelligence_events.models import (
     IntelligenceEventType,
 )
 
+from app.intelligence_learning.models import (
+    RestaurantLearningProfile,
+)
+
 __all__ = [
     "Conversation",
     "Message",
@@ -64,5 +68,6 @@ __all__ = [
     "OperationType",
     "ProviderType",
     "RestaurantIntegration",
+    "RestaurantLearningProfile",
     
 ]

@@ -106,6 +106,44 @@ class IntelligenceEventRepository:
             result.scalars().all(),
         )
 
+    async def list_after_cursor(
+        self,
+        *,
+        restaurant_id: uuid.UUID,
+        created_after: datetime | None = None,
+        last_event_id: uuid.UUID | None = None,
+        limit: int = 500,
+    ) -> list[IntelligenceEvent]:
+        statement = select(
+            IntelligenceEvent
+        ).where(
+            IntelligenceEvent.restaurant_id
+            == restaurant_id,
+        )
+
+        if created_after is not None:
+            statement = statement.where(
+                IntelligenceEvent.created_at
+                > created_after,
+            )
+
+        statement = (
+            statement
+            .order_by(
+                IntelligenceEvent.created_at.asc(),
+                IntelligenceEvent.id.asc(),
+            )
+            .limit(limit)
+        )
+
+        result = await self.db.execute(
+            statement,
+        )
+
+        return list(
+            result.scalars().all(),
+        )
+
     async def list_for_entity(
         self,
         *,
