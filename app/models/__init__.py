@@ -33,6 +33,12 @@ from app.models.ai_suggestion import (
     AISuggestionType,
 )
 
+from app.intelligence_events.models import (
+    IntelligenceEvent,
+    IntelligenceEventSource,
+    IntelligenceEventType,
+)
+
 __all__ = [
     "Conversation",
     "Message",
