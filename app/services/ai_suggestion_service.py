@@ -287,6 +287,17 @@ class AISuggestionService:
             status=AISuggestionStatus.ACCEPTED,
         )
 
+    async def expire_for_reservation(
+        self,
+        reservation_id: uuid.UUID,
+    ) -> int:
+        return await (
+            self.repository
+            .expire_pending_for_reservation(
+                reservation_id,
+            )
+        )
+
     async def expire_outdated(
         self,
         restaurant_ids: list[uuid.UUID],

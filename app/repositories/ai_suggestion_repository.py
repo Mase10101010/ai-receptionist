@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ai_suggestion import (
@@ -123,3 +123,27 @@ class AISuggestionRepository:
         await self.db.refresh(suggestion)
 
         return suggestion
+
+    async def expire_pending_for_reservation(
+        self,
+        reservation_id: uuid.UUID,
+    ) -> int:
+        result = await self.db.execute(
+            update(AISuggestion)
+            .where(
+                AISuggestion.reservation_id
+                == reservation_id,
+                AISuggestion.status
+                == AISuggestionStatus.PENDING,
+            )
+            .values(
+                status=AISuggestionStatus.EXPIRED,
+                updated_at=datetime.now(
+                    timezone.utc,
+                ),
+            )
+        )
+
+        await self.db.flush()
+
+        return int(result.rowcount or 0)

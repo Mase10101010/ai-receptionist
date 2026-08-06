@@ -15,6 +15,9 @@ from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.core.logging import get_logger
 from app.models.reservation import Reservation, ReservationStatus
 from app.repositories.reservation_repository import ReservationRepository
+from app.repositories.ai_suggestion_repository import (
+    AISuggestionRepository,
+)
 from app.repositories.restaurant_repository import RestaurantRepository
 from app.repositories.table_repository import TableRepository
 from app.schemas.reservation import ReservationCreate, ReservationUpdate
@@ -481,6 +484,17 @@ class ReservationService:
             {"status": ReservationStatus.CANCELLED},
         )
 
+        ai_suggestion_repository = AISuggestionRepository(
+            self.repository.db,
+        )
+
+        await (
+            ai_suggestion_repository
+            .expire_pending_for_reservation(
+                cancelled.id,
+            )
+        )
+
         logger.info(
             "Reservation cancelled: id=%s",
             cancelled.id,
@@ -557,10 +571,31 @@ class ReservationService:
         if reservation.status == ReservationStatus.CANCELLED:
             return reservation
 
-        return await self.repository.update(
+        cancelled = await self.repository.update(
             reservation,
             {"status": ReservationStatus.CANCELLED},
         )
+
+        ai_suggestion_repository = AISuggestionRepository(
+            self.repository.db,
+        )
+
+        await (
+            ai_suggestion_repository
+            .expire_pending_for_reservation(
+                cancelled.id,
+            )
+        )
+
+        logger.info(
+            (
+                "Reservation cancelled for restaurant owner: "
+                "id=%s expired_pending_ai_suggestions=true"
+            ),
+            cancelled.id,
+        )
+
+        return cancelled
 
     async def check_availability(
         self,
