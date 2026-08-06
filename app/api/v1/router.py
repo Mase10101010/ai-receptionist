@@ -23,6 +23,10 @@ from app.intelligence_features.router import (
 
 from app.intelligence.router import router as intelligence_router
 
+from app.intelligence_behaviour.router import (
+    router as intelligence_behaviour_router,
+)
+
 
 api_router = APIRouter()
 
@@ -45,5 +49,8 @@ api_router.include_router(integrations.router)
 api_router.include_router(intelligence_router)
 api_router.include_router(
     intelligence_features_router,
+)
+api_router.include_router(
+    intelligence_behaviour_router,
 )
 api_router.include_router(ai_suggestions.router)
