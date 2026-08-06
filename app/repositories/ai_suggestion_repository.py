@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ai_suggestion import (
@@ -127,47 +127,67 @@ class AISuggestionRepository:
     async def expire_pending_for_reservation(
         self,
         reservation_id: uuid.UUID,
-    ) -> int:
+    ) -> list[AISuggestion]:
         result = await self.db.execute(
-            update(AISuggestion)
+            select(AISuggestion)
             .where(
                 AISuggestion.reservation_id
                 == reservation_id,
                 AISuggestion.status
                 == AISuggestionStatus.PENDING,
             )
-            .values(
-                status=AISuggestionStatus.EXPIRED,
-                updated_at=datetime.now(
-                    timezone.utc,
-                ),
+            .order_by(
+                AISuggestion.created_at.asc(),
             )
         )
 
-        await self.db.flush()
+        suggestions = list(
+            result.scalars().all(),
+        )
 
-        return int(result.rowcount or 0)
+        now = datetime.now(timezone.utc)
+
+        for suggestion in suggestions:
+            suggestion.status = (
+                AISuggestionStatus.EXPIRED
+            )
+            suggestion.updated_at = now
+
+        if suggestions:
+            await self.db.flush()
+
+        return suggestions
 
     async def expire_pending_for_restaurant(
         self,
         restaurant_id: uuid.UUID,
-    ) -> int:
+    ) -> list[AISuggestion]:
         result = await self.db.execute(
-            update(AISuggestion)
+            select(AISuggestion)
             .where(
                 AISuggestion.restaurant_id
                 == restaurant_id,
                 AISuggestion.status
                 == AISuggestionStatus.PENDING,
             )
-            .values(
-                status=AISuggestionStatus.EXPIRED,
-                updated_at=datetime.now(
-                    timezone.utc,
-                ),
+            .order_by(
+                AISuggestion.created_at.asc(),
             )
         )
 
-        await self.db.flush()
+        suggestions = list(
+            result.scalars().all(),
+        )
 
-        return int(result.rowcount or 0)
+        now = datetime.now(timezone.utc)
+
+        for suggestion in suggestions:
+            suggestion.status = (
+                AISuggestionStatus.EXPIRED
+            )
+            suggestion.updated_at = now
+
+        if suggestions:
+            await self.db.flush()
+
+        return suggestions

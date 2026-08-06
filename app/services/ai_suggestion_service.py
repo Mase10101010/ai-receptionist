@@ -459,12 +459,29 @@ class AISuggestionService:
         self,
         reservation_id: uuid.UUID,
     ) -> int:
-        return await (
+        expired_suggestions = await (
             self.repository
             .expire_pending_for_reservation(
                 reservation_id,
             )
         )
+
+        for suggestion in expired_suggestions:
+            await self._record_ai_suggestion_event(
+                suggestion=suggestion,
+                event_type=(
+                    IntelligenceEventType
+                    .AI_SUGGESTION_EXPIRED
+                ),
+                source=(
+                    IntelligenceEventSource.SYSTEM
+                ),
+                previous_status=(
+                    AISuggestionStatus.PENDING
+                ),
+            )
+
+        return len(expired_suggestions)
 
     async def expire_outdated(
         self,
@@ -514,12 +531,29 @@ class AISuggestionService:
         self,
         restaurant_id: uuid.UUID,
     ) -> int:
-        return await (
+        expired_suggestions = await (
             self.repository
             .expire_pending_for_restaurant(
                 restaurant_id,
             )
         )
+
+        for suggestion in expired_suggestions:
+            await self._record_ai_suggestion_event(
+                suggestion=suggestion,
+                event_type=(
+                    IntelligenceEventType
+                    .AI_SUGGESTION_EXPIRED
+                ),
+                source=(
+                    IntelligenceEventSource.SYSTEM
+                ),
+                previous_status=(
+                    AISuggestionStatus.PENDING
+                ),
+            )
+
+        return len(expired_suggestions)
 
     @staticmethod
     def _format_tables(

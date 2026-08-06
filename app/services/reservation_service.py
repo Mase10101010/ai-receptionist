@@ -26,6 +26,9 @@ from app.intelligence_events.models import (
     IntelligenceEventSource,
     IntelligenceEventType,
 )
+from app.services.ai_suggestion_service import (
+    AISuggestionService,
+)
 from app.intelligence_events.repository import (
     IntelligenceEventRepository,
 )
@@ -701,13 +704,18 @@ class ReservationService:
         if restaurant_id is None:
             return
 
-        repository = AISuggestionRepository(
-            self.repository.db,
+        service = AISuggestionService(
+            repository=AISuggestionRepository(
+                self.repository.db,
+            ),
+            reservation_repository=(
+                self.repository
+            ),
         )
 
         expired_count = (
-            await repository
-            .expire_pending_for_restaurant(
+            await service
+            .expire_for_restaurant(
                 restaurant_id,
             )
         )
@@ -739,11 +747,15 @@ class ReservationService:
             self.repository.db,
         )
 
-        await (
-            ai_suggestion_repository
-            .expire_pending_for_reservation(
-                cancelled.id,
-            )
+        ai_suggestion_service = AISuggestionService(
+            repository=AISuggestionRepository(
+                self.repository.db,
+            ),
+            reservation_repository=self.repository,
+        )
+
+        await ai_suggestion_service.expire_for_reservation(
+            cancelled.id,
         )
 
         await self._expire_pending_ai_suggestions(
@@ -873,11 +885,15 @@ class ReservationService:
             self.repository.db,
         )
 
-        await (
-            ai_suggestion_repository
-            .expire_pending_for_reservation(
-                cancelled.id,
-            )
+        ai_suggestion_service = AISuggestionService(
+            repository=AISuggestionRepository(
+                self.repository.db,
+            ),
+            reservation_repository=self.repository,
+        )
+
+        await ai_suggestion_service.expire_for_reservation(
+            cancelled.id,
         )
 
         await self._expire_pending_ai_suggestions(
