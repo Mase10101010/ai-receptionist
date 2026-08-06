@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timezone
 from uuid import UUID
 
 import logging
@@ -47,6 +47,13 @@ from .types import (
     ReoptimizationRequest,
 )
 
+from app.intelligence_features.schemas import (
+    AISuggestionFeatures,
+)
+from app.intelligence_learning.repository import (
+    RestaurantLearningProfileRepository,
+)
+
 from app.intelligence_behaviour.service import (
     IntelligenceBehaviourService,
 )
@@ -62,6 +69,8 @@ from app.intelligence_policy.schemas import (
 from app.intelligence_policy.service import (
     RecommendationPolicyService,
 )
+
+
 
 from .reoptimizer import ReservationReoptimizer
 
@@ -91,6 +100,56 @@ class IntelligenceOptimizationService:
             or ReservationReoptimizer()
         )
 
+    @staticmethod
+    def _features_from_learning_profile(
+        *,
+        profile,
+    ) -> AISuggestionFeatures:
+        return AISuggestionFeatures(
+            restaurant_id=profile.restaurant_id,
+            suggestions_created=(
+                profile.suggestions_created
+            ),
+            suggestions_read=(
+                profile.suggestions_read
+            ),
+            suggestions_accepted=(
+                profile.suggestions_accepted
+            ),
+            suggestions_dismissed=(
+                profile.suggestions_dismissed
+            ),
+            suggestions_expired=(
+                profile.suggestions_expired
+            ),
+            acceptance_rate=(
+                profile.acceptance_rate
+            ),
+            dismissal_rate=(
+                profile.dismissal_rate
+            ),
+            read_rate=profile.read_rate,
+            average_created_score=None,
+            average_accepted_score=(
+                profile.accepted_score_average
+            ),
+            average_dismissed_score=(
+                profile.dismissed_score_average
+            ),
+            average_expired_score=None,
+            average_moves_accepted=(
+                profile.accepted_moves_average
+            ),
+            average_seat_waste_accepted=(
+                profile
+                .accepted_seat_waste_average
+            ),
+            generated_at=(
+                profile.updated_at
+                or datetime.now(timezone.utc)
+            ),
+        )
+
     async def _build_recommendation_policy(
         self,
         *,
@@ -98,18 +157,40 @@ class IntelligenceOptimizationService:
         restaurant_id: UUID,
     ) -> RecommendationPolicy | None:
         try:
-            feature_service = IntelligenceFeatureService(
-                IntelligenceFeatureRepository(
+            learning_repository = (
+                RestaurantLearningProfileRepository(
                     session,
                 )
             )
 
-            features = (
-                await feature_service
-                .get_ai_suggestion_features(
-                    restaurant_id=restaurant_id,
+            learning_profile = (
+                await learning_repository
+                .get_by_restaurant_id(
+                    restaurant_id,
                 )
             )
+
+            if learning_profile is not None:
+                features = (
+                    self._features_from_learning_profile(
+                        profile=learning_profile,
+                    )
+                )
+            else:
+                feature_service = (
+                    IntelligenceFeatureService(
+                        IntelligenceFeatureRepository(
+                            session,
+                        )
+                    )
+                )
+
+                features = (
+                    await feature_service
+                    .get_ai_suggestion_features(
+                        restaurant_id=restaurant_id,
+                    )
+                )
 
             manager_decisions = (
                 features.suggestions_accepted

@@ -124,7 +124,7 @@ class RecommendationPolicyService:
         if minimum_recommended_score is not None:
             rationale.append(
                 "Plans below the learned score reference "
-                "should be ranked more cautiously."
+                "should remain subject to explicit manager review."
             )
 
         return RecommendationPolicy(
