@@ -1,4 +1,3 @@
-from app.intelligence_behaviour.router import router
 from app.intelligence_behaviour.schemas import (
     AISuggestionBehaviourProfile,
     BehaviourConfidence,
@@ -17,5 +16,4 @@ __all__ = [
     "IntelligenceBehaviourService",
     "ManagerTrustLevel",
     "PlanPreference",
-    "router",
 ]

@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import timedelta
 from uuid import UUID
 
+import logging
+
 import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -45,7 +47,25 @@ from .types import (
     ReoptimizationRequest,
 )
 
+from app.intelligence_behaviour.service import (
+    IntelligenceBehaviourService,
+)
+from app.intelligence_features.repository import (
+    IntelligenceFeatureRepository,
+)
+from app.intelligence_features.service import (
+    IntelligenceFeatureService,
+)
+from app.intelligence_policy.schemas import (
+    RecommendationPolicy,
+)
+from app.intelligence_policy.service import (
+    RecommendationPolicyService,
+)
+
 from .reoptimizer import ReservationReoptimizer
+
+logger = logging.getLogger(__name__)
 
 
 BLOCKING_STATUSES = (
@@ -69,6 +89,175 @@ class IntelligenceOptimizationService:
         self.reoptimizer = (
             reoptimizer
             or ReservationReoptimizer()
+        )
+
+    async def _build_recommendation_policy(
+        self,
+        *,
+        session: AsyncSession,
+        restaurant_id: UUID,
+    ) -> RecommendationPolicy | None:
+        try:
+            feature_service = IntelligenceFeatureService(
+                IntelligenceFeatureRepository(
+                    session,
+                )
+            )
+
+            features = (
+                await feature_service
+                .get_ai_suggestion_features(
+                    restaurant_id=restaurant_id,
+                )
+            )
+
+            manager_decisions = (
+                features.suggestions_accepted
+                + features.suggestions_dismissed
+            )
+
+            if manager_decisions == 0:
+                return None
+
+            behaviour_profile = (
+                IntelligenceBehaviourService()
+                .build_ai_suggestion_profile(
+                    features=features,
+                )
+            )
+
+            return (
+                RecommendationPolicyService()
+                .build_policy(
+                    profile=behaviour_profile,
+                )
+            )
+
+        except Exception:
+            logger.exception(
+                (
+                    "Unable to build personalized "
+                    "recommendation policy: "
+                    "restaurant_id=%s"
+                ),
+                restaurant_id,
+            )
+
+            return None
+
+
+    @staticmethod
+    def _personalize_plan_score(
+        *,
+        base_score: float,
+        moved_reservations_count: int,
+        total_seat_waste: int,
+        policy: RecommendationPolicy | None,
+    ) -> tuple[float, bool, list[str]]:
+        if policy is None:
+            return (
+                round(base_score, 4),
+                False,
+                [
+                    "Technical AIE ranking used because no "
+                    "personalized policy was available."
+                ],
+            )
+
+        personalized_score = (
+            base_score * policy.score_weight
+        )
+
+        reasons: list[str] = []
+
+        move_penalty = (
+            moved_reservations_count
+            * policy.move_penalty_weight
+        )
+
+        personalized_score -= move_penalty
+
+        reasons.append(
+            (
+                f"Move penalty: -{move_penalty:.2f} "
+                f"for {moved_reservations_count} move(s)."
+            )
+        )
+
+        seat_waste_penalty = (
+            total_seat_waste
+            * policy.seat_waste_penalty_weight
+        )
+
+        personalized_score -= seat_waste_penalty
+
+        reasons.append(
+            (
+                f"Seat-waste penalty: "
+                f"-{seat_waste_penalty:.2f} "
+                f"for {total_seat_waste} unused seat(s)."
+            )
+        )
+
+        if (
+            moved_reservations_count == 1
+            and policy.single_move_bonus > 0
+        ):
+            personalized_score += (
+                policy.single_move_bonus
+            )
+
+            reasons.append(
+                (
+                    "Single-move preference bonus: "
+                    f"+{policy.single_move_bonus:.2f}."
+                )
+            )
+
+        if (
+            policy.low_seat_waste_bonus > 0
+            and (
+                policy.maximum_preferred_seat_waste
+                is None
+                or total_seat_waste
+                <= policy.maximum_preferred_seat_waste
+            )
+        ):
+            personalized_score += (
+                policy.low_seat_waste_bonus
+            )
+
+            reasons.append(
+                (
+                    "Low-seat-waste preference bonus: "
+                    f"+{policy.low_seat_waste_bonus:.2f}."
+                )
+            )
+
+        if (
+            policy.minimum_recommended_score
+            is not None
+            and base_score
+            < policy.minimum_recommended_score
+        ):
+            score_gap = (
+                policy.minimum_recommended_score
+                - base_score
+            )
+
+            personalized_score -= score_gap
+
+            reasons.append(
+                (
+                    "Below learned score reference: "
+                    f"-{score_gap:.2f}."
+                )
+            )
+
+        return (
+            round(personalized_score, 4),
+            True,
+            reasons,
         )
 
     async def optimize(
@@ -338,6 +527,11 @@ class IntelligenceOptimizationService:
             combinations=intelligence_combinations,
         )
 
+        policy = await self._build_recommendation_policy(
+            session=session,
+            restaurant_id=payload.restaurant_id,
+        )
+
         table_number_by_id = {
             str(table.id): table.table_number
             for table in tables
@@ -419,6 +613,21 @@ class IntelligenceOptimizationService:
                     )
                 )
 
+            (
+                personalized_score,
+                personalization_applied,
+                personalization_reasons,
+            ) = self._personalize_plan_score(
+                base_score=plan.score,
+                moved_reservations_count=(
+                    plan.moved_reservations_count
+                ),
+                total_seat_waste=(
+                    plan.total_seat_waste
+                ),
+                policy=policy,
+            )
+
             return IntelligenceReoptimizationPlanResponse(
                 new_reservation_assignment=(
                     serialize_assignment(
@@ -426,7 +635,19 @@ class IntelligenceOptimizationService:
                     )
                 ),
                 moves=moves,
+
+                # Original technical score remains unchanged.
                 score=plan.score,
+                base_score=plan.score,
+
+                personalized_score=personalized_score,
+                personalization_applied=(
+                    personalization_applied
+                ),
+                personalization_reasons=(
+                    personalization_reasons
+                ),
+
                 total_seat_waste=(
                     plan.total_seat_waste
                 ),
@@ -436,17 +657,88 @@ class IntelligenceOptimizationService:
                 explanation=plan.explanation,
             )
 
-        return IntelligenceReoptimizeResponse(
-            available=result.available,
-            recommended=(
-                serialize_plan(result.recommended)
-                if result.recommended
-                else None
+        serialized_plans: list[
+            IntelligenceReoptimizationPlanResponse
+        ] = []
+
+        if result.recommended is not None:
+            serialized_plans.append(
+                serialize_plan(
+                    result.recommended,
+                )
+            )
+
+        serialized_plans.extend(
+            serialize_plan(plan)
+            for plan in result.alternatives
+        )
+
+        # Prevent accidental duplicates if the original
+        # recommendation is also present in alternatives.
+        unique_plans: list[
+            IntelligenceReoptimizationPlanResponse
+        ] = []
+
+        seen_plan_keys: set[
+            tuple[
+                tuple[UUID, ...],
+                tuple[
+                    tuple[UUID, tuple[UUID, ...]],
+                    ...,
+                ],
+            ]
+        ] = set()
+
+        for plan in serialized_plans:
+            plan_key = (
+                tuple(
+                    plan
+                    .new_reservation_assignment
+                    .table_ids
+                ),
+                tuple(
+                    (
+                        move.reservation_id,
+                        tuple(move.to_table_ids),
+                    )
+                    for move in plan.moves
+                ),
+            )
+
+            if plan_key in seen_plan_keys:
+                continue
+
+            seen_plan_keys.add(plan_key)
+            unique_plans.append(plan)
+
+        ranked_plans = sorted(
+            unique_plans,
+            key=lambda plan: (
+                plan.personalized_score,
+                plan.base_score,
             ),
-            alternatives=[
-                serialize_plan(plan)
-                for plan in result.alternatives
-            ],
+            reverse=True,
+        )
+
+        recommended = (
+            ranked_plans[0]
+            if ranked_plans
+            else None
+        )
+
+        alternatives = (
+            ranked_plans[1:]
+            if len(ranked_plans) > 1
+            else []
+        )
+
+        return IntelligenceReoptimizeResponse(
+            available=(
+                result.available
+                and recommended is not None
+            ),
+            recommended=recommended,
+            alternatives=alternatives,
             evaluated_plans=result.evaluated_plans,
             rejected_plans=result.rejected_plans,
         )

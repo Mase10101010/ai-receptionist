@@ -119,10 +119,17 @@ class IntelligenceReoptimizationPlanResponse(BaseModel):
     ] = Field(default_factory=list)
 
     score: float
+    base_score: float
+    personalized_score: float
+    personalization_applied: bool = False
+
+    personalization_reasons: list[str] = Field(
+        default_factory=list,
+    )
+
     total_seat_waste: int
     moved_reservations_count: int
     explanation: str
-
 
 class IntelligenceReoptimizeResponse(BaseModel):
     available: bool
