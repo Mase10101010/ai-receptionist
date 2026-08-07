@@ -131,6 +131,21 @@ class RestaurantLearningService:
             profile=profile,
         )
 
+    async def get_profile(
+        self,
+        *,
+        restaurant_id: uuid.UUID,
+    ):
+        repository = (
+            RestaurantLearningProfileRepository(
+                self.session,
+            )
+        )
+
+        return await repository.get_by_restaurant_id(
+            restaurant_id,
+        )
+
     def _apply_event(
         self,
         *,
