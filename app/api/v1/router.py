@@ -21,6 +21,10 @@ from app.intelligence_features.router import (
     router as intelligence_features_router,
 )
 
+from app.intelligence_snapshot.router import (
+    router as intelligence_snapshot_router,
+)
+
 from app.intelligence.router import router as intelligence_router
 
 from app.intelligence_learning.router import (
@@ -67,4 +71,8 @@ api_router.include_router(
 )
 api_router.include_router(
     intelligence_policy_router,
+)
+
+api_router.include_router(
+    intelligence_snapshot_router,
 )
