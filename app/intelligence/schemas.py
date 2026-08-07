@@ -9,6 +9,10 @@ from app.intelligence_reasoning.schemas import (
     RecommendationReasoning,
 )
 
+from app.intelligence_prediction.schemas import (
+    PlanAcceptancePrediction,
+)
+
 
 class IntelligenceOptimizeRequest(BaseModel):
     restaurant_id: UUID
@@ -133,6 +137,11 @@ class IntelligenceReoptimizationPlanResponse(BaseModel):
 
     reasoning: (
         RecommendationReasoning
+        | None
+    ) = None
+
+    acceptance_prediction: (
+        PlanAcceptancePrediction
         | None
     ) = None
 

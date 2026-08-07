@@ -51,6 +51,10 @@ from .types import (
     ReoptimizationRequest,
 )
 
+from app.intelligence_prediction.service import (
+    IntelligencePredictionService,
+)
+
 from app.intelligence_features.schemas import (
     AISuggestionFeatures,
 )
@@ -731,6 +735,36 @@ class IntelligenceOptimizationService:
 
             reasoning = None
 
+            acceptance_prediction = None
+
+            if (
+                behaviour_profile is not None
+                and policy is not None
+            ):
+                acceptance_prediction = (
+                    IntelligencePredictionService()
+                    .predict_plan_acceptance(
+                        restaurant_id=(
+                            payload.restaurant_id
+                        ),
+                        reservation_id=(
+                            payload.reservation_id
+                        ),
+                        base_score=plan.score,
+                        personalized_score=(
+                            personalized_score
+                        ),
+                        moved_reservations_count=(
+                            plan.moved_reservations_count
+                        ),
+                        total_seat_waste=(
+                            plan.total_seat_waste
+                        ),
+                        behaviour=behaviour_profile,
+                        policy=policy,
+                    )
+                )
+
             if (
                 behaviour_profile is not None
                 and policy is not None
@@ -780,6 +814,10 @@ class IntelligenceOptimizationService:
                 ),
 
                 reasoning=reasoning,
+
+                acceptance_prediction=(
+                    acceptance_prediction
+                ),
 
                 total_seat_waste=(
                     plan.total_seat_waste
