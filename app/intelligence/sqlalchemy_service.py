@@ -5,6 +5,10 @@ from uuid import UUID
 
 import logging
 
+from app.intelligence_reasoning.service import (
+    IntelligenceReasoningService,
+)
+
 import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -150,12 +154,15 @@ class IntelligenceOptimizationService:
             ),
         )
 
-    async def _build_recommendation_policy(
+    async def _build_recommendation_context(
         self,
         *,
         session: AsyncSession,
         restaurant_id: UUID,
-    ) -> RecommendationPolicy | None:
+    ) -> tuple[
+        AISuggestionBehaviourProfile | None,
+        RecommendationPolicy | None,
+    ]:
         try:
             learning_repository = (
                 RestaurantLearningProfileRepository(
@@ -198,7 +205,7 @@ class IntelligenceOptimizationService:
             )
 
             if manager_decisions == 0:
-                return None
+                return None, None
 
             behaviour_profile = (
                 IntelligenceBehaviourService()
@@ -207,24 +214,41 @@ class IntelligenceOptimizationService:
                 )
             )
 
-            return (
+            policy = (
                 RecommendationPolicyService()
                 .build_policy(
                     profile=behaviour_profile,
                 )
             )
 
+            return behaviour_profile, policy
+
         except Exception:
             logger.exception(
                 (
                     "Unable to build personalized "
-                    "recommendation policy: "
+                    "recommendation context: "
                     "restaurant_id=%s"
                 ),
                 restaurant_id,
             )
 
-            return None
+            return None, None
+
+    async def _build_recommendation_policy(
+        self,
+        *,
+        session: AsyncSession,
+        restaurant_id: UUID,
+    ) -> RecommendationPolicy | None:
+        _, policy = (
+            await self._build_recommendation_context(
+                session=session,
+                restaurant_id=restaurant_id,
+            )
+        )
+
+        return policy
 
 
     @staticmethod
@@ -601,7 +625,10 @@ class IntelligenceOptimizationService:
             combinations=intelligence_combinations,
         )
 
-        policy = await self._build_recommendation_policy(
+        (
+            behaviour_profile,
+            policy,
+        ) = await self._build_recommendation_context(
             session=session,
             restaurant_id=payload.restaurant_id,
         )
@@ -702,6 +729,36 @@ class IntelligenceOptimizationService:
                 policy=policy,
             )
 
+            reasoning = None
+
+            if (
+                behaviour_profile is not None
+                and policy is not None
+            ):
+                reasoning = (
+                    IntelligenceReasoningService()
+                    .build_recommendation_reasoning(
+                        restaurant_id=(
+                            payload.restaurant_id
+                        ),
+                        reservation_id=(
+                            payload.reservation_id
+                        ),
+                        base_score=plan.score,
+                        personalized_score=(
+                            personalized_score
+                        ),
+                        moved_reservations_count=(
+                            plan.moved_reservations_count
+                        ),
+                        total_seat_waste=(
+                            plan.total_seat_waste
+                        ),
+                        behaviour=behaviour_profile,
+                        policy=policy,
+                    )
+                )
+
             return IntelligenceReoptimizationPlanResponse(
                 new_reservation_assignment=(
                     serialize_assignment(
@@ -721,6 +778,8 @@ class IntelligenceOptimizationService:
                 personalization_reasons=(
                     personalization_reasons
                 ),
+
+                reasoning=reasoning,
 
                 total_seat_waste=(
                     plan.total_seat_waste

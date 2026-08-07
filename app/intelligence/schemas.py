@@ -5,6 +5,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.intelligence_reasoning.schemas import (
+    RecommendationReasoning,
+)
+
 
 class IntelligenceOptimizeRequest(BaseModel):
     restaurant_id: UUID
@@ -127,9 +131,19 @@ class IntelligenceReoptimizationPlanResponse(BaseModel):
         default_factory=list,
     )
 
+    reasoning: (
+        RecommendationReasoning
+        | None
+    ) = None
+
     total_seat_waste: int
     moved_reservations_count: int
     explanation: str
+
+    reasoning: (
+        RecommendationReasoning
+        | None
+    ) = None
 
 class IntelligenceReoptimizeResponse(BaseModel):
     available: bool
