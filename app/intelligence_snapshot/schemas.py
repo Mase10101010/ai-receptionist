@@ -12,6 +12,10 @@ from app.intelligence_policy.schemas import (
     RecommendationPolicy,
 )
 
+from app.intelligence_calibration.schemas import (
+    CalibrationMetrics,
+)
+
 
 class IntelligenceLearningSnapshot(BaseModel):
     suggestions_observed: int
@@ -41,5 +45,7 @@ class IntelligenceSnapshotResponse(BaseModel):
     behaviour: AISuggestionBehaviourProfile
 
     policy: RecommendationPolicy | None
+
+    calibration: CalibrationMetrics
 
     generated_at: datetime

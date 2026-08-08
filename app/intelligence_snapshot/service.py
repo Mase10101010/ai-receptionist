@@ -22,6 +22,12 @@ from app.intelligence_snapshot.schemas import (
     IntelligenceSnapshotResponse,
 )
 
+from app.intelligence_calibration.metrics import (
+    IntelligenceCalibrationMetricsService,
+)
+from app.intelligence_calibration.repository import (
+    IntelligenceCalibrationRepository,
+)
 
 class IntelligenceSnapshotService:
     def __init__(
@@ -77,6 +83,18 @@ class IntelligenceSnapshotService:
 
         policy = None
 
+        calibration = (
+            await IntelligenceCalibrationMetricsService(
+                repository=(
+                    IntelligenceCalibrationRepository(
+                        self.session,
+                    )
+                )
+            ).calculate(
+                restaurant_id=restaurant_id,
+            )
+        )
+
         if manager_decisions > 0:
             policy = (
                 RecommendationPolicyService()
@@ -127,6 +145,7 @@ class IntelligenceSnapshotService:
             learning=learning,
             behaviour=behaviour,
             policy=policy,
+            calibration=calibration,
             generated_at=datetime.now(
                 timezone.utc,
             ),

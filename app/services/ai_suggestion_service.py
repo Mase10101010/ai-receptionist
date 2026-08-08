@@ -18,6 +18,13 @@ from app.models.reservation import (
     Reservation,
     ReservationStatus,
 )
+
+from app.intelligence_calibration.schemas import (
+    PredictionOutcome,
+)
+from app.intelligence_calibration.service import (
+    IntelligenceCalibrationService,
+)
 from app.repositories.ai_suggestion_repository import (
     AISuggestionRepository,
 )
@@ -72,6 +79,53 @@ class AISuggestionService:
         reservation_payload = (
             payload.get("reservation") or {}
         )
+        acceptance_prediction = (
+            plan.get("acceptance_prediction")
+            or {}
+        )
+
+        predicted_probability = (
+            acceptance_prediction.get(
+                "acceptance_probability"
+            )
+        )
+
+        prediction_confidence = (
+            acceptance_prediction.get(
+                "confidence"
+            )
+        )
+
+        calibration = None
+
+        if (
+            predicted_probability is not None
+            and event_type
+            in {
+                IntelligenceEventType.AI_SUGGESTION_ACCEPTED,
+                IntelligenceEventType.AI_SUGGESTION_DISMISSED,
+            }
+        ):
+            actual_outcome = (
+                PredictionOutcome.ACCEPTED
+                if event_type
+                == IntelligenceEventType.AI_SUGGESTION_ACCEPTED
+                else PredictionOutcome.DISMISSED
+            )
+
+            calibration = (
+                IntelligenceCalibrationService()
+                .evaluate_prediction(
+                    restaurant_id=(
+                        suggestion.restaurant_id
+                    ),
+                    suggestion_id=suggestion.id,
+                    predicted_probability=float(
+                        predicted_probability
+                    ),
+                    actual_outcome=actual_outcome,
+                )
+            )
         assignment = (
             plan.get(
                 "new_reservation_assignment",
@@ -111,6 +165,15 @@ class AISuggestionService:
                     else None
                 ),
                 "score": suggestion.score,
+                "predicted_acceptance_probability": (
+                    float(predicted_probability)
+                    if predicted_probability
+                    is not None
+                    else None
+                ),
+                "prediction_confidence": (
+                    prediction_confidence
+                ),
                 "is_read": suggestion.is_read,
                 "customer_name": (
                     reservation_payload.get(
@@ -150,6 +213,31 @@ class AISuggestionService:
                     "engine_version",
                 ),
                 "mode": payload.get("mode"),
+                "calibration_actual_outcome": (
+                    calibration.actual_outcome.value
+                    if calibration is not None
+                    else None
+                ),
+                "calibration_actual_value": (
+                    calibration.actual_value
+                    if calibration is not None
+                    else None
+                ),
+                "calibration_absolute_error": (
+                    calibration.absolute_error
+                    if calibration is not None
+                    else None
+                ),
+                "calibration_squared_error": (
+                    calibration.squared_error
+                    if calibration is not None
+                    else None
+                ),
+                "prediction_correct": (
+                    calibration.prediction_correct
+                    if calibration is not None
+                    else None
+                ),
             },
             metadata={
                 "service": (
@@ -515,7 +603,7 @@ class AISuggestionService:
             )
 
             await self._refresh_learning_profile(
-                restaurant_id=updated.restaurant_id,
+                restaurant_id=suggestion.restaurant_id,
             )
 
         return len(expired_suggestions)
@@ -595,7 +683,7 @@ class AISuggestionService:
             )
 
             await self._refresh_learning_profile(
-                restaurant_id=updated.restaurant_id,
+                restaurant_id=suggestion.restaurant_id,
             )
 
         return len(expired_suggestions)
