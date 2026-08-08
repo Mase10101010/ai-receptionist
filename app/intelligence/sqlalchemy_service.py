@@ -19,6 +19,13 @@ from app.models.reservation_table_assignment import (
     ReservationTableAssignment,
 )
 
+from app.intelligence_calibration.metrics import (
+    IntelligenceCalibrationMetricsService,
+)
+from app.intelligence_calibration.repository import (
+    IntelligenceCalibrationRepository,
+)
+
 from app.models.reservation import Reservation, ReservationStatus
 from app.models.table import Table
 from app.models.table_combination import (
@@ -637,6 +644,17 @@ class IntelligenceOptimizationService:
             restaurant_id=payload.restaurant_id,
         )
 
+        calibration_metrics = await (
+            IntelligenceCalibrationMetricsService(
+                repository=IntelligenceCalibrationRepository(
+                    session
+                )
+            )
+            .calculate(
+                restaurant_id=payload.restaurant_id,
+            )
+        )
+
         table_number_by_id = {
             str(table.id): table.table_number
             for table in tables
@@ -762,6 +780,7 @@ class IntelligenceOptimizationService:
                         ),
                         behaviour=behaviour_profile,
                         policy=policy,
+                        calibration=calibration_metrics,
                     )
                 )
 

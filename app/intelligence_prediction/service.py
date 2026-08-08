@@ -16,6 +16,10 @@ from app.intelligence_prediction.schemas import (
     PredictionConfidence,
 )
 
+from app.intelligence_calibration.schemas import (
+    CalibrationMetrics,
+)
+
 
 class IntelligencePredictionService:
     def predict_plan_acceptance(
@@ -29,6 +33,7 @@ class IntelligencePredictionService:
         total_seat_waste: int,
         behaviour: AISuggestionBehaviourProfile,
         policy: RecommendationPolicy,
+        calibration: CalibrationMetrics | None = None,
     ) -> PlanAcceptancePrediction:
         probability = self._base_probability(
             behaviour=behaviour,
@@ -115,6 +120,47 @@ class IntelligencePredictionService:
                 "The restaurant's learned preferences "
                 "reduce this plan's ranking."
             )
+
+        if (
+            calibration is not None
+            and calibration.predictions_evaluated > 0
+        ):
+            evidence_weight = (
+                calibration.predictions_evaluated
+                / (
+                    calibration.predictions_evaluated
+                    + 20
+                )
+            )
+
+            calibration_correction = (
+                calibration.calibration_gap
+                * evidence_weight
+            )
+
+            calibration_correction = max(
+                -0.25,
+                min(
+                    0.25,
+                    calibration_correction,
+                ),
+            )
+
+            probability -= calibration_correction
+
+            if calibration_correction > 0.005:
+                explanation.append(
+                    "Alias reduced this probability because "
+                    "recent predictions have been more "
+                    "confident than actual manager acceptance."
+                )
+
+            elif calibration_correction < -0.005:
+                explanation.append(
+                    "Alias increased this probability because "
+                    "recent predictions have been more "
+                    "cautious than actual manager acceptance."
+                )
 
         probability = max(
             0.0,
