@@ -13,12 +13,18 @@ from app.intelligence_policy.schemas import (
     RecommendationPolicy,
 )
 
+from app.intelligence_calibration.schemas import (
+    CalibrationMetrics,
+    CalibrationState,
+)
+
 
 class RecommendationPolicyService:
     def build_policy(
         self,
         *,
         profile: AISuggestionBehaviourProfile,
+        calibration: CalibrationMetrics | None = None,
     ) -> RecommendationPolicy:
         move_penalty_weight = 1.0
         seat_waste_penalty_weight = 1.0
@@ -112,7 +118,10 @@ class RecommendationPolicyService:
             )
 
         automation_level = (
-            self._automation_level(profile)
+            self._automation_level(
+                profile=profile,
+                calibration=calibration,
+            )
         )
 
         rationale.append(
@@ -192,7 +201,9 @@ class RecommendationPolicyService:
 
     @staticmethod
     def _automation_level(
+        *,
         profile: AISuggestionBehaviourProfile,
+        calibration: CalibrationMetrics | None,
     ) -> AutomationLevel:
         if (
             profile.confidence
@@ -200,16 +211,25 @@ class RecommendationPolicyService:
         ):
             return AutomationLevel.ADVISORY_ONLY
 
-        if (
-            profile.trust_level
-            == ManagerTrustLevel.HIGH
-            and profile.confidence
-            == BehaviourConfidence.HIGH
-        ):
-            return (
-                AutomationLevel
-                .ELIGIBLE_FOR_AUTOMATION
-            )
+        if calibration is not None:
+            if (
+                calibration.state
+                == CalibrationState.INSUFFICIENT_DATA
+            ):
+                return AutomationLevel.ADVISORY_ONLY
+
+            if (
+                profile.trust_level
+                == ManagerTrustLevel.HIGH
+                and profile.confidence
+                == BehaviourConfidence.HIGH
+                and calibration.state
+                == CalibrationState.WELL_CALIBRATED
+            ):
+                return (
+                    AutomationLevel
+                    .ELIGIBLE_FOR_AUTOMATION
+                )
 
         return AutomationLevel.ASSISTED
 

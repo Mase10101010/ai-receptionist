@@ -100,6 +100,7 @@ class IntelligenceSnapshotService:
                 RecommendationPolicyService()
                 .build_policy(
                     profile=behaviour,
+                    calibration=calibration,
                 )
             )
 

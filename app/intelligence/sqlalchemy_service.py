@@ -655,6 +655,15 @@ class IntelligenceOptimizationService:
             )
         )
 
+        if behaviour_profile is not None:
+            policy = (
+                RecommendationPolicyService()
+                .build_policy(
+                    profile=behaviour_profile,
+                    calibration=calibration_metrics,
+                )
+            )
+
         table_number_by_id = {
             str(table.id): table.table_number
             for table in tables
