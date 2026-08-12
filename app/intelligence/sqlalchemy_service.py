@@ -85,6 +85,10 @@ from app.intelligence_policy.service import (
     RecommendationPolicyService,
 )
 
+from app.intelligence_decision.service import (
+    IntelligenceDecisionService,
+)
+
 
 
 from .reoptimizer import ReservationReoptimizer
@@ -764,6 +768,8 @@ class IntelligenceOptimizationService:
 
             acceptance_prediction = None
 
+            decision = None
+
             if (
                 behaviour_profile is not None
                 and policy is not None
@@ -792,6 +798,38 @@ class IntelligenceOptimizationService:
                         calibration=calibration_metrics,
                     )
                 )
+
+            if (
+                acceptance_prediction is not None
+                and policy is not None
+            ):
+                decision = (
+                    IntelligenceDecisionService()
+                    .build_decision(
+                        restaurant_id=(
+                            payload.restaurant_id
+                        ),
+                        reservation_id=(
+                            payload.reservation_id
+                        ),
+                        base_score=plan.score,
+                        moved_reservations_count=(
+                            plan.moved_reservations_count
+                        ),
+                        total_seat_waste=(
+                            plan.total_seat_waste
+                        ),
+                        prediction=(
+                            acceptance_prediction
+                        ),
+                        calibration=(
+                            calibration_metrics
+                        ),
+                        policy=policy,
+                    )
+                )
+
+            
 
             if (
                 behaviour_profile is not None
@@ -846,6 +884,8 @@ class IntelligenceOptimizationService:
                 acceptance_prediction=(
                     acceptance_prediction
                 ),
+
+                decision=decision,
 
                 total_seat_waste=(
                     plan.total_seat_waste

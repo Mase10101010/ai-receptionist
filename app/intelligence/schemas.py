@@ -13,6 +13,10 @@ from app.intelligence_prediction.schemas import (
     PlanAcceptancePrediction,
 )
 
+from app.intelligence_decision.schemas import (
+    RecommendationDecision,
+)
+
 
 class IntelligenceOptimizeRequest(BaseModel):
     restaurant_id: UUID
@@ -145,14 +149,14 @@ class IntelligenceReoptimizationPlanResponse(BaseModel):
         | None
     ) = None
 
+    decision: (
+        RecommendationDecision
+        | None
+    ) = None
+
     total_seat_waste: int
     moved_reservations_count: int
     explanation: str
-
-    reasoning: (
-        RecommendationReasoning
-        | None
-    ) = None
 
 class IntelligenceReoptimizeResponse(BaseModel):
     available: bool
