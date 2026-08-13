@@ -17,6 +17,10 @@ from app.intelligence_decision.schemas import (
     RecommendationDecision,
 )
 
+from app.intelligence_execution.schemas import (
+    ExecutionEligibilityResult,
+)
+
 
 class IntelligenceOptimizeRequest(BaseModel):
     restaurant_id: UUID
@@ -151,6 +155,11 @@ class IntelligenceReoptimizationPlanResponse(BaseModel):
 
     decision: (
         RecommendationDecision
+        | None
+    ) = None
+
+    execution_eligibility: (
+        ExecutionEligibilityResult
         | None
     ) = None
 

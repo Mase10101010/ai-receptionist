@@ -93,6 +93,9 @@ from app.intelligence_decision.schemas import (
     RecommendationDecisionLevel,
 )
 
+from app.intelligence_execution.service import (
+    IntelligenceExecutionEligibilityService,
+)
 
 
 from .reoptimizer import ReservationReoptimizer
@@ -797,6 +800,8 @@ class IntelligenceOptimizationService:
 
             decision = None
 
+            execution_eligibility = None
+
             if (
                 behaviour_profile is not None
                 and policy is not None
@@ -856,6 +861,23 @@ class IntelligenceOptimizationService:
                     )
                 )
 
+            if (
+                decision is not None
+                and policy is not None
+            ):
+                execution_eligibility = (
+                    IntelligenceExecutionEligibilityService()
+                    .evaluate(
+                        restaurant_id=(
+                            payload.restaurant_id
+                        ),
+                        reservation_id=(
+                            payload.reservation_id
+                        ),
+                        policy=policy,
+                        decision=decision,
+                    )
+                )
             
 
             if (
@@ -913,6 +935,10 @@ class IntelligenceOptimizationService:
                 ),
 
                 decision=decision,
+
+                execution_eligibility=(
+                    execution_eligibility
+                ),
 
                 total_seat_waste=(
                     plan.total_seat_waste
@@ -977,27 +1003,6 @@ class IntelligenceOptimizationService:
             seen_plan_keys.add(plan_key)
             unique_plans.append(plan)
 
-        def decision_rank(
-            plan: IntelligenceReoptimizationPlanResponse,
-        ) -> int:
-            if plan.decision is None:
-                return 0
-
-            ranks = {
-                RecommendationDecisionLevel
-                .REVIEW_RECOMMENDED: 1,
-
-                RecommendationDecisionLevel
-                .RECOMMENDED: 2,
-
-                RecommendationDecisionLevel
-                .STRONG_RECOMMENDATION: 3,
-            }
-
-            return ranks.get(
-                plan.decision.level,
-                0,
-            )
 
         ranked_plans = sorted(
             unique_plans,
