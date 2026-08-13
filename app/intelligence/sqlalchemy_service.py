@@ -89,6 +89,10 @@ from app.intelligence_decision.service import (
     IntelligenceDecisionService,
 )
 
+from app.intelligence_decision.schemas import (
+    RecommendationDecisionLevel,
+)
+
 
 
 from .reoptimizer import ReservationReoptimizer
@@ -264,6 +268,29 @@ class IntelligenceOptimizationService:
         )
 
         return policy
+
+    @staticmethod
+    def _decision_rank(
+        plan: IntelligenceReoptimizationPlanResponse,
+    ) -> int:
+        if plan.decision is None:
+            return 0
+
+        ranks = {
+            RecommendationDecisionLevel
+            .REVIEW_RECOMMENDED: 1,
+
+            RecommendationDecisionLevel
+            .RECOMMENDED: 2,
+
+            RecommendationDecisionLevel
+            .STRONG_RECOMMENDATION: 3,
+        }
+
+        return ranks.get(
+            plan.decision.level,
+            0,
+        )
 
 
     @staticmethod
@@ -950,9 +977,32 @@ class IntelligenceOptimizationService:
             seen_plan_keys.add(plan_key)
             unique_plans.append(plan)
 
+        def decision_rank(
+            plan: IntelligenceReoptimizationPlanResponse,
+        ) -> int:
+            if plan.decision is None:
+                return 0
+
+            ranks = {
+                RecommendationDecisionLevel
+                .REVIEW_RECOMMENDED: 1,
+
+                RecommendationDecisionLevel
+                .RECOMMENDED: 2,
+
+                RecommendationDecisionLevel
+                .STRONG_RECOMMENDATION: 3,
+            }
+
+            return ranks.get(
+                plan.decision.level,
+                0,
+            )
+
         ranked_plans = sorted(
             unique_plans,
             key=lambda plan: (
+                self._decision_rank(plan),
                 plan.personalized_score,
                 plan.base_score,
             ),
