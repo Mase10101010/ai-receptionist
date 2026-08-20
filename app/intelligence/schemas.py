@@ -195,6 +195,8 @@ class IntelligenceReoptimizationMoveApply(BaseModel):
 
 
 class IntelligenceApplyReoptimizationRequest(BaseModel):
+    suggestion_id: UUID | None = None
+
     new_reservation_id: UUID
 
     new_reservation_table_ids: list[UUID] = Field(
