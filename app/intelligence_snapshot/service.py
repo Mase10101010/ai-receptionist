@@ -21,13 +21,16 @@ from app.intelligence_snapshot.schemas import (
     IntelligenceLearningSnapshot,
     IntelligenceSnapshotResponse,
 )
-
 from app.intelligence_calibration.metrics import (
     IntelligenceCalibrationMetricsService,
 )
 from app.intelligence_calibration.repository import (
     IntelligenceCalibrationRepository,
 )
+from app.intelligence_automation_path.service import (
+    IntelligenceAutomationPathService,
+)
+
 
 class IntelligenceSnapshotService:
     def __init__(
@@ -81,8 +84,6 @@ class IntelligenceSnapshotService:
             + profile.suggestions_dismissed
         )
 
-        policy = None
-
         calibration = (
             await IntelligenceCalibrationMetricsService(
                 repository=(
@@ -95,11 +96,24 @@ class IntelligenceSnapshotService:
             )
         )
 
+        policy = None
+        automation_path = None
+
         if manager_decisions > 0:
             policy = (
                 RecommendationPolicyService()
                 .build_policy(
                     profile=behaviour,
+                    calibration=calibration,
+                )
+            )
+
+        if policy is not None:
+            automation_path = (
+                IntelligenceAutomationPathService()
+                .build(
+                    profile=behaviour,
+                    policy=policy,
                     calibration=calibration,
                 )
             )
@@ -147,6 +161,7 @@ class IntelligenceSnapshotService:
             behaviour=behaviour,
             policy=policy,
             calibration=calibration,
+            automation_path=automation_path,
             generated_at=datetime.now(
                 timezone.utc,
             ),

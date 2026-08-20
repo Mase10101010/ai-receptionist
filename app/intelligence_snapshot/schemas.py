@@ -16,6 +16,10 @@ from app.intelligence_calibration.schemas import (
     CalibrationMetrics,
 )
 
+from app.intelligence_automation_path.schemas import (
+    AutomationPath,
+)
+
 
 class IntelligenceLearningSnapshot(BaseModel):
     suggestions_observed: int
@@ -47,5 +51,7 @@ class IntelligenceSnapshotResponse(BaseModel):
     policy: RecommendationPolicy | None
 
     calibration: CalibrationMetrics
+
+    automation_path: AutomationPath | None
 
     generated_at: datetime
