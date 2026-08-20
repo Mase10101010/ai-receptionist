@@ -56,6 +56,8 @@ class AISuggestionBehaviourProfile(BaseModel):
     total_suggestions_observed: int
     total_manager_decisions: int
 
+    acceptance_rate: float
+
     confidence: BehaviourConfidence
 
     insights: list[BehaviourInsight]

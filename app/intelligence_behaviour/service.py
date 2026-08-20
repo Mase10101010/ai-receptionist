@@ -76,6 +76,9 @@ class IntelligenceBehaviourService:
             total_manager_decisions=(
                 total_manager_decisions
             ),
+            acceptance_rate=(
+                features.acceptance_rate
+            ),
             confidence=confidence,
             insights=insights,
             generated_at=datetime.now(

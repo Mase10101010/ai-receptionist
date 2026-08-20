@@ -197,17 +197,30 @@ class IntelligencePredictionService:
             behaviour.total_manager_decisions
         )
 
-        if decisions == 0:
+        if decisions <= 0:
             return 0.50
 
-        acceptance_rate = (
-            behaviour.total_manager_decisions
+        observed_rate = (
+            behaviour.acceptance_rate
         )
 
-        if acceptance_rate <= 0:
-            return 0.50
+        prior_weight = 5.0
+        prior_probability = 0.50
 
-        return 0.50
+        probability = (
+            (
+                observed_rate * decisions
+            )
+            + (
+                prior_probability
+                * prior_weight
+            )
+        ) / (
+            decisions
+            + prior_weight
+        )
+
+        return probability
 
     @staticmethod
     def _prediction_confidence(

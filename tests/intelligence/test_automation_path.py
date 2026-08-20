@@ -39,6 +39,7 @@ def build_profile(
         average_seat_waste_accepted=0.0,
         total_suggestions_observed=20,
         total_manager_decisions=10,
+        acceptance_rate=0.60,
         confidence=confidence,
         insights=[],
         generated_at=datetime.now(
