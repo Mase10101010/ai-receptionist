@@ -70,10 +70,14 @@ def build_policy(
 
 def build_calibration(
     state: CalibrationState,
+    *,
+    predictions_evaluated: int = 20,
 ) -> CalibrationMetrics:
     return CalibrationMetrics(
         restaurant_id=RESTAURANT_ID,
-        predictions_evaluated=20,
+        predictions_evaluated=(
+            predictions_evaluated
+        ),
         correct_predictions=16,
         prediction_accuracy=0.8,
         average_absolute_error=0.1,
@@ -109,6 +113,7 @@ def test_advisory_path_points_to_assisted():
         result.current_level
         == AutomationLevel.ADVISORY_ONLY
     )
+
     assert (
         result.next_level
         == AutomationLevel.ASSISTED
@@ -119,6 +124,71 @@ def test_advisory_path_points_to_assisted():
         for item in result.requirements
     )
 
+    calibration_requirement = next(
+        item
+        for item in result.requirements
+        if item.code
+        == "calibration_data_sufficient"
+    )
+
+    assert (
+        calibration_requirement.current_value
+        == 20.0
+    )
+
+    assert (
+        calibration_requirement.target_value
+        == 10.0
+    )
+
+    assert (
+        calibration_requirement.progress
+        == 1.0
+    )
+
+
+def test_calibration_progress_is_exposed():
+    result = (
+        IntelligenceAutomationPathService()
+        .build(
+            profile=build_profile(
+                confidence=BehaviourConfidence.LOW,
+                trust_level=ManagerTrustLevel.LOW,
+            ),
+            policy=build_policy(
+                AutomationLevel.ADVISORY_ONLY,
+            ),
+            calibration=build_calibration(
+                CalibrationState.INSUFFICIENT_DATA,
+                predictions_evaluated=3,
+            ),
+        )
+    )
+
+    requirement = next(
+        item
+        for item in result.requirements
+        if item.code
+        == "calibration_data_sufficient"
+    )
+
+    assert requirement.satisfied is False
+
+    assert (
+        requirement.current_value
+        == 3.0
+    )
+
+    assert (
+        requirement.target_value
+        == 10.0
+    )
+
+    assert (
+        requirement.progress
+        == 0.3
+    )
+
 
 def test_assisted_path_points_to_automation():
     result = (
@@ -126,7 +196,9 @@ def test_assisted_path_points_to_automation():
         .build(
             profile=build_profile(
                 confidence=BehaviourConfidence.MEDIUM,
-                trust_level=ManagerTrustLevel.DEVELOPING,
+                trust_level=(
+                    ManagerTrustLevel.DEVELOPING
+                ),
             ),
             policy=build_policy(
                 AutomationLevel.ASSISTED,
@@ -141,6 +213,7 @@ def test_assisted_path_points_to_automation():
         result.current_level
         == AutomationLevel.ASSISTED
     )
+
     assert (
         result.next_level
         == AutomationLevel
@@ -171,7 +244,9 @@ def test_eligible_has_no_next_level():
         == AutomationLevel
         .ELIGIBLE_FOR_AUTOMATION
     )
+
     assert result.next_level is None
+
     assert all(
         item.satisfied
         for item in result.requirements

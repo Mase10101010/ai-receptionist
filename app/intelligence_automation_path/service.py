@@ -66,6 +66,14 @@ class IntelligenceAutomationPathService:
                             != CalibrationState
                             .INSUFFICIENT_DATA
                         ),
+                        current_value=float(
+                            calibration.predictions_evaluated
+                        ),
+                        target_value=10.0,
+                        progress=min(
+                            calibration.predictions_evaluated / 10,
+                            1.0,
+                        ),
                     ),
                 ]
             )

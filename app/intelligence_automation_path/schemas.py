@@ -15,6 +15,10 @@ class AutomationPathItem(BaseModel):
     description: str
     satisfied: bool
 
+    current_value: float | None = None
+    target_value: float | None = None
+    progress: float | None = None
+
 
 class AutomationPath(BaseModel):
     restaurant_id: uuid.UUID
