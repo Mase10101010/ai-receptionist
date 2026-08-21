@@ -56,6 +56,8 @@ class RestaurantLearningProfileRepository:
             dismissed_score_average=None,
             accepted_moves_average=None,
             accepted_seat_waste_average=None,
+            dismissed_moves_average=None,
+            dismissed_seat_waste_average=None,
             acceptance_rate=0.0,
             dismissal_rate=0.0,
             read_rate=0.0,

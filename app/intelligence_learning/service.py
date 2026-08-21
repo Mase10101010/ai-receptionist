@@ -250,6 +250,56 @@ class RestaurantLearningService:
                 )
             )
 
+            profile.dismissed_moves_average = (
+                self._incremental_average(
+                    current_average=(
+                        profile
+                        .dismissed_moves_average
+                    ),
+                    previous_count=previous_count,
+                    new_value=self._float_value(
+                        payload.get(
+                            "moved_reservations_count"
+                        )
+                    ),
+                )
+            )
+
+            profile.dismissed_seat_waste_average = (
+                self._incremental_average(
+                    current_average=(
+                        profile
+                        .dismissed_seat_waste_average
+                    ),
+                    previous_count=previous_count,
+                    new_value=self._float_value(
+                        payload.get(
+                            "total_seat_waste"
+                        )
+                    ),
+                )
+            )
+
+            return
+            previous_count = (
+                profile.suggestions_dismissed
+            )
+
+            profile.suggestions_dismissed += 1
+
+            profile.dismissed_score_average = (
+                self._incremental_average(
+                    current_average=(
+                        profile
+                        .dismissed_score_average
+                    ),
+                    previous_count=previous_count,
+                    new_value=self._float_value(
+                        payload.get("score")
+                    ),
+                )
+            )
+
             return
 
         if (

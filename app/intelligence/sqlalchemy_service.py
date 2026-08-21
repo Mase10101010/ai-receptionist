@@ -170,6 +170,13 @@ class IntelligenceOptimizationService:
                 profile
                 .accepted_seat_waste_average
             ),
+            average_moves_dismissed=(
+                profile.dismissed_moves_average
+            ),
+            average_seat_waste_dismissed=(
+                profile
+                .dismissed_seat_waste_average
+            ),
             generated_at=(
                 profile.updated_at
                 or datetime.now(timezone.utc)
