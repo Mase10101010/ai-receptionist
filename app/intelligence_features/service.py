@@ -105,6 +105,12 @@ class IntelligenceFeatureService:
             average_seat_waste_accepted=metrics[
                 "average_seat_waste_accepted"
             ],
+            average_moves_dismissed=metrics[
+                "average_moves_dismissed"
+            ],
+            average_seat_waste_dismissed=metrics[
+                "average_seat_waste_dismissed"
+            ],
             generated_at=datetime.now(
                 timezone.utc,
             ),

@@ -30,11 +30,36 @@ class RecommendationPolicyService:
         seat_waste_penalty_weight = 1.0
         score_weight = 1.0
 
+        move_direction = self._lower_is_preferred(
+            accepted=profile.average_moves_accepted,
+            dismissed=profile.average_moves_dismissed,
+        )
+
+        seat_waste_direction = (
+            self._lower_is_preferred(
+                accepted=(
+                    profile
+                    .average_seat_waste_accepted
+                ),
+                dismissed=(
+                    profile
+                    .average_seat_waste_dismissed
+                ),
+            )
+        )
+
+        score_direction = self._higher_is_preferred(
+            accepted=profile.accepted_score_reference,
+            dismissed=profile.dismissed_score_reference,
+        )
+
         single_move_bonus = 0.0
         low_seat_waste_bonus = 0.0
 
         minimum_recommended_score = (
-            self._minimum_score(profile)
+            self._minimum_score(
+                profile,
+            )
         )
 
         maximum_preferred_moves: int | None = None
@@ -95,6 +120,49 @@ class RecommendationPolicyService:
                 "plan structure aggressively."
             )
 
+        move_penalty_weight = (
+            self._dynamic_weight(
+                base=move_penalty_weight,
+                strength=(
+                    profile.move_preference_strength
+                ),
+                direction=move_direction,
+                upward_range=0.25,
+                downward_range=0.15,
+                minimum=0.70,
+                maximum=1.60,
+            )
+        )
+
+        seat_waste_penalty_weight = (
+            self._dynamic_weight(
+                base=seat_waste_penalty_weight,
+                strength=(
+                    profile
+                    .seat_waste_preference_strength
+                ),
+                direction=seat_waste_direction,
+                upward_range=0.30,
+                downward_range=0.15,
+                minimum=0.70,
+                maximum=1.60,
+            )
+        )
+
+        score_weight = (
+            self._dynamic_weight(
+                base=score_weight,
+                strength=(
+                    profile.score_preference_strength
+                ),
+                direction=score_direction,
+                upward_range=0.40,
+                downward_range=0.10,
+                minimum=0.80,
+                maximum=1.40,
+            )
+        )
+
         if (
             profile.average_seat_waste_accepted
             is not None
@@ -102,7 +170,8 @@ class RecommendationPolicyService:
             maximum_preferred_seat_waste = max(
                 0,
                 round(
-                    profile.average_seat_waste_accepted
+                    profile
+                    .average_seat_waste_accepted
                 ),
             )
 
@@ -197,6 +266,91 @@ class RecommendationPolicyService:
         return round(
             reference,
             2,
+        )
+
+    @staticmethod
+    def _lower_is_preferred(
+        *,
+        accepted: float | None,
+        dismissed: float | None,
+    ) -> int:
+        if (
+            accepted is None
+            or dismissed is None
+        ):
+            return 0
+
+        if accepted < dismissed:
+            return 1
+
+        if accepted > dismissed:
+            return -1
+
+        return 0
+
+    @staticmethod
+    def _higher_is_preferred(
+        *,
+        accepted: float | None,
+        dismissed: float | None,
+    ) -> int:
+        if (
+            accepted is None
+            or dismissed is None
+        ):
+            return 0
+
+        if accepted > dismissed:
+            return 1
+
+        if accepted < dismissed:
+            return -1
+
+        return 0
+
+    @staticmethod
+    def _dynamic_weight(
+        *,
+        base: float,
+        strength: float,
+        direction: int,
+        upward_range: float,
+        downward_range: float,
+        minimum: float,
+        maximum: float,
+    ) -> float:
+        if direction > 0:
+            value = (
+                base
+                + (
+                    strength
+                    * upward_range
+                )
+            )
+
+        elif direction < 0:
+            value = (
+                base
+                - (
+                    strength
+                    * downward_range
+                )
+            )
+
+        else:
+            value = base
+
+        value = max(
+            minimum,
+            min(
+                maximum,
+                value,
+            ),
+        )
+
+        return round(
+            value,
+            4,
         )
 
     @staticmethod

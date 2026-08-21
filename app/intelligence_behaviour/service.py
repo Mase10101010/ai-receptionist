@@ -57,6 +57,51 @@ class IntelligenceBehaviourService:
             ),
         )
 
+        evidence_weight = (
+            self._preference_evidence_weight(
+                accepted=features.suggestions_accepted,
+                dismissed=features.suggestions_dismissed,
+            )
+        )
+
+        move_preference_strength = (
+            self._preference_strength(
+                accepted_value=(
+                    features.average_moves_accepted
+                ),
+                dismissed_value=(
+                    features.average_moves_dismissed
+                ),
+                evidence_weight=evidence_weight,
+            )
+        )
+
+        seat_waste_preference_strength = (
+            self._preference_strength(
+                accepted_value=(
+                    features
+                    .average_seat_waste_accepted
+                ),
+                dismissed_value=(
+                    features
+                    .average_seat_waste_dismissed
+                ),
+                evidence_weight=evidence_weight,
+            )
+        )
+
+        score_preference_strength = (
+            self._preference_strength(
+                accepted_value=(
+                    features.average_accepted_score
+                ),
+                dismissed_value=(
+                    features.average_dismissed_score
+                ),
+                evidence_weight=evidence_weight,
+            )
+        )
+
         return AISuggestionBehaviourProfile(
             restaurant_id=features.restaurant_id,
             trust_level=trust_level,
@@ -69,6 +114,25 @@ class IntelligenceBehaviourService:
             ),
             average_seat_waste_accepted=(
                 features.average_seat_waste_accepted
+            ),
+            dismissed_score_reference=(
+                features.average_dismissed_score
+            ),
+            average_moves_dismissed=(
+                features.average_moves_dismissed
+            ),
+            average_seat_waste_dismissed=(
+                features.average_seat_waste_dismissed
+            ),
+
+            move_preference_strength=(
+                move_preference_strength
+            ),
+            seat_waste_preference_strength=(
+                seat_waste_preference_strength
+            ),
+            score_preference_strength=(
+                score_preference_strength
             ),
             total_suggestions_observed=(
                 features.suggestions_created
@@ -307,3 +371,60 @@ class IntelligenceBehaviourService:
         }
 
         return descriptions[preference]
+
+    @staticmethod
+    def _preference_evidence_weight(
+        *,
+        accepted: int,
+        dismissed: int,
+    ) -> float:
+        comparable_samples = min(
+            accepted,
+            dismissed,
+        )
+
+        return min(
+            comparable_samples / 5.0,
+            1.0,
+        )
+
+
+    @staticmethod
+    def _preference_strength(
+        *,
+        accepted_value: float | None,
+        dismissed_value: float | None,
+        evidence_weight: float,
+    ) -> float:
+        if (
+            accepted_value is None
+            or dismissed_value is None
+        ):
+            return 0.0
+
+        scale = max(
+            abs(accepted_value),
+            abs(dismissed_value),
+            1.0,
+        )
+
+        separation = (
+            abs(
+                accepted_value
+                - dismissed_value
+            )
+            / scale
+        )
+
+        strength = (
+            min(
+                separation,
+                1.0,
+            )
+            * evidence_weight
+        )
+
+        return round(
+            strength,
+            4,
+        )

@@ -4,7 +4,11 @@ import uuid
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+)
 
 
 class BehaviourConfidence(str, Enum):
@@ -52,6 +56,28 @@ class AISuggestionBehaviourProfile(BaseModel):
     accepted_score_reference: float | None
     average_moves_accepted: float | None
     average_seat_waste_accepted: float | None
+
+    dismissed_score_reference: float | None = None
+    average_moves_dismissed: float | None = None
+    average_seat_waste_dismissed: float | None = None
+
+    move_preference_strength: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+    )
+
+    seat_waste_preference_strength: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+    )
+
+    score_preference_strength: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+    )
 
     total_suggestions_observed: int
     total_manager_decisions: int

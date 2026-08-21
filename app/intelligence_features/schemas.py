@@ -31,4 +31,7 @@ class AISuggestionFeatures(BaseModel):
     average_moves_accepted: float | None = None
     average_seat_waste_accepted: float | None = None
 
+    average_moves_dismissed: float | None = None
+    average_seat_waste_dismissed: float | None = None
+
     generated_at: datetime
