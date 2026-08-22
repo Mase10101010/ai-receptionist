@@ -11,6 +11,9 @@ from app.intelligence_policy.schemas import (
     RecommendationPolicy,
 )
 from app.intelligence_reasoning.schemas import (
+    LearnedSignal,
+    LearnedSignalDirection,
+    LearnedSignalStrength,
     ReasonImportance,
     ReasonItem,
     RecommendationReasoning,
@@ -31,6 +34,12 @@ class IntelligenceReasoningService:
         policy: RecommendationPolicy,
     ) -> RecommendationReasoning:
         reasons: list[ReasonItem] = []
+
+        learned_signals = (
+            self._build_learned_signals(
+                behaviour=behaviour,
+            )
+        )
 
         self._add_move_reason(
             reasons=reasons,
@@ -80,6 +89,7 @@ class IntelligenceReasoningService:
                 total_seat_waste
             ),
             reasons=reasons,
+            learned_signals=learned_signals,
             generated_at=datetime.now(
                 timezone.utc,
             ),
@@ -296,3 +306,263 @@ class IntelligenceReasoningService:
                     importance=ReasonImportance.MEDIUM,
                 )
             )
+
+    @classmethod
+    def _build_learned_signals(
+        cls,
+        *,
+        behaviour: AISuggestionBehaviourProfile,
+    ) -> list[LearnedSignal]:
+        return [
+            cls._build_lower_is_preferred_signal(
+                code="move_structure",
+                title="Plan structure",
+                strength_value=(
+                    behaviour.move_preference_strength
+                ),
+                accepted_value=(
+                    behaviour.average_moves_accepted
+                ),
+                dismissed_value=(
+                    behaviour.average_moves_dismissed
+                ),
+                unit_name="reservation moves",
+            ),
+            cls._build_lower_is_preferred_signal(
+                code="seat_waste",
+                title="Capacity usage",
+                strength_value=(
+                    behaviour
+                    .seat_waste_preference_strength
+                ),
+                accepted_value=(
+                    behaviour
+                    .average_seat_waste_accepted
+                ),
+                dismissed_value=(
+                    behaviour
+                    .average_seat_waste_dismissed
+                ),
+                unit_name="unused seats",
+            ),
+            cls._build_higher_is_preferred_signal(
+                code="technical_score",
+                title="Technical score",
+                strength_value=(
+                    behaviour.score_preference_strength
+                ),
+                accepted_value=(
+                    behaviour.accepted_score_reference
+                ),
+                dismissed_value=(
+                    behaviour.dismissed_score_reference
+                ),
+            ),
+        ]
+
+
+    @classmethod
+    def _build_lower_is_preferred_signal(
+        cls,
+        *,
+        code: str,
+        title: str,
+        strength_value: float,
+        accepted_value: float | None,
+        dismissed_value: float | None,
+        unit_name: str,
+    ) -> LearnedSignal:
+        strength = cls._signal_strength(
+            strength_value
+        )
+
+        if (
+            accepted_value is None
+            or dismissed_value is None
+        ):
+            return LearnedSignal(
+                code=code,
+                title=title,
+                strength=LearnedSignalStrength.NONE,
+                direction=(
+                    LearnedSignalDirection.NEUTRAL
+                ),
+                strength_value=round(
+                    strength_value,
+                    4,
+                ),
+                accepted_value=accepted_value,
+                dismissed_value=dismissed_value,
+                description=(
+                    "Alias does not yet have enough "
+                    "comparable manager decisions to "
+                    "measure this preference."
+                ),
+            )
+
+        if accepted_value < dismissed_value:
+            direction = (
+                LearnedSignalDirection.PREFERRED
+            )
+
+            description = (
+                f"Accepted plans average "
+                f"{accepted_value:.2f} {unit_name}, "
+                f"while dismissed plans average "
+                f"{dismissed_value:.2f}. "
+                f"This suggests the manager tends "
+                f"to prefer lower values."
+            )
+
+        elif accepted_value > dismissed_value:
+            direction = (
+                LearnedSignalDirection.AVOIDED
+            )
+
+            description = (
+                f"Accepted plans average "
+                f"{accepted_value:.2f} {unit_name}, "
+                f"while dismissed plans average "
+                f"{dismissed_value:.2f}. "
+                f"Lower values do not currently "
+                f"appear to drive acceptance."
+            )
+
+        else:
+            direction = (
+                LearnedSignalDirection.NEUTRAL
+            )
+
+            description = (
+                f"Accepted and dismissed plans "
+                f"currently average about "
+                f"{accepted_value:.2f} "
+                f"{unit_name}, so this signal does "
+                f"not yet distinguish manager "
+                f"decisions."
+            )
+
+        return LearnedSignal(
+            code=code,
+            title=title,
+            strength=strength,
+            direction=direction,
+            strength_value=round(
+                strength_value,
+                4,
+            ),
+            accepted_value=accepted_value,
+            dismissed_value=dismissed_value,
+            description=description,
+        )
+
+
+    @classmethod
+    def _build_higher_is_preferred_signal(
+        cls,
+        *,
+        code: str,
+        title: str,
+        strength_value: float,
+        accepted_value: float | None,
+        dismissed_value: float | None,
+    ) -> LearnedSignal:
+        strength = cls._signal_strength(
+            strength_value
+        )
+
+        if (
+            accepted_value is None
+            or dismissed_value is None
+        ):
+            return LearnedSignal(
+                code=code,
+                title=title,
+                strength=LearnedSignalStrength.NONE,
+                direction=(
+                    LearnedSignalDirection.NEUTRAL
+                ),
+                strength_value=round(
+                    strength_value,
+                    4,
+                ),
+                accepted_value=accepted_value,
+                dismissed_value=dismissed_value,
+                description=(
+                    "Alias does not yet have enough "
+                    "comparable manager decisions to "
+                    "measure this preference."
+                ),
+            )
+
+        if accepted_value > dismissed_value:
+            direction = (
+                LearnedSignalDirection.PREFERRED
+            )
+
+            description = (
+                f"Accepted plans have an average "
+                f"technical score of "
+                f"{accepted_value:.2f}, compared "
+                f"with {dismissed_value:.2f} for "
+                f"dismissed plans. Higher scores "
+                f"currently align with acceptance."
+            )
+
+        elif accepted_value < dismissed_value:
+            direction = (
+                LearnedSignalDirection.AVOIDED
+            )
+
+            description = (
+                f"Accepted plans have an average "
+                f"technical score of "
+                f"{accepted_value:.2f}, compared "
+                f"with {dismissed_value:.2f} for "
+                f"dismissed plans. Higher technical "
+                f"scores do not currently predict "
+                f"manager acceptance."
+            )
+
+        else:
+            direction = (
+                LearnedSignalDirection.NEUTRAL
+            )
+
+            description = (
+                f"Accepted and dismissed plans have "
+                f"the same average technical score "
+                f"of {accepted_value:.2f}, so score "
+                f"does not yet distinguish manager "
+                f"decisions."
+            )
+
+        return LearnedSignal(
+            code=code,
+            title=title,
+            strength=strength,
+            direction=direction,
+            strength_value=round(
+                strength_value,
+                4,
+            ),
+            accepted_value=accepted_value,
+            dismissed_value=dismissed_value,
+            description=description,
+        )
+
+
+    @staticmethod
+    def _signal_strength(
+        value: float,
+    ) -> LearnedSignalStrength:
+        if value <= 0.0:
+            return LearnedSignalStrength.NONE
+
+        if value < 0.20:
+            return LearnedSignalStrength.LOW
+
+        if value < 0.50:
+            return LearnedSignalStrength.MEDIUM
+
+        return LearnedSignalStrength.HIGH
