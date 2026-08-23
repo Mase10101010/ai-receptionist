@@ -66,6 +66,79 @@ class AISuggestionService:
             or IntelligenceOptimizationService()
         )
 
+        @staticmethod
+        def _move_complexity_metrics(
+            plan: dict,
+        ) -> dict[str, int | float]:
+            moves = plan.get("moves") or []
+
+            moved_reservations_count = int(
+                plan.get(
+                    "moved_reservations_count",
+                    len(moves),
+                )
+                or 0
+            )
+
+            destination_tables_count = 0
+            combined_table_changes_count = 0
+
+            for move in moves:
+                from_table_ids = (
+                    move.get("from_table_ids") or []
+                )
+                to_table_ids = (
+                    move.get("to_table_ids") or []
+                )
+
+                destination_tables_count += len(
+                    to_table_ids
+                )
+
+                if (
+                    len(to_table_ids) > 1
+                    or len(from_table_ids)
+                    != len(to_table_ids)
+                ):
+                    combined_table_changes_count += 1
+
+            additional_destination_tables = max(
+                0,
+                destination_tables_count
+                - moved_reservations_count,
+            )
+
+            move_complexity_score = (
+                float(moved_reservations_count)
+                + (
+                    0.5
+                    * float(
+                        additional_destination_tables
+                    )
+                )
+                + (
+                    0.5
+                    * float(
+                        combined_table_changes_count
+                    )
+                )
+            )
+
+            return {
+                "destination_tables_count": (
+                    destination_tables_count
+                ),
+                "additional_destination_tables": (
+                    additional_destination_tables
+                ),
+                "combined_table_changes_count": (
+                    combined_table_changes_count
+                ),
+                "move_complexity_score": (
+                    move_complexity_score
+                ),
+            }
+
     async def _record_ai_suggestion_event(
         self,
         *,
@@ -78,6 +151,11 @@ class AISuggestionService:
         plan = payload.get("plan") or {}
         reservation_payload = (
             payload.get("reservation") or {}
+        )
+        move_complexity = (
+            self._move_complexity_metrics(
+                plan
+            )
         )
         acceptance_prediction = (
             plan.get("acceptance_prediction")
@@ -165,6 +243,26 @@ class AISuggestionService:
                     else None
                 ),
                 "score": suggestion.score,
+                "destination_tables_count": (
+                    move_complexity[
+                        "destination_tables_count"
+                    ]
+                ),
+                "additional_destination_tables": (
+                    move_complexity[
+                        "additional_destination_tables"
+                    ]
+                ),
+                "combined_table_changes_count": (
+                    move_complexity[
+                        "combined_table_changes_count"
+                    ]
+                ),
+                "move_complexity_score": (
+                    move_complexity[
+                        "move_complexity_score"
+                    ]
+                ),
                 "predicted_acceptance_probability": (
                     float(predicted_probability)
                     if predicted_probability
