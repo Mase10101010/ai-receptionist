@@ -122,18 +122,49 @@ class IntelligenceReasoningService:
             and behaviour.preferred_plan
             == PlanPreference.SINGLE_MOVE
         ):
-            reasons.append(
-                ReasonItem(
-                    code="preferred_single_move",
-                    title="Matches preferred move structure",
-                    description=(
-                        "This plan requires moving only one "
-                        "reservation, which matches the "
-                        "manager's observed preferences."
-                    ),
-                    importance=ReasonImportance.HIGH,
+            if (
+                behaviour.move_preference_strength
+                >= 0.20
+            ):
+                reasons.append(
+                    ReasonItem(
+                        code="preferred_single_move",
+                        title=(
+                            "Matches learned move preference"
+                        ),
+                        description=(
+                            "This plan requires moving only "
+                            "one reservation, and manager "
+                            "decisions currently provide "
+                            "meaningful evidence that plans "
+                            "with fewer moves are preferred."
+                        ),
+                        importance=ReasonImportance.HIGH,
+                    )
                 )
-            )
+
+            else:
+                reasons.append(
+                    ReasonItem(
+                        code=(
+                            "single_move_profile_match"
+                        ),
+                        title=(
+                            "Matches current plan profile"
+                        ),
+                        description=(
+                            "This plan requires moving only "
+                            "one reservation, which matches "
+                            "plans accepted so far. However, "
+                            "accepted and dismissed decisions "
+                            "do not yet provide strong evidence "
+                            "that move count itself drives "
+                            "manager acceptance."
+                        ),
+                        importance=ReasonImportance.MEDIUM,
+                    )
+                )
+
             return
 
         if (
