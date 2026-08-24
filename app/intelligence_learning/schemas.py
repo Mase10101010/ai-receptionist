@@ -26,6 +26,13 @@ class RestaurantLearningProfileResponse(
     dismissed_score_average: float | None
     accepted_moves_average: float | None
     accepted_seat_waste_average: float | None
+    accepted_move_complexity_average: (
+        float | None
+    )
+
+    dismissed_move_complexity_average: (
+        float | None
+    )
 
     acceptance_rate: float
     dismissal_rate: float

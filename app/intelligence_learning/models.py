@@ -115,6 +115,13 @@ class RestaurantLearningProfile(Base):
         nullable=True,
     )
 
+    accepted_move_complexity_average: Mapped[
+        float | None
+    ] = mapped_column(
+        Float,
+        nullable=True,
+    )
+
     dismissed_moves_average: Mapped[
         float | None
     ] = mapped_column(
@@ -123,6 +130,13 @@ class RestaurantLearningProfile(Base):
     )
 
     dismissed_seat_waste_average: Mapped[
+        float | None
+    ] = mapped_column(
+        Float,
+        nullable=True,
+    )
+
+    dismissed_move_complexity_average: Mapped[
         float | None
     ] = mapped_column(
         Float,

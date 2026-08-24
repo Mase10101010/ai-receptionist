@@ -224,6 +224,21 @@ class RestaurantLearningService:
                 )
             )
 
+            profile.accepted_move_complexity_average = (
+                self._incremental_average(
+                    current_average=(
+                        profile
+                        .accepted_move_complexity_average
+                    ),
+                    previous_count=previous_count,
+                    new_value=self._float_value(
+                        payload.get(
+                            "move_complexity_score"
+                        )
+                    ),
+                )
+            )
+
             return
 
         if (
@@ -275,6 +290,21 @@ class RestaurantLearningService:
                     new_value=self._float_value(
                         payload.get(
                             "total_seat_waste"
+                        )
+                    ),
+                )
+            )
+
+            profile.dismissed_move_complexity_average = (
+                self._incremental_average(
+                    current_average=(
+                        profile
+                        .dismissed_move_complexity_average
+                    ),
+                    previous_count=previous_count,
+                    new_value=self._float_value(
+                        payload.get(
+                            "move_complexity_score"
                         )
                     ),
                 )
