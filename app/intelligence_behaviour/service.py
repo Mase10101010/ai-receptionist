@@ -102,6 +102,35 @@ class IntelligenceBehaviourService:
             )
         )
 
+        move_complexity_evidence_weight = (
+            self._preference_evidence_weight(
+                accepted=(
+                    features
+                    .move_complexity_accepted_samples
+                ),
+                dismissed=(
+                    features
+                    .move_complexity_dismissed_samples
+                ),
+            )
+        )
+
+        move_complexity_preference_strength = (
+            self._preference_strength(
+                accepted_value=(
+                    features
+                    .average_move_complexity_accepted
+                ),
+                dismissed_value=(
+                    features
+                    .average_move_complexity_dismissed
+                ),
+                evidence_weight=(
+                    move_complexity_evidence_weight
+                ),
+            )
+        )
+
         return AISuggestionBehaviourProfile(
             restaurant_id=features.restaurant_id,
             trust_level=trust_level,
@@ -124,7 +153,14 @@ class IntelligenceBehaviourService:
             average_seat_waste_dismissed=(
                 features.average_seat_waste_dismissed
             ),
-
+            average_move_complexity_accepted=(
+                features
+                .average_move_complexity_accepted
+            ),
+            average_move_complexity_dismissed=(
+                features
+                .average_move_complexity_dismissed
+            ),
             move_preference_strength=(
                 move_preference_strength
             ),
@@ -133,6 +169,9 @@ class IntelligenceBehaviourService:
             ),
             score_preference_strength=(
                 score_preference_strength
+            ),
+            move_complexity_preference_strength=(
+                move_complexity_preference_strength
             ),
             total_suggestions_observed=(
                 features.suggestions_created
@@ -387,7 +426,6 @@ class IntelligenceBehaviourService:
             comparable_samples / 5.0,
             1.0,
         )
-
 
     @staticmethod
     def _preference_strength(

@@ -177,6 +177,22 @@ class IntelligenceOptimizationService:
                 profile
                 .dismissed_seat_waste_average
             ),
+            average_move_complexity_accepted=(
+                profile
+                .accepted_move_complexity_average
+            ),
+            move_complexity_accepted_samples=(
+                profile
+                .accepted_move_complexity_samples
+            ),
+            average_move_complexity_dismissed=(
+                profile
+                .dismissed_move_complexity_average
+            ),
+            move_complexity_dismissed_samples=(
+                profile
+                .dismissed_move_complexity_samples
+            ),
             generated_at=(
                 profile.updated_at
                 or datetime.now(timezone.utc)

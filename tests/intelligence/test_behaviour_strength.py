@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import uuid
+from datetime import datetime, timezone
+
 import pytest
 
 from app.intelligence_behaviour.service import (
     IntelligenceBehaviourService,
+)
+from app.intelligence_features.schemas import (
+    AISuggestionFeatures,
 )
 
 
@@ -125,3 +131,59 @@ def test_preference_strength_never_exceeds_one():
     )
 
     assert strength == 1.0
+
+
+def test_move_complexity_strength_requires_comparable_evidence():
+    features = AISuggestionFeatures(
+        restaurant_id=uuid.uuid4(),
+        suggestions_created=1,
+        suggestions_accepted=1,
+        suggestions_dismissed=0,
+        average_move_complexity_accepted=1.0,
+        move_complexity_accepted_samples=1,
+        average_move_complexity_dismissed=None,
+        move_complexity_dismissed_samples=0,
+        generated_at=datetime.now(
+            timezone.utc,
+        ),
+    )
+
+    profile = (
+        IntelligenceBehaviourService()
+        .build_ai_suggestion_profile(
+            features=features,
+        )
+    )
+
+    assert (
+        profile.move_complexity_preference_strength
+        == 0.0
+    )
+
+
+def test_move_complexity_strength_uses_dedicated_samples():
+    features = AISuggestionFeatures(
+        restaurant_id=uuid.uuid4(),
+        suggestions_created=20,
+        suggestions_accepted=10,
+        suggestions_dismissed=10,
+        average_move_complexity_accepted=1.0,
+        move_complexity_accepted_samples=2,
+        average_move_complexity_dismissed=2.0,
+        move_complexity_dismissed_samples=2,
+        generated_at=datetime.now(
+            timezone.utc,
+        ),
+    )
+
+    profile = (
+        IntelligenceBehaviourService()
+        .build_ai_suggestion_profile(
+            features=features,
+        )
+    )
+
+    assert (
+        profile.move_complexity_preference_strength
+        == pytest.approx(0.2)
+    )

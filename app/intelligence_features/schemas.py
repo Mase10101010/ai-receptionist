@@ -34,4 +34,10 @@ class AISuggestionFeatures(BaseModel):
     average_moves_dismissed: float | None = None
     average_seat_waste_dismissed: float | None = None
 
+    average_move_complexity_accepted: float | None = None
+    move_complexity_accepted_samples: int = 0
+
+    average_move_complexity_dismissed: float | None = None
+    move_complexity_dismissed_samples: int = 0
+
     generated_at: datetime

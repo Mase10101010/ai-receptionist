@@ -61,6 +61,9 @@ class AISuggestionBehaviourProfile(BaseModel):
     average_moves_dismissed: float | None = None
     average_seat_waste_dismissed: float | None = None
 
+    average_move_complexity_accepted: float | None = None
+    average_move_complexity_dismissed: float | None = None
+
     move_preference_strength: float = Field(
         default=0.0,
         ge=0.0,
@@ -74,6 +77,12 @@ class AISuggestionBehaviourProfile(BaseModel):
     )
 
     score_preference_strength: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+    )
+
+    move_complexity_preference_strength: float = Field(
         default=0.0,
         ge=0.0,
         le=1.0,

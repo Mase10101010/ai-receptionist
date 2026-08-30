@@ -376,6 +376,23 @@ class IntelligenceReasoningService:
                 ),
                 unit_name="unused seats",
             ),
+            cls._build_lower_is_preferred_signal(
+                code="move_complexity",
+                title="Plan complexity",
+                strength_value=(
+                    behaviour
+                    .move_complexity_preference_strength
+                ),
+                accepted_value=(
+                    behaviour
+                    .average_move_complexity_accepted
+                ),
+                dismissed_value=(
+                    behaviour
+                    .average_move_complexity_dismissed
+                ),
+                unit_name="complexity score",
+            ),
             cls._build_higher_is_preferred_signal(
                 code="technical_score",
                 title="Technical score",

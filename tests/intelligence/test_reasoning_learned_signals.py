@@ -34,6 +34,9 @@ def build_behaviour(
     average_seat_waste_dismissed: float | None = 0.0,
     accepted_score_reference: float | None = 174.0,
     dismissed_score_reference: float | None = 176.0,
+    average_move_complexity_accepted: float | None = None,
+    average_move_complexity_dismissed: float | None = None,
+    move_complexity_preference_strength: float = 0.0,
     move_preference_strength: float = 0.0,
     seat_waste_preference_strength: float = 0.0,
     score_preference_strength: float = 0.01,
@@ -60,6 +63,12 @@ def build_behaviour(
         average_seat_waste_dismissed=(
             average_seat_waste_dismissed
         ),
+        average_move_complexity_accepted=(
+            average_move_complexity_accepted
+        ),
+        average_move_complexity_dismissed=(
+            average_move_complexity_dismissed
+        ),
         move_preference_strength=(
             move_preference_strength
         ),
@@ -68,6 +77,9 @@ def build_behaviour(
         ),
         score_preference_strength=(
             score_preference_strength
+        ),
+        move_complexity_preference_strength=(
+            move_complexity_preference_strength
         ),
         total_suggestions_observed=20,
         total_manager_decisions=12,
@@ -300,4 +312,87 @@ def test_missing_comparable_values_returns_no_signal_strength():
     assert (
         signal.direction
         == LearnedSignalDirection.NEUTRAL
+    )
+
+def test_move_complexity_without_comparable_values_is_neutral():
+    reasoning = build_reasoning(
+        build_behaviour(
+            average_move_complexity_accepted=1.0,
+            average_move_complexity_dismissed=None,
+            move_complexity_preference_strength=0.0,
+        )
+    )
+
+    signal = signal_by_code(
+        reasoning,
+        "move_complexity",
+    )
+
+    assert signal.accepted_value == 1.0
+    assert signal.dismissed_value is None
+
+    assert (
+        signal.strength
+        == LearnedSignalStrength.NONE
+    )
+
+    assert (
+        signal.direction
+        == LearnedSignalDirection.NEUTRAL
+    )
+
+
+def test_lower_move_complexity_in_accepted_plans_is_preferred():
+    reasoning = build_reasoning(
+        build_behaviour(
+            average_move_complexity_accepted=1.0,
+            average_move_complexity_dismissed=2.0,
+            move_complexity_preference_strength=0.5,
+        )
+    )
+
+    signal = signal_by_code(
+        reasoning,
+        "move_complexity",
+    )
+
+    assert signal.accepted_value == 1.0
+    assert signal.dismissed_value == 2.0
+
+    assert (
+        signal.strength
+        == LearnedSignalStrength.HIGH
+    )
+
+    assert (
+        signal.direction
+        == LearnedSignalDirection.PREFERRED
+    )
+
+
+def test_higher_move_complexity_in_accepted_plans_is_avoided():
+    reasoning = build_reasoning(
+        build_behaviour(
+            average_move_complexity_accepted=2.0,
+            average_move_complexity_dismissed=1.0,
+            move_complexity_preference_strength=0.3,
+        )
+    )
+
+    signal = signal_by_code(
+        reasoning,
+        "move_complexity",
+    )
+
+    assert signal.accepted_value == 2.0
+    assert signal.dismissed_value == 1.0
+
+    assert (
+        signal.strength
+        == LearnedSignalStrength.MEDIUM
+    )
+
+    assert (
+        signal.direction
+        == LearnedSignalDirection.AVOIDED
     )
