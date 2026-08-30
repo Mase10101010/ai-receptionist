@@ -106,7 +106,8 @@ class RestaurantLearningService:
             )
 
             # Counts every event consumed by the cursor,
-            # including events that do not affect learning metrics.
+            # including events that do not affect
+            # learning metrics.
             processed_events += 1
 
         if processed_events > 0 or profile_created:
@@ -224,20 +225,36 @@ class RestaurantLearningService:
                 )
             )
 
-            profile.accepted_move_complexity_average = (
-                self._incremental_average(
+            move_complexity_value = (
+                self._float_value(
+                    payload.get(
+                        "move_complexity_score"
+                    )
+                )
+            )
+
+            if move_complexity_value is not None:
+                (
+                    profile
+                    .accepted_move_complexity_average
+                ) = self._incremental_average(
                     current_average=(
                         profile
                         .accepted_move_complexity_average
                     ),
-                    previous_count=previous_count,
-                    new_value=self._float_value(
-                        payload.get(
-                            "move_complexity_score"
-                        )
+                    previous_count=(
+                        profile
+                        .accepted_move_complexity_samples
+                    ),
+                    new_value=(
+                        move_complexity_value
                     ),
                 )
-            )
+
+                (
+                    profile
+                    .accepted_move_complexity_samples
+                ) += 1
 
             return
 
@@ -295,40 +312,36 @@ class RestaurantLearningService:
                 )
             )
 
-            profile.dismissed_move_complexity_average = (
-                self._incremental_average(
+            move_complexity_value = (
+                self._float_value(
+                    payload.get(
+                        "move_complexity_score"
+                    )
+                )
+            )
+
+            if move_complexity_value is not None:
+                (
+                    profile
+                    .dismissed_move_complexity_average
+                ) = self._incremental_average(
                     current_average=(
                         profile
                         .dismissed_move_complexity_average
                     ),
-                    previous_count=previous_count,
-                    new_value=self._float_value(
-                        payload.get(
-                            "move_complexity_score"
-                        )
-                    ),
-                )
-            )
-
-            return
-            previous_count = (
-                profile.suggestions_dismissed
-            )
-
-            profile.suggestions_dismissed += 1
-
-            profile.dismissed_score_average = (
-                self._incremental_average(
-                    current_average=(
+                    previous_count=(
                         profile
-                        .dismissed_score_average
+                        .dismissed_move_complexity_samples
                     ),
-                    previous_count=previous_count,
-                    new_value=self._float_value(
-                        payload.get("score")
+                    new_value=(
+                        move_complexity_value
                     ),
                 )
-            )
+
+                (
+                    profile
+                    .dismissed_move_complexity_samples
+                ) += 1
 
             return
 
