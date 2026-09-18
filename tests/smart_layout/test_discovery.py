@@ -142,7 +142,7 @@ def test_separate_clusters_remain_separate():
     }
 
 
-def test_connected_four_table_set_is_allowed():
+def test_linear_four_table_set_is_rejected_as_insufficiently_cohesive():
     tables = [
         table_id()
         for _ in range(4)
@@ -173,10 +173,46 @@ def test_connected_four_table_set_is_allowed():
 
     assert frozenset(
         tables
+    ) not in discovered
+
+
+def test_cohesive_four_table_set_is_discovered():
+    tables = [
+        table_id()
+        for _ in range(4)
+    ]
+
+    graph = {
+        tables[0]: {
+            tables[1],
+            tables[2],
+        },
+        tables[1]: {
+            tables[0],
+            tables[3],
+        },
+        tables[2]: {
+            tables[0],
+            tables[3],
+        },
+        tables[3]: {
+            tables[1],
+            tables[2],
+        },
+    }
+
+    discovered = set(
+        discover_connected_table_sets(
+            graph
+        )
+    )
+
+    assert frozenset(
+        tables
     ) in discovered
 
 
-def test_default_discovery_never_exceeds_four_tables():
+def test_default_discovery_never_exceeds_maximum_combination_size():
     tables = [
         table_id()
         for _ in range(5)
@@ -211,10 +247,11 @@ def test_default_discovery_never_exceeds_four_tables():
 
     assert discovered
 
-    assert max(
+    assert all(
         len(table_set)
+        <= MAX_COMBINATION_SIZE
         for table_set in discovered
-    ) == MAX_COMBINATION_SIZE
+    )
 
     assert frozenset(
         tables

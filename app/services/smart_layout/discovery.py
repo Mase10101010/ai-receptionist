@@ -19,7 +19,13 @@ def discover_connected_table_sets(
     max_size: int = MAX_COMBINATION_SIZE,
 ) -> list[TableSet]:
     """
-    Discover unique connected table sets from an adjacency graph.
+    Discover unique plausible table combinations from an adjacency graph.
+
+    Every returned combination must be connected.
+
+    Four-table combinations must also be sufficiently cohesive:
+    simple linear chains are not automatically considered plausible
+    physical joins.
 
     Only combinations containing at least two tables are returned.
     Discovery is bounded by max_size and never generates arbitrary
@@ -56,7 +62,13 @@ def _expand_connected_set(
     discovered: set[TableSet],
     max_size: int,
 ) -> None:
-    if len(current) >= 2:
+    if (
+        len(current) >= 2
+        and _is_cohesive_table_set(
+            graph,
+            current,
+        )
+    ):
         discovered.add(current)
 
     if len(current) >= max_size:
@@ -85,18 +97,51 @@ def _expand_connected_set(
             }
         )
 
-        if (
-            len(expanded) >= 2
-            and expanded in discovered
-        ):
-            continue
-
         _expand_connected_set(
             graph=graph,
             current=expanded,
             discovered=discovered,
             max_size=max_size,
         )
+
+
+def _is_cohesive_table_set(
+    graph: AdjacencyGraph,
+    table_set: TableSet,
+) -> bool:
+    """
+    Decide whether a connected table set is cohesive enough to be
+    proposed automatically as a physical table combination.
+
+    Pairs and triples keep the existing connected-set behaviour.
+
+    Four-table combinations require at least four internal adjacency
+    edges. This rejects simple chains while preserving compact layouts
+    such as 2x2 arrangements.
+
+    Manager-confirmed rules remain authoritative elsewhere in the
+    Smart Layout reconciliation layer.
+    """
+    size = len(table_set)
+
+    if size <= 3:
+        return True
+
+    internal_edges = sum(
+        1
+        for table_id in table_set
+        for neighbour_id in graph.get(
+            table_id,
+            set(),
+        )
+        if (
+            neighbour_id in table_set
+            and str(table_id)
+            < str(neighbour_id)
+        )
+    )
+
+    return internal_edges >= 4
 
 
 def _table_set_sort_key(
