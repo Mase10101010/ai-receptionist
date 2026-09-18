@@ -146,7 +146,7 @@ class IntelligenceDecisionService:
         calibration_mature = (
             calibration is not None
             and calibration.state
-            != CalibrationState.INSUFFICIENT_DATA
+            == CalibrationState.WELL_CALIBRATED
         )
 
         strong_conditions = (

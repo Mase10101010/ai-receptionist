@@ -50,6 +50,30 @@ class TableCombinationRepository:
 
         return result.scalar_one_or_none()
 
+    async def get_by_smart_layout_rule_id(
+        self,
+        smart_layout_rule_id: uuid.UUID,
+        restaurant_id: uuid.UUID,
+    ) -> TableCombination | None:
+        result = await self.db.execute(
+            select(TableCombination)
+            .options(
+                selectinload(
+                    TableCombination.members,
+                ).selectinload(
+                    TableCombinationMember.table,
+                )
+            )
+            .where(
+                TableCombination.smart_layout_rule_id
+                == smart_layout_rule_id,
+                TableCombination.restaurant_id
+                == restaurant_id,
+            )
+        )
+
+        return result.scalar_one_or_none()
+
     async def get_by_name(
         self,
         restaurant_id: uuid.UUID,

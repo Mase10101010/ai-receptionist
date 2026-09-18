@@ -45,6 +45,10 @@ from app.intelligence_events.schemas import (
     IntelligenceEventResponse,
 )
 
+from app.intelligence_execution.orchestrator import (
+    IntelligenceExecutionOrchestrator,
+)
+
 from .schemas import (
     IntelligenceApplyRequest,
     IntelligenceApplyResponse,
@@ -167,178 +171,14 @@ async def apply_reoptimization(
         }
     ]
 
-    reservation_repository = (
-        ReservationRepository(
-            session,
-        )
-    )
-
-    if payload.suggestion_id is not None:
-        await (
-            IntelligenceExecutionGate(
-                repository=(
-                    AISuggestionRepository(
-                        session,
-                    )
-                ),
-            )
-            .validate_reoptimization(
-                suggestion_id=(
-                    payload.suggestion_id
-                ),
-                allowed_restaurant_ids=(
-                    allowed_restaurant_ids
-                ),
-                new_reservation_id=(
-                    payload.new_reservation_id
-                ),
-                new_reservation_table_ids=(
-                    payload
-                    .new_reservation_table_ids
-                ),
-                new_reservation_primary_table_id=(
-                    payload
-                    .new_reservation_primary_table_id
-                ),
-                moves=[
-                    move.model_dump()
-                    for move in payload.moves
-                ],
-            )
-        )
-
-    result = (
-        await service.apply_reoptimization(
-            session=session,
-            payload=payload,
-            allowed_restaurant_ids=(
-                allowed_restaurant_ids
-            ),
-        )
-    )
-
-    if payload.suggestion_id is not None:
-        accepted_suggestion = await (
-            AISuggestionService(
-                repository=(
-                    AISuggestionRepository(
-                        session,
-                    )
-                ),
-                reservation_repository=(
-                    reservation_repository
-                ),
-                intelligence_service=service,
-            )
-            .accept(
-                suggestion_id=(
-                    payload.suggestion_id
-                ),
-                restaurant_ids=(
-                    allowed_restaurant_ids
-                ),
-            )
-        )
-
-        if accepted_suggestion is None:
-            raise ValidationError(
-                "AI suggestion could not "
-                "be accepted."
-            )
-
-    audit_reservation = await (
-        reservation_repository
-        .get_by_id_for_restaurants(
-            reservation_id=(
-                payload.new_reservation_id
-            ),
-            restaurant_ids=(
-                allowed_restaurant_ids
-            ),
-        )
-    )
-
-    if (
-        audit_reservation is None
-        or audit_reservation.restaurant_id
-        is None
-    ):
-        raise ValidationError(
-            "Applied reservation could not "
-            "be resolved for audit."
-        )
-
-    await (
-        IntelligenceEventService(
-            repository=(
-                IntelligenceEventRepository(
-                    session,
-                )
-            ),
-        )
-        .record(
-            restaurant_id=(
-                audit_reservation.restaurant_id
-            ),
-            event_type=(
-                IntelligenceEventType
-                .SEATING_PLAN_APPLIED
-            ),
-            source=(
-                IntelligenceEventSource.MANAGER
-            ),
-            entity_type="reservation",
-            entity_id=(
-                payload.new_reservation_id
-            ),
-            actor_user_id=current_user.id,
-            payload={
-                "suggestion_id": (
-                    str(payload.suggestion_id)
-                    if payload.suggestion_id
-                    is not None
-                    else None
-                ),
-                "new_reservation_primary_table_id": (
-                    str(
-                        result
-                        .new_reservation_primary_table_id
-                    )
-                ),
-                "new_reservation_table_ids": [
-                    str(table_id)
-                    for table_id
-                    in result
-                    .new_reservation_table_ids
-                ],
-                "new_reservation_table_numbers": (
-                    result
-                    .new_reservation_table_numbers
-                ),
-                "moves": [
-                    {
-                        "reservation_id": str(
-                            move.reservation_id
-                        ),
-                        "primary_table_id": str(
-                            move.primary_table_id
-                        ),
-                        "table_ids": [
-                            str(table_id)
-                            for table_id
-                            in move.table_ids
-                        ],
-                        "table_numbers": (
-                            move.table_numbers
-                        ),
-                    }
-                    for move
-                    in result.applied_moves
-                ],
-                "mode": result.mode,
-                "applied": result.applied,
-            },
-        )
+    result = await IntelligenceExecutionOrchestrator(
+        intelligence_service=service,
+    ).apply_reoptimization(
+        session=session,
+        payload=payload,
+        allowed_restaurant_ids=allowed_restaurant_ids,
+        source=IntelligenceEventSource.MANAGER,
+        actor_user_id=current_user.id,
     )
 
     await session.commit()

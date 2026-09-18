@@ -13,6 +13,7 @@ from app.providers.contract.reservation import (
     UpdateReservationRequest,
 )
 
+from app.models.service_area import ServiceArea
 
 async def run_basic_provider_lifecycle_compliance(
     *,
@@ -21,15 +22,27 @@ async def run_basic_provider_lifecycle_compliance(
     restaurant_id: uuid.UUID,
     expected_provider_type: ProviderType,
 ) -> None:
+    service_area = ServiceArea(
+        restaurant_id=restaurant_id,
+        name=f"Compliance {uuid.uuid4().hex[:8]}",
+        area_type="indoor",
+        is_active=True,
+    )
+
+    session.add(service_area)
+    await session.flush()
+
     session.add(
         Table(
             restaurant_id=restaurant_id,
+            service_area_id=service_area.id,
             table_code=f"COMPLIANCE_{uuid.uuid4().hex[:8]}",
             table_number=f"COMP_{uuid.uuid4().hex[:8]}",
             seats=4,
             is_active=True,
         )
     )
+
     await session.commit()
 
     start = datetime.now(timezone.utc) + timedelta(days=7)

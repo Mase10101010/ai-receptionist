@@ -51,6 +51,19 @@ class TableCombination(Base):
         index=True,
     )
 
+    smart_layout_rule_id: Mapped[
+        uuid.UUID | None
+    ] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "table_combination_rules.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
+
     name: Mapped[str] = mapped_column(
         String(100),
         nullable=False,
@@ -87,6 +100,11 @@ class TableCombination(Base):
     service_area = relationship(
         "ServiceArea",
         back_populates="table_combinations",
+    )
+
+    smart_layout_rule = relationship(
+        "TableCombinationRule",
+        foreign_keys=[smart_layout_rule_id],
     )
 
     members = relationship(

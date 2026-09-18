@@ -2,10 +2,14 @@
 Reservation service.
 """
 import uuid
+from enum import Enum
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from app.intelligence.schemas import IntelligenceOptimizeRequest
+from app.intelligence.schemas import (
+    IntelligenceOptimizeRequest,
+    IntelligenceReoptimizeRequest,
+)
 from app.intelligence.sqlalchemy_service import (
     IntelligenceOptimizationService,
 )
@@ -36,6 +40,30 @@ from app.intelligence_events.service import (
     IntelligenceEventService,
 )
 
+from app.intelligence_execution.autopilot import (
+    AutopilotAuthorityService,
+)
+from app.intelligence_execution.autopilot_mapper import (
+    AutopilotReoptimizationMapper,
+)
+from app.intelligence_execution.orchestrator import (
+    IntelligenceExecutionOrchestrator,
+)
+from app.intelligence_temporal.prediction_coordinator import (
+    TemporalTurnPredictionCoordinator,
+)
+from app.intelligence_temporal.outcome_coordinator import (
+    TemporalPredictionOutcomeCoordinator,
+)
+
+from app.intelligence_execution.temporal_autopilot import (
+    TemporalAutopilotAuthorityService,
+)
+from app.intelligence_temporal.autopilot_evidence import (
+    TemporalAutopilotSafetyEvidenceService,
+)
+from app.models.ai_suggestion import AISuggestion
+
 logger = get_logger(__name__)
 
 def _format_reservation_time_for_language(
@@ -57,6 +85,12 @@ def _format_reservation_time_for_language(
     return reservation_time.strftime("%B %d, %Y at %I:%M %p")
 
 
+class BookingAvailabilityOutcome(str, Enum):
+    DIRECT_AVAILABLE = "direct_available"
+    REOPTIMIZATION_AVAILABLE = "reoptimization_available"
+    UNAVAILABLE = "unavailable"
+
+
 class ReservationService:
     def __init__(
         self,
@@ -74,6 +108,42 @@ class ReservationService:
             intelligence_service
             or IntelligenceOptimizationService()
         )
+
+    @staticmethod
+    def _apply_lifecycle_timestamps(
+        *,
+        reservation: Reservation,
+        updates: dict,
+    ) -> dict:
+        normalized_updates = dict(updates)
+
+        requested_status = normalized_updates.get("status")
+
+        if (
+            requested_status == ReservationStatus.SEATED
+            and reservation.seated_at is None
+        ):
+            normalized_updates["seated_at"] = datetime.now(timezone.utc)
+
+        if (
+            requested_status == ReservationStatus.COMPLETED
+            and reservation.completed_at is None
+        ):
+            normalized_updates["completed_at"] = datetime.now(timezone.utc)
+
+        if (
+            requested_status == ReservationStatus.CANCELLED
+            and reservation.cancelled_at is None
+        ):
+            normalized_updates["cancelled_at"] = datetime.now(timezone.utc)
+
+        if (
+            requested_status == ReservationStatus.NO_SHOW
+            and reservation.no_show_at is None
+        ):
+            normalized_updates["no_show_at"] = datetime.now(timezone.utc)
+
+        return normalized_updates
 
     async def _record_reservation_event(
         self,
@@ -107,6 +177,193 @@ class ReservationService:
             },
         )
 
+    async def _try_record_temporal_prediction(
+        self,
+        *,
+        reservation: Reservation,
+    ) -> None:
+        """
+        Best-effort temporal prediction emission.
+
+        The reservation lifecycle remains authoritative:
+        temporal intelligence must never make an otherwise valid
+        booking fail.
+
+        A SAVEPOINT isolates the temporal attempt so that even a
+        persistence/database failure cannot poison the caller's
+        surrounding transaction.
+        """
+        try:
+            async with self.repository.db.begin_nested():
+                await (
+                    TemporalTurnPredictionCoordinator()
+                    .predict_for_reservation(
+                        session=self.repository.db,
+                        reservation=reservation,
+                    )
+                )
+        except Exception:
+            logger.exception(
+                "Temporal prediction failed closed: "
+                "reservation_id=%s restaurant_id=%s",
+                reservation.id,
+                reservation.restaurant_id,
+            )
+
+    async def _try_record_temporal_outcome(
+        self,
+        *,
+        reservation: Reservation,
+    ) -> None:
+        """
+        Best-effort temporal outcome emission.
+
+        Reservation lifecycle truth remains authoritative.
+        Temporal outcome persistence must never make an otherwise
+        valid COMPLETED transition fail.
+
+        A SAVEPOINT isolates the temporal attempt from the caller's
+        surrounding transaction.
+        """
+        if reservation.status != ReservationStatus.COMPLETED:
+            return
+
+        if (
+            reservation.restaurant_id is None
+            or reservation.seated_at is None
+            or reservation.completed_at is None
+        ):
+            return
+
+        try:
+            async with self.repository.db.begin_nested():
+                await (
+                    TemporalPredictionOutcomeCoordinator()
+                    .record_for_completed_reservation(
+                        session=self.repository.db,
+                        reservation=reservation,
+                    )
+                )
+        except Exception:
+            logger.exception(
+                "Temporal outcome recording failed closed: "
+                "reservation_id=%s restaurant_id=%s",
+                reservation.id,
+                reservation.restaurant_id,
+            )
+
+    async def _try_autopilot_reoptimization(
+        self,
+        *,
+        reservation: Reservation,
+        suggestion: AISuggestion,
+    ) -> Reservation:
+        if reservation.restaurant_id is None:
+            return reservation
+
+        restaurant = await self.restaurant_repository.get_by_id(
+            reservation.restaurant_id
+        )
+
+        if restaurant is None:
+            return reservation
+
+        suggestion_payload = (
+            suggestion.payload or {}
+        )
+
+        plan = suggestion_payload.get(
+            "plan"
+        )
+
+        try:
+            temporal_context = (
+                TemporalAutopilotSafetyEvidenceService
+                .context_from_payload(
+                    payload=suggestion_payload,
+                )
+            )
+
+            authority = (
+                TemporalAutopilotAuthorityService()
+                .can_execute_stored_plan_automatically(
+                    plan=plan,
+                    autopilot_enabled=bool(
+                        restaurant.autopilot_enabled
+                    ),
+                    temporal_context=(
+                        temporal_context
+                    ),
+                )
+            )
+
+        except Exception:
+            logger.exception(
+                "Temporal Autopilot authority "
+                "evaluation failed closed: "
+                "reservation_id=%s restaurant_id=%s "
+                "suggestion_id=%s",
+                reservation.id,
+                reservation.restaurant_id,
+                suggestion.id,
+            )
+
+            return reservation
+
+        if not authority.allowed:
+            return reservation
+
+        try:
+            async with self.repository.db.begin_nested():
+                apply_payload = (
+                    AutopilotReoptimizationMapper()
+                    .build_apply_request(
+                        suggestion=suggestion,
+                    )
+                )
+
+                await IntelligenceExecutionOrchestrator(
+                    intelligence_service=self.intelligence_service,
+                ).apply_reoptimization(
+                    session=self.repository.db,
+                    payload=apply_payload,
+                    allowed_restaurant_ids=[
+                        reservation.restaurant_id
+                    ],
+                    source=IntelligenceEventSource.AI,
+                    actor_user_id=None,
+                )
+
+                refreshed = (
+                    await self.repository
+                    .get_by_id_for_restaurants(
+                        reservation_id=reservation.id,
+                        restaurant_ids=[
+                            reservation.restaurant_id
+                        ],
+                    )
+                )
+
+                if refreshed is None:
+                    raise ValidationError(
+                        "Autopilot applied the seating plan "
+                        "but the reservation could not be reloaded."
+                    )
+
+                return refreshed
+
+        except Exception:
+            logger.exception(
+                "Autopilot execution failed closed: "
+                "reservation_id=%s restaurant_id=%s "
+                "suggestion_id=%s",
+                reservation.id,
+                reservation.restaurant_id,
+                suggestion.id,
+            )
+
+            return reservation
+
     async def create_reservation(self, payload: ReservationCreate) -> Reservation:
         await self._validate_reservation_time(
             payload.reservation_time,
@@ -120,6 +377,7 @@ class ReservationService:
         )
 
         assigned_table_ids: list[uuid.UUID] = []
+        requires_reoptimization = False
 
         if payload.table_id is not None:
             table_id = await self._validate_selected_table(
@@ -129,7 +387,6 @@ class ReservationService:
                 restaurant_id=payload.restaurant_id,
                 duration_minutes=payload.duration_minutes,
             )
-
             assigned_table_ids = [table_id]
         else:
             (
@@ -141,6 +398,26 @@ class ReservationService:
                 restaurant_id=payload.restaurant_id,
                 duration_minutes=payload.duration_minutes,
             )
+
+            if table_id is None or not assigned_table_ids:
+                requires_reoptimization = await self._reoptimization_available(
+                    reservation_time=payload.reservation_time,
+                    party_size=payload.party_size,
+                    restaurant_id=payload.restaurant_id,
+                    duration_minutes=payload.duration_minutes,
+                )
+
+                if not requires_reoptimization:
+                    raise ConflictError(
+                        "Sorry, Alias could not find a safe seating plan for "
+                        "that time. Please try a different time slot."
+                    )
+
+        reservation_status = (
+            ReservationStatus.PENDING
+            if requires_reoptimization
+            else ReservationStatus.CONFIRMED
+        )
 
         reservation = Reservation(
             restaurant_id=payload.restaurant_id,
@@ -155,7 +432,7 @@ class ReservationService:
             duration_minutes=payload.duration_minutes,
             special_requests=payload.special_requests,
             session_id=payload.session_id,
-            status=ReservationStatus.CONFIRMED,
+            status=reservation_status,
         )
 
         created = await self.repository.create(reservation)
@@ -184,6 +461,11 @@ class ReservationService:
                     created.duration_minutes
                 ),
                 "status": created.status.value,
+                "booking_outcome": (
+                    BookingAvailabilityOutcome.REOPTIMIZATION_AVAILABLE.value
+                    if requires_reoptimization
+                    else BookingAvailabilityOutcome.DIRECT_AVAILABLE.value
+                ),
                 "table_id": (
                     str(created.table_id)
                     if created.table_id is not None
@@ -202,20 +484,60 @@ class ReservationService:
                 ),
             },
         )
+        await self._try_record_temporal_prediction(
+            reservation=created,
+        )
+
+        if requires_reoptimization:
+            suggestion_service = AISuggestionService(
+                repository=AISuggestionRepository(
+                    self.repository.db,
+                ),
+                reservation_repository=self.repository,
+                intelligence_service=self.intelligence_service,
+            )
+
+            suggestion = await suggestion_service.analyze_reservation(
+                created,
+            )
+
+            if suggestion is None:
+                logger.warning(
+                    "Reservation requires reoptimization but no AI suggestion "
+                    "was created: reservation_id=%s restaurant_id=%s",
+                    created.id,
+                    created.restaurant_id,
+                )
+            else:
+                created = await self._try_autopilot_reoptimization(
+                    reservation=created,
+                    suggestion=suggestion,
+                )
 
         logger.info(
-            "Reservation created: id=%s restaurant_id=%s party=%d time=%s",
+            (
+                "Reservation created: id=%s restaurant_id=%s party=%d "
+                "time=%s status=%s"
+            ),
             created.id,
             created.restaurant_id,
             created.party_size,
             created.reservation_time.isoformat(),
+            created.status.value,
         )
 
-        if created.customer_email:
+        # A pending reservation is a request awaiting a seating decision, not a
+        # confirmed booking. Confirmation emails are sent only for reservations
+        # that are already operationally confirmed.
+        if (
+            created.status == ReservationStatus.CONFIRMED
+            and created.customer_email
+        ):
             try:
                 restaurant_name = settings.RESTAURANT_NAME
                 restaurant_timezone = "UTC"
                 restaurant_language = "en"
+                restaurant = None
 
                 if created.restaurant_id:
                     restaurant = await self.restaurant_repository.get_by_id(
@@ -368,8 +690,13 @@ class ReservationService:
         payload: ReservationUpdate,
     ) -> Reservation:
         reservation = await self.get_reservation(reservation_id)
+        previous_status = reservation.status
 
         updates = payload.model_dump(exclude_unset=True)
+        updates = self._apply_lifecycle_timestamps(
+            reservation=reservation,
+            updates=updates,
+        )
 
         if "customer_email" in updates and updates["customer_email"] is not None:
             updates["customer_email"] = str(updates["customer_email"])
@@ -391,7 +718,18 @@ class ReservationService:
                 exclude_id=reservation.id,
             )
 
-        updated = await self.repository.update(reservation, updates)
+        updated = await self.repository.update(
+            reservation, 
+            updates,
+        )
+
+        if (
+            previous_status != ReservationStatus.COMPLETED
+            and updated.status == ReservationStatus.COMPLETED
+        ):
+            await self._try_record_temporal_outcome(
+                reservation=updated,
+            )
 
         if updates:
             await self._record_reservation_event(
@@ -519,7 +857,13 @@ class ReservationService:
             restaurant_ids=restaurant_ids,
         )
 
+        previous_status = reservation.status
+
         updates = payload.model_dump(exclude_unset=True)
+        updates = self._apply_lifecycle_timestamps(
+            reservation=reservation,
+            updates=updates,
+        )
 
         if "customer_email" in updates and updates["customer_email"] is not None:
             updates["customer_email"] = str(updates["customer_email"])
@@ -545,6 +889,14 @@ class ReservationService:
             reservation,
             updates,
         )
+
+        if (
+            previous_status != ReservationStatus.COMPLETED
+            and updated.status == ReservationStatus.COMPLETED
+        ):
+            await self._try_record_temporal_outcome(
+                reservation=updated,
+            )
 
         if updates:
             await self._record_reservation_event(
@@ -738,9 +1090,14 @@ class ReservationService:
 
         previous_status = reservation.status
 
+        updates = self._apply_lifecycle_timestamps(
+            reservation=reservation,
+            updates={"status": ReservationStatus.CANCELLED},
+        )
+
         cancelled = await self.repository.update(
             reservation,
-            {"status": ReservationStatus.CANCELLED},
+            updates,
         )
 
         ai_suggestion_repository = AISuggestionRepository(
@@ -876,9 +1233,14 @@ class ReservationService:
 
         previous_status = reservation.status
 
+        updates = self._apply_lifecycle_timestamps(
+            reservation=reservation,
+            updates={"status": ReservationStatus.CANCELLED},
+        )
+
         cancelled = await self.repository.update(
             reservation,
-            {"status": ReservationStatus.CANCELLED},
+            updates,
         )
 
         ai_suggestion_repository = AISuggestionRepository(
@@ -946,12 +1308,140 @@ class ReservationService:
 
         return cancelled
 
+    async def assess_booking_availability(
+        self,
+        reservation_time: datetime,
+        party_size: int,
+        restaurant_id: uuid.UUID | None = None,
+        duration_minutes: int = settings.RESERVATION_DURATION_MINUTES,
+    ) -> BookingAvailabilityOutcome:
+        """Classify a request using the same intelligence used at booking."""
+        try:
+            await self._validate_reservation_time(
+                reservation_time,
+                restaurant_id,
+            )
+            await self._enforce_capacity(
+                reservation_time=reservation_time,
+                party_size=party_size,
+                restaurant_id=restaurant_id,
+            )
+        except (ValidationError, ConflictError):
+            return BookingAvailabilityOutcome.UNAVAILABLE
+
+        if restaurant_id is None:
+            return BookingAvailabilityOutcome.UNAVAILABLE
+
+        try:
+            result = await self.intelligence_service.optimize(
+                session=self.repository.db,
+                payload=IntelligenceOptimizeRequest(
+                    restaurant_id=restaurant_id,
+                    reservation_id=None,
+                    requested_start=reservation_time,
+                    party_size=party_size,
+                    duration_minutes=duration_minutes,
+                    buffer_before_minutes=0,
+                    buffer_after_minutes=0,
+                    preferred_service_area_id=None,
+                    max_alternatives=1,
+                ),
+            )
+
+            if (
+                result.available
+                and result.recommended is not None
+                and result.recommended.table_ids
+            ):
+                return BookingAvailabilityOutcome.DIRECT_AVAILABLE
+        except Exception:
+            logger.exception(
+                "AIE booking assessment optimize step failed; trying legacy "
+                "direct availability before reoptimization."
+            )
+
+            try:
+                fallback_table_id = await self._assign_available_table(
+                    reservation_time=reservation_time,
+                    party_size=party_size,
+                    restaurant_id=restaurant_id,
+                )
+            except (ValidationError, ConflictError):
+                fallback_table_id = None
+
+            if fallback_table_id is not None:
+                return BookingAvailabilityOutcome.DIRECT_AVAILABLE
+
+        if await self._reoptimization_available(
+            reservation_time=reservation_time,
+            party_size=party_size,
+            restaurant_id=restaurant_id,
+            duration_minutes=duration_minutes,
+        ):
+            return BookingAvailabilityOutcome.REOPTIMIZATION_AVAILABLE
+
+        return BookingAvailabilityOutcome.UNAVAILABLE
+
+    async def _reoptimization_available(
+        self,
+        *,
+        reservation_time: datetime,
+        party_size: int,
+        restaurant_id: uuid.UUID | None,
+        duration_minutes: int,
+    ) -> bool:
+        if restaurant_id is None:
+            return False
+
+        try:
+            result = await self.intelligence_service.reoptimize(
+                session=self.repository.db,
+                payload=IntelligenceReoptimizeRequest(
+                    restaurant_id=restaurant_id,
+                    reservation_id=None,
+                    requested_start=reservation_time,
+                    party_size=party_size,
+                    duration_minutes=duration_minutes,
+                    buffer_before_minutes=0,
+                    buffer_after_minutes=0,
+                    preferred_service_area_id=None,
+                    max_reservations_to_move=1,
+                    max_plans=5,
+                ),
+            )
+        except Exception:
+            logger.exception(
+                "AIE reoptimization assessment failed: restaurant_id=%s "
+                "party=%d time=%s",
+                restaurant_id,
+                party_size,
+                reservation_time.isoformat(),
+            )
+            return False
+
+        recommendation = result.recommended
+
+        return bool(
+            result.available
+            and recommendation is not None
+            and recommendation.new_reservation_assignment.table_ids
+            and recommendation.moved_reservations_count >= 1
+        )
+
     async def check_availability(
         self,
         reservation_time: datetime,
         party_size: int,
         restaurant_id: uuid.UUID | None = None,
     ) -> bool:
+        """
+        Return whether the requested slot has a direct valid assignment.
+
+        Alias Intelligence is the primary source of truth so availability
+        uses the same single-table and multi-table optimization logic used
+        when a reservation is created. The legacy allocator is retained only
+        as a resilience fallback if the intelligence service itself fails.
+        """
         try:
             await self._validate_reservation_time(
                 reservation_time,
@@ -963,17 +1453,54 @@ class ReservationService:
                 party_size=party_size,
                 restaurant_id=restaurant_id,
             )
+        except (ValidationError, ConflictError):
+            return False
 
-            await self._assign_available_table(
+        if restaurant_id is not None:
+            try:
+                result = await self.intelligence_service.optimize(
+                    session=self.repository.db,
+                    payload=IntelligenceOptimizeRequest(
+                        restaurant_id=restaurant_id,
+                        reservation_id=None,
+                        requested_start=reservation_time,
+                        party_size=party_size,
+                        duration_minutes=(
+                            settings.RESERVATION_DURATION_MINUTES
+                        ),
+                        buffer_before_minutes=0,
+                        buffer_after_minutes=0,
+                        preferred_service_area_id=None,
+                        max_alternatives=1,
+                    ),
+                )
+
+                recommendation = result.recommended
+
+                return bool(
+                    result.available
+                    and recommendation is not None
+                    and recommendation.table_ids
+                )
+            except Exception:
+                logger.exception(
+                    (
+                        "AIE availability check failed. "
+                        "Falling back to legacy single-table availability."
+                    )
+                )
+
+        try:
+            fallback_table_id = await self._assign_available_table(
                 reservation_time=reservation_time,
                 party_size=party_size,
                 restaurant_id=restaurant_id,
             )
-
-            return True
         except (ValidationError, ConflictError):
             return False
-        
+
+        return fallback_table_id is not None
+
     async def suggest_alternative_slots(
         self,
         reservation_time: datetime,
@@ -981,8 +1508,8 @@ class ReservationService:
         restaurant_id: uuid.UUID | None = None,
     ) -> list[datetime]:
         """
-        Suggest nearby available solts around the requested reservation time.
-        We check ±30, ±60, ±90 minutes and return the first available options.
+        Suggest nearby directly bookable slots using the same AIE-aware
+        availability logic as the requested slot.
         """
         offsets = [-90, -60, -30, 30, 60, 90]
         suggestions: list[datetime] = []
@@ -990,34 +1517,18 @@ class ReservationService:
         for minutes in offsets:
             candidate = reservation_time + timedelta(minutes=minutes)
 
-            try:
-                await self._validate_reservation_time(
-                    candidate,
-                    restaurant_id,
-                )
-
-                await self._enforce_capacity(
-                    reservation_time=candidate,
-                    party_size=party_size,
-                    restaurant_id=restaurant_id,
-                )
-
-                await self._assign_available_table(
-                    reservation_time=candidate,
-                    party_size=party_size,
-                    restaurant_id=restaurant_id,
-                )
-
+            if await self.check_availability(
+                reservation_time=candidate,
+                party_size=party_size,
+                restaurant_id=restaurant_id,
+            ):
                 suggestions.append(candidate)
 
                 if len(suggestions) >= 3:
                     break
 
-            except (ValidationError, ConflictError):
-                continue
-
-
         return suggestions
+
 
     async def _assign_tables_with_aie(
         self,

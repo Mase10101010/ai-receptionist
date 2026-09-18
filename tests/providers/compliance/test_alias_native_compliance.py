@@ -5,7 +5,10 @@ import pytest
 import app.providers.native.provider
 from app.db.session import AsyncSessionLocal
 from app.providers.contract.refs import ProviderType
-from app.providers.resolver import ProviderResolver
+from app.providers.resolver import (
+    NullIntegrationConfigStore,
+    ProviderResolver,
+)
 from tests.providers.compliance.base import (
     run_basic_provider_lifecycle_compliance,
 )
@@ -19,7 +22,12 @@ async def test_alias_native_provider_compliance_basic_lifecycle():
     session = AsyncSessionLocal()
 
     try:
-        provider = await ProviderResolver().resolve(session, RESTAURANT_ID)
+        provider = await ProviderResolver(
+            config_store=NullIntegrationConfigStore(),
+        ).resolve(
+            session,
+            RESTAURANT_ID,
+        )
 
         await run_basic_provider_lifecycle_compliance(
             session=session,

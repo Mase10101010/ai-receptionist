@@ -26,6 +26,13 @@ from app.intelligence_calibration.repository import (
     IntelligenceCalibrationRepository,
 )
 
+from app.intelligence.temporal_autopilot_safety_mapper import (
+    IntelligenceTemporalAutopilotSafetyMapper,
+)
+from app.intelligence_temporal.reoptimization_safety_resolver import (
+    TemporalReoptimizationSafetyResolver,
+)
+
 from app.models.reservation import Reservation, ReservationStatus
 from app.models.table import Table
 from app.models.table_combination import (
@@ -56,6 +63,10 @@ from .sqlalchemy_adapter import (
 from .types import (
     OptimizationRequest,
     ReoptimizationRequest,
+)
+
+from .temporal_trace_mapper import (
+    IntelligenceTemporalTraceMapper,
 )
 
 from app.intelligence_prediction.service import (
@@ -96,6 +107,18 @@ from app.intelligence_decision.schemas import (
 from app.intelligence_execution.service import (
     IntelligenceExecutionEligibilityService,
 )
+from app.intelligence_temporal.schemas import (
+    FutureCapacityRequest,
+)
+from app.intelligence_temporal.snapshot import (
+    TemporalLearningSnapshotService,
+)
+from app.intelligence_temporal.calibration_snapshot import (
+    TemporalCalibrationSnapshotService,
+)
+from app.intelligence_temporal.temporal_optimization import (
+    TemporalOptimizationOrchestrator,
+)
 
 
 from .reoptimizer import ReservationReoptimizer
@@ -115,6 +138,18 @@ class IntelligenceOptimizationService:
         self,
         optimizer: ReservationOptimizer | None = None,
         reoptimizer: ReservationReoptimizer | None = None,
+        temporal_optimizer: (
+            TemporalOptimizationOrchestrator | None
+        ) = None,
+        temporal_learning_snapshot_service: (
+            TemporalLearningSnapshotService | None
+        ) = None,
+        temporal_calibration_snapshot_service: (
+            TemporalCalibrationSnapshotService | None
+        ) = None,
+        temporal_reoptimization_safety_resolver: (
+            TemporalReoptimizationSafetyResolver | None
+        ) = None,
     ) -> None:
         self.optimizer = (
             optimizer
@@ -124,6 +159,26 @@ class IntelligenceOptimizationService:
         self.reoptimizer = (
             reoptimizer
             or ReservationReoptimizer()
+        )
+
+        self.temporal_optimizer = (
+            temporal_optimizer
+            or TemporalOptimizationOrchestrator()
+        )
+
+        self.temporal_learning_snapshot_service = (
+            temporal_learning_snapshot_service
+            or TemporalLearningSnapshotService()
+        )
+
+        self.temporal_calibration_snapshot_service = (
+            temporal_calibration_snapshot_service
+            or TemporalCalibrationSnapshotService()
+        )
+
+        self.temporal_reoptimization_safety_resolver = (
+            temporal_reoptimization_safety_resolver
+            or TemporalReoptimizationSafetyResolver()
         )
 
     @staticmethod
@@ -198,6 +253,8 @@ class IntelligenceOptimizationService:
                 or datetime.now(timezone.utc)
             ),
         )
+
+        
 
     async def _build_recommendation_context(
         self,
@@ -503,55 +560,204 @@ class IntelligenceOptimizationService:
             reservations_result.scalars().unique().all()
         )
 
+        intelligence_tables = tables_to_intelligence(
+            tables,
+        )
+
+        intelligence_reservations = (
+            reservations_to_intelligence(
+                reservations,
+            )
+        )
+
+        intelligence_combinations = (
+            combinations_to_intelligence(
+                combinations,
+            )
+        )
+
         result = self.optimizer.optimize(
             request=OptimizationRequest(
                 requested_start=payload.requested_start,
                 party_size=payload.party_size,
                 duration_minutes=payload.duration_minutes,
-                buffer_before_minutes=payload.buffer_before_minutes,
-                buffer_after_minutes=payload.buffer_after_minutes,
+                buffer_before_minutes=(
+                    payload.buffer_before_minutes
+                ),
+                buffer_after_minutes=(
+                    payload.buffer_after_minutes
+                ),
                 preferred_area_id=(
-                    str(payload.preferred_service_area_id)
+                    str(
+                        payload.preferred_service_area_id
+                    )
                     if payload.preferred_service_area_id
                     else None
                 ),
                 preferred_floor_id=None,
                 allow_combinations=True,
-                max_alternatives=payload.max_alternatives,
+                max_alternatives=(
+                    payload.max_alternatives
+                ),
             ),
-            tables=tables_to_intelligence(tables),
-            reservations=reservations_to_intelligence(reservations),
-            combinations=combinations_to_intelligence(
-                combinations,
-            ),
+            tables=intelligence_tables,
+            reservations=intelligence_reservations,
+            combinations=intelligence_combinations,
         )
 
         table_number_by_id = {
-            str(table.id): table.table_number for table in tables
+            str(table.id): table.table_number
+            for table in tables
         }
+
 
         def serialize(item):
             candidate = item.candidate
+
             return IntelligenceAssignmentResponse(
-                table_ids=[UUID(table_id) for table_id in candidate.table_ids],
+                table_ids=[
+                    UUID(table_id)
+                    for table_id
+                    in candidate.table_ids
+                ],
                 table_numbers=[
-                    table_number_by_id.get(table_id, table_id)
-                    for table_id in candidate.table_ids
+                    table_number_by_id.get(
+                        table_id,
+                        table_id,
+                    )
+                    for table_id
+                    in candidate.table_ids
                 ],
                 start_at=candidate.start_at,
                 end_at=candidate.end_at,
                 capacity=candidate.capacity,
                 score=item.score,
                 seat_waste=item.seat_waste,
-                fragmentation_minutes=item.fragmentation_minutes,
+                fragmentation_minutes=(
+                    item.fragmentation_minutes
+                ),
                 explanation=item.explanation,
             )
 
-        return IntelligenceOptimizeResponse(
+
+        technical_response = IntelligenceOptimizeResponse(
             available=result.available,
-            recommended=serialize(result.recommended) if result.recommended else None,
-            alternatives=[serialize(item) for item in result.alternatives],
-            rejected_candidates=result.rejected_candidates,
+            recommended=(
+                serialize(result.recommended)
+                if result.recommended
+                else None
+            ),
+            alternatives=[
+                serialize(item)
+                for item in result.alternatives
+            ],
+            rejected_candidates=(
+                result.rejected_candidates
+            ),
+        )
+
+        if (
+            not result.available
+            or result.recommended is None
+        ):
+            return technical_response
+
+        try:
+            async with session.begin_nested():
+                learning_snapshot = await (
+                    self.temporal_learning_snapshot_service.build(
+                        session=session,
+                        restaurant_id=payload.restaurant_id,
+                    )
+                )
+
+                calibration_snapshot = await (
+                    self.temporal_calibration_snapshot_service.build(
+                        session=session,
+                        restaurant_id=payload.restaurant_id,
+                    )
+                )
+
+                temporal_result = (
+                    self.temporal_optimizer.evaluate(
+                        technical_result=result,
+                        capacity_request=(
+                            FutureCapacityRequest(
+                                restaurant_id=(
+                                    payload.restaurant_id
+                                ),
+                                start_at=(
+                                    payload.requested_start
+                                ),
+                                party_size=(
+                                    payload.party_size
+                                ),
+                                duration_minutes=(
+                                    payload.duration_minutes
+                                ),
+                            )
+                        ),
+                        reservations=(
+                            intelligence_reservations
+                        ),
+                        tables=intelligence_tables,
+                        combinations=(
+                            intelligence_combinations
+                        ),
+                        candidate_party_size=(
+                            payload.party_size
+                        ),
+                        learning_snapshot=learning_snapshot,
+                        calibration=(
+                            calibration_snapshot.assessment
+                        ),
+                    )
+                )
+
+        except Exception:
+            logger.exception(
+                (
+                    "Temporal optimization failed; "
+                    "preserving technical ranking: "
+                    "restaurant_id=%s start=%s "
+                    "party_size=%d"
+                ),
+                payload.restaurant_id,
+                payload.requested_start.isoformat(),
+                payload.party_size,
+            )
+
+            return technical_response
+
+        if (
+            not temporal_result.available
+            or temporal_result.recommended is None
+        ):
+            return technical_response
+
+        return IntelligenceOptimizeResponse(
+            available=True,
+            recommended=(
+                temporal_result
+                .recommended
+                .evaluation
+                .candidate
+            ),
+            alternatives=[
+                ranked.evaluation.candidate
+                for ranked
+                in temporal_result.alternatives
+            ],
+            rejected_candidates=(
+                result.rejected_candidates
+            ),
+            temporal_decision_trace=(
+                IntelligenceTemporalTraceMapper.map(
+                    trace=temporal_result.decision_trace,
+                )
+                if temporal_result.decision_trace is not None
+                else None
+            ),
         )
 
     async def reoptimize(
@@ -693,6 +899,47 @@ class IntelligenceOptimizationService:
             combinations=intelligence_combinations,
         )
 
+        temporal_learning_snapshot = None
+        temporal_calibration_assessment = None
+
+        try:
+            async with session.begin_nested():
+                temporal_learning_snapshot = await (
+                    self.temporal_learning_snapshot_service
+                    .build(
+                        session=session,
+                        restaurant_id=(
+                            payload.restaurant_id
+                        ),
+                    )
+                )
+
+                temporal_calibration_snapshot = await (
+                    self.temporal_calibration_snapshot_service
+                    .build(
+                        session=session,
+                        restaurant_id=(
+                            payload.restaurant_id
+                        ),
+                    )
+                )
+
+                temporal_calibration_assessment = (
+                    temporal_calibration_snapshot.assessment
+                )
+
+        except Exception:
+            logger.exception(
+                "Temporal reoptimization trust context "
+                "failed closed: restaurant_id=%s "
+                "reservation_id=%s",
+                payload.restaurant_id,
+                payload.reservation_id,
+            )
+
+            temporal_learning_snapshot = None
+            temporal_calibration_assessment = None
+
         (
             behaviour_profile,
             policy,
@@ -753,6 +1000,78 @@ class IntelligenceOptimizationService:
                 ),
                 explanation=item.explanation,
             )
+
+        def resolve_temporal_autopilot_safety(
+            plan,
+        ):
+            if (
+                payload.reservation_id is None
+                or temporal_learning_snapshot is None
+                or temporal_calibration_assessment is None
+            ):
+                return None
+
+            try:
+                resolution = (
+                    self.temporal_reoptimization_safety_resolver
+                    .resolve(
+                        plan=plan,
+                        new_reservation_id=(
+                            payload.reservation_id
+                        ),
+                        new_reservation_party_size=(
+                            payload.party_size
+                        ),
+                        capacity_request=(
+                            FutureCapacityRequest(
+                                restaurant_id=(
+                                    payload.restaurant_id
+                                ),
+                                start_at=(
+                                    payload.requested_start
+                                ),
+                                party_size=(
+                                    payload.party_size
+                                ),
+                                duration_minutes=(
+                                    payload.duration_minutes
+                                ),
+                            )
+                        ),
+                        reservations=(
+                            intelligence_reservations
+                        ),
+                        tables=intelligence_tables,
+                        combinations=(
+                            intelligence_combinations
+                        ),
+                        learning_snapshot=(
+                            temporal_learning_snapshot
+                        ),
+                        calibration=(
+                            temporal_calibration_assessment
+                        ),
+                    )
+                )
+
+                return (
+                    IntelligenceTemporalAutopilotSafetyMapper
+                    .map(
+                        context=resolution.context,
+                    )
+                )
+
+            except Exception:
+                logger.exception(
+                    "Temporal reoptimization safety "
+                    "resolution failed closed: "
+                    "restaurant_id=%s "
+                    "reservation_id=%s",
+                    payload.restaurant_id,
+                    payload.reservation_id,
+                )
+
+                return None
 
         def serialize_plan(
             plan,
@@ -824,6 +1143,12 @@ class IntelligenceOptimizationService:
             decision = None
 
             execution_eligibility = None
+
+            temporal_autopilot_safety = (
+                resolve_temporal_autopilot_safety(
+                    plan,
+                )
+            )
 
             if (
                 behaviour_profile is not None
@@ -961,6 +1286,10 @@ class IntelligenceOptimizationService:
 
                 execution_eligibility=(
                     execution_eligibility
+                ),
+
+                temporal_autopilot_safety=(
+                    temporal_autopilot_safety
                 ),
 
                 total_seat_waste=(
@@ -1501,6 +1830,7 @@ class IntelligenceOptimizationService:
         new_reservation.table_id = (
             payload.new_reservation_primary_table_id
         )
+        new_reservation.status = ReservationStatus.CONFIRMED
 
         for table_id in new_table_ids:
             session.add(
@@ -1741,6 +2071,7 @@ class IntelligenceOptimizationService:
         )
 
         reservation.table_id = payload.primary_table_id
+        reservation.status = ReservationStatus.CONFIRMED
 
         for table_id in unique_table_ids:
             session.add(

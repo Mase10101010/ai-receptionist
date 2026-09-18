@@ -462,14 +462,43 @@ class AISuggestionService:
                     reservation.duration_minutes
                 ),
             },
+
+            # Execution Gate plan truth.
+            #
+            # Temporal Autopilot evidence is intentionally
+            # persisted outside the plan so it cannot alter
+            # stored reoptimization-plan semantics.
             "plan": plan.model_dump(
                 mode="json",
+                exclude={
+                    "temporal_autopilot_safety",
+                },
             ),
+
             "engine_version": (
                 result.engine_version
             ),
             "mode": result.mode,
         }
+
+        if (
+            plan.temporal_autopilot_safety
+            is not None
+        ):
+            payload[
+                "temporal_autopilot_safety"
+            ] = {
+                "schema_version": (
+                    "temporal_autopilot_safety.v1"
+                ),
+                "context": (
+                    plan
+                    .temporal_autopilot_safety
+                    .model_dump(
+                        mode="json",
+                    )
+                ),
+            }
 
         suggestion = AISuggestion(
             restaurant_id=(
@@ -632,6 +661,7 @@ class AISuggestionService:
         self,
         suggestion_id: uuid.UUID,
         restaurant_ids: list[uuid.UUID],
+        source: IntelligenceEventSource = IntelligenceEventSource.MANAGER,
     ) -> AISuggestion | None:
         suggestion = (
             await self.repository.get_by_id(
@@ -662,7 +692,7 @@ class AISuggestionService:
                 IntelligenceEventType
                 .AI_SUGGESTION_ACCEPTED
             ),
-            source=IntelligenceEventSource.MANAGER,
+            source=source,
             previous_status=previous_status,
         )
 

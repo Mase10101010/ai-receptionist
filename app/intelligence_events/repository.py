@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.intelligence_events.models import (
@@ -121,7 +121,23 @@ class IntelligenceEventRepository:
             == restaurant_id,
         )
 
-        if created_after is not None:
+        if (
+            created_after is not None
+            and last_event_id is not None
+        ):
+            statement = statement.where(
+                or_(
+                    IntelligenceEvent.created_at
+                    > created_after,
+                    and_(
+                        IntelligenceEvent.created_at
+                        == created_after,
+                        IntelligenceEvent.id
+                        > last_event_id,
+                    ),
+                )
+            )
+        elif created_after is not None:
             statement = statement.where(
                 IntelligenceEvent.created_at
                 > created_after,

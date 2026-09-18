@@ -33,6 +33,25 @@ class TablePlacementRepository:
 
         return result.scalar_one_or_none()
 
+    async def list_by_floor_plan(
+        self,
+        floor_plan_id: uuid.UUID,
+    ) -> list[TablePlacement]:
+        result = await self.db.execute(
+            select(TablePlacement)
+            .where(
+                TablePlacement.floor_plan_id
+                == floor_plan_id,
+            )
+            .order_by(
+                TablePlacement.id,
+            )
+        )
+
+        return list(
+            result.scalars().all()
+        )
+
     async def update(
         self,
         placement: TablePlacement,

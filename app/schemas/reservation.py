@@ -71,6 +71,10 @@ class ReservationResponse(ReservationBase):
     session_id: str | None
     created_at: datetime
     updated_at: datetime
+    completed_at: datetime | None = None
+    seated_at: datetime | None = None
+    cancelled_at: datetime | None = None
+    no_show_at: datetime | None = None
     table_id: uuid.UUID | None = None
     table_number: str | None = None
     table_code: str | None = None

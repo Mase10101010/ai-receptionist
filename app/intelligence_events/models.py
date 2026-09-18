@@ -46,6 +46,11 @@ class IntelligenceEventType(str, Enum):
     GUEST_NO_SHOW = "guest_no_show"
     GUEST_COMPLETED_VISIT = "guest_completed_visit"
 
+    TEMPORAL_TURN_PREDICTED = "temporal_turn_predicted"
+    TEMPORAL_TURN_OUTCOME_RECORDED = (
+        "temporal_turn_outcome_recorded"
+    )
+
     MANUAL_OVERRIDE = "manual_override"
 
 

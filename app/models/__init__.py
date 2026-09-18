@@ -16,6 +16,12 @@ from app.models.table_combination import (
     TableCombination,
     TableCombinationMember,
 )
+from app.models.table_combination_rule import (
+    TableCombinationRule,
+    TableCombinationRuleMember,
+    TableCombinationRuleStatus,
+    build_table_combination_member_key,
+)
 from app.models.user import User
 from app.models.integration import (
     IntegrationMode,
@@ -51,6 +57,9 @@ __all__ = [
     "ReservationStatus",
     "TableCombination",
     "TableCombinationMember",
+    "TableCombinationRule",
+    "TableCombinationRuleMember",
+    "TableCombinationRuleStatus",
     "AISuggestion",
     "AISuggestionStatus",
     "AISuggestionType",
@@ -69,5 +78,6 @@ __all__ = [
     "ProviderType",
     "RestaurantIntegration",
     "RestaurantLearningProfile",
+    "build_table_combination_member_key",
     
 ]

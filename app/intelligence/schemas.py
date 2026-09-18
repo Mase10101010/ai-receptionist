@@ -45,12 +45,32 @@ class IntelligenceAssignmentResponse(BaseModel):
     fragmentation_minutes: int
     explanation: str
 
+class IntelligenceTemporalCandidateTrace(BaseModel):
+    table_ids: tuple[str, ...]
+    technical_score: float
+    effective_score: float
+    marginal_capacity_loss_ratio: float
+    lost_future_available_slots: int
+
+
+class IntelligenceTemporalDecisionTrace(BaseModel):
+    technical_winner: IntelligenceTemporalCandidateTrace
+    temporal_winner: IntelligenceTemporalCandidateTrace
+    recommendation_changed: bool
+
 
 class IntelligenceOptimizeResponse(BaseModel):
     available: bool
     recommended: IntelligenceAssignmentResponse | None = None
-    alternatives: list[IntelligenceAssignmentResponse] = Field(default_factory=list)
+    alternatives: list[
+        IntelligenceAssignmentResponse
+    ] = Field(default_factory=list)
     rejected_candidates: int
+
+    temporal_decision_trace: (
+        IntelligenceTemporalDecisionTrace | None
+    ) = None
+
     engine_version: str = "aie-v1"
     mode: str = "read_only"
 
@@ -127,6 +147,18 @@ class IntelligenceReservationMoveResponse(BaseModel):
     explanation: str
 
 
+class IntelligenceTemporalAutopilotSafetyContext(BaseModel):
+    calibration_state: str
+    expected_turn_confidence: str
+
+    marginal_capacity_loss_ratio: float = Field(
+        ge=0.0,
+    )
+
+    lost_future_available_slots: int = Field(
+        ge=0,
+    )
+
 class IntelligenceReoptimizationPlanResponse(BaseModel):
     new_reservation_assignment: IntelligenceAssignmentResponse
 
@@ -160,6 +192,11 @@ class IntelligenceReoptimizationPlanResponse(BaseModel):
 
     execution_eligibility: (
         ExecutionEligibilityResult
+        | None
+    ) = None
+
+    temporal_autopilot_safety: (
+        IntelligenceTemporalAutopilotSafetyContext
         | None
     ) = None
 

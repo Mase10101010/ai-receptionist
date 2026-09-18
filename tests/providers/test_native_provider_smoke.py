@@ -16,7 +16,12 @@ from app.providers.contract.reservation import (
     ReservationStatus,
     UpdateReservationRequest,
 )
-from app.providers.resolver import ProviderResolver
+from app.providers.resolver import (
+    NullIntegrationConfigStore,
+    ProviderResolver,
+)
+
+from app.models.service_area import ServiceArea
 
 
 RESTAURANT_ID = uuid.UUID("77488b28-620b-49f2-9148-d3539c9cf6d0")
@@ -27,20 +32,35 @@ async def test_alias_native_provider_full_flow():
     session = AsyncSessionLocal()
 
     try:
-        provider = await ProviderResolver().resolve(session, RESTAURANT_ID)
-
-        # Ensure test tables exist
-        session.add_all(
-            [
-                Table(
-                    restaurant_id=RESTAURANT_ID,
-                    table_code=f"TEST_AUTO_{uuid.uuid4().hex[:8]}",
-                    table_number=f"AUTO_{uuid.uuid4().hex[:8]}",
-                    seats=4,
-                    is_active=True,
-                ),
-            ]
+        provider = await ProviderResolver(
+            config_store=NullIntegrationConfigStore(),
+        ).resolve(
+            session,
+            RESTAURANT_ID,
         )
+
+        # Ensure an isolated service area and test table exist.
+        service_area = ServiceArea(
+            restaurant_id=RESTAURANT_ID,
+            name=f"Provider Test {uuid.uuid4().hex[:8]}",
+            area_type="indoor",
+            is_active=True,
+        )
+
+        session.add(service_area)
+        await session.flush()
+
+        session.add(
+            Table(
+                restaurant_id=RESTAURANT_ID,
+                service_area_id=service_area.id,
+                table_code=f"TEST_AUTO_{uuid.uuid4().hex[:8]}",
+                table_number=f"AUTO_{uuid.uuid4().hex[:8]}",
+                seats=4,
+                is_active=True,
+            )
+        )
+
         await session.commit()
 
         start = datetime.now(timezone.utc) + timedelta(days=5)

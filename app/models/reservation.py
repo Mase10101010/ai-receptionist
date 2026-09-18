@@ -70,6 +70,27 @@ class Reservation(Base):
         nullable=False,
         default=90,
     )
+    # Temporal truth — actual first seating time.
+    # This is distinct from reservation_time, which is the planned booking time.
+    seated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    cancelled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    no_show_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
 
     status: Mapped[ReservationStatus] = mapped_column(
         SQLEnum(

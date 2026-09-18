@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 from app.services.reservation_service import (
+    BookingAvailabilityOutcome,
     ReservationService,
     _format_reservation_time_for_language,
 )
@@ -63,8 +64,11 @@ Reservation rules:
   • Email is required because guests receive their reservation confirmation by email.
   • Interpret all guest-provided dates and times in the restaurant timezone.
   • Before confirming a slot, call check_availability.
-  • If a requested time is unavailable, call suggest_alternative_slots and offer nearby available times.
-  • After successfully booking, share the reservation id and recap.
+  • check_availability may return booking_outcome=direct_available, reoptimization_available, or unavailable.
+  • direct_available means the booking can be confirmed immediately.
+  • reoptimization_available means Alias found a safe way to accommodate the request by reorganizing the room, but the request still requires the restaurant's approval unless Alias is authorized to execute it automatically. Never describe this state as confirmed.
+  • If booking_outcome is unavailable, call suggest_alternative_slots and offer nearby directly bookable times.
+  • After create_reservation, inspect the returned status. If status is pending, tell the guest that the request was received and is awaiting final confirmation from the restaurant. If status is confirmed, share the reservation id and recap it as confirmed.
   • Guests may update existing reservations by providing their reservation id.
   • To modify or cancel a reservation, always ask for the reservation id first.
   • Never call update_reservation immediately after receiving a reservation id.
@@ -367,14 +371,24 @@ class AIService:
 
         try:
             if name == "check_availability":
-                ok = await self.reservation_service.check_availability(
+                outcome = await self.reservation_service.assess_booking_availability(
                     reservation_time=datetime.fromisoformat(
                         args["reservation_time"].replace("Z", "+00:00")
                     ),
                     party_size=int(args["party_size"]),
-                    restaurant_id=restaurant_id
+                    restaurant_id=restaurant_id,
                 )
-                return {"available": ok}, None
+
+                return {
+                    "available": (
+                        outcome != BookingAvailabilityOutcome.UNAVAILABLE
+                    ),
+                    "booking_outcome": outcome.value,
+                    "requires_restaurant_confirmation": (
+                        outcome
+                        == BookingAvailabilityOutcome.REOPTIMIZATION_AVAILABLE
+                    ),
+                }, None
             
             if name == "suggest_alternative_slots":
                 slots = await self.reservation_service.suggest_alternative_slots(
@@ -409,6 +423,12 @@ class AIService:
                 return {
                     "success": True,
                     "reservation_id": str(res.id),
+                    "status": res.status.value,
+                    "booking_outcome": (
+                        BookingAvailabilityOutcome.DIRECT_AVAILABLE.value
+                        if res.status.value == "confirmed"
+                        else BookingAvailabilityOutcome.REOPTIMIZATION_AVAILABLE.value
+                    ),
                     "customer_name": res.customer_name,
                     "customer_email": res.customer_email,
                     "customer_phone": res.customer_phone,
