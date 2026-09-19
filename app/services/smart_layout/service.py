@@ -22,6 +22,12 @@ from app.services.smart_layout.adjacency import (
     LayoutPlacement,
     build_adjacency_graph,
 )
+from app.services.smart_layout.derivation import (
+    derive_table_combinations,
+)
+from app.services.smart_layout.derived_materialization import (
+    SmartLayoutDerivedMaterializationService,
+)
 from app.services.smart_layout.discovery import (
     discover_connected_table_sets,
 )
@@ -53,6 +59,10 @@ class SmartLayoutService:
         materialization_service: (
             SmartLayoutMaterializationService
         ),
+        derived_materialization_service: (
+            SmartLayoutDerivedMaterializationService
+            | None
+        ) = None,
     ) -> None:
         self.placement_repository = (
             placement_repository
@@ -64,8 +74,31 @@ class SmartLayoutService:
         self.service_area_repository = (
             service_area_repository
         )
+
+        # Legacy M4 materializer remains available during
+        # the topology migration so existing callers do not
+        # break. New Analyze execution truth is owned by the
+        # derived materializer.
         self.materialization_service = (
             materialization_service
+        )
+
+        if derived_materialization_service is None:
+            combination_repository = (
+                materialization_service
+                .combination_repository
+            )
+
+            derived_materialization_service = (
+                SmartLayoutDerivedMaterializationService(
+                    combination_repository=(
+                        combination_repository
+                    ),
+                )
+            )
+
+        self.derived_materialization_service = (
+            derived_materialization_service
         )
 
     async def analyze_floor_plan(
@@ -132,6 +165,8 @@ class SmartLayoutService:
             layout_placements
         )
 
+        # Discovery now returns physical join edges only:
+        # every discovered set contains exactly two tables.
         discovered_sets = (
             discover_connected_table_sets(
                 graph
@@ -150,6 +185,30 @@ class SmartLayoutService:
             )
         )
 
+        # Topology migration cleanup:
+        #
+        # M4 used TableCombination.smart_layout_rule_id as
+        # executable identity. The topology architecture uses
+        # Floor-Plan-scoped smart_layout_key instead.
+        #
+        # Remove any remaining legacy executable while the
+        # authoritative physical rule still exists. This must
+        # happen before obsolete AUTO rules can be deleted,
+        # otherwise ON DELETE SET NULL could make a legacy
+        # executable indistinguishable from a manual one.
+        #
+        # dematerialize_rule() only targets combinations linked
+        # directly through smart_layout_rule_id, so manual
+        # combinations and new smart_layout_key combinations
+        # are outside this cleanup.
+        for rule in existing_rules:
+            await (
+                self.materialization_service
+                .dematerialize_rule(
+                    rule
+                )
+            )
+
         existing_by_members = {
             frozenset(
                 member.table_id
@@ -164,31 +223,22 @@ class SmartLayoutService:
         preserved_blocked_count = 0
         deleted_obsolete_auto_count = 0
 
-        # Reconcile all currently discovered physical
-        # combinations.
+        # Reconcile current geometric join proposals into
+        # persistent physical-rule memory.
         for table_set in discovered_keys:
             existing = existing_by_members.get(
                 table_set
             )
 
             if existing is None:
-                created_rule = (
-                    await self.rule_repository.create(
-                        restaurant_id=restaurant_id,
-                        service_area_id=service_area_id,
-                        floor_plan_id=floor_plan_id,
-                        table_ids=list(table_set),
-                        status=(
-                            TableCombinationRuleStatus.AUTO
-                        ),
-                    )
-                )
-
-                await (
-                    self.materialization_service
-                    .materialize_rule(
-                        created_rule
-                    )
+                await self.rule_repository.create(
+                    restaurant_id=restaurant_id,
+                    service_area_id=service_area_id,
+                    floor_plan_id=floor_plan_id,
+                    table_ids=list(table_set),
+                    status=(
+                        TableCombinationRuleStatus.AUTO
+                    ),
                 )
 
                 created_auto_count += 1
@@ -212,24 +262,11 @@ class SmartLayoutService:
             ):
                 preserved_blocked_count += 1
 
-            # Synchronize executable truth with the
-            # persistent physical rule.
-            #
-            # AUTO / CONFIRMED:
-            # create or preserve TableCombination.
-            #
-            # BLOCKED:
-            # delete existing Smart Layout
-            # TableCombination, if any.
-            await (
-                self.materialization_service
-                .materialize_rule(
-                    existing
-                )
-            )
-
-        # Reconcile persistent rules that are no longer
-        # proposed by current geometry.
+        # Reconcile rules no longer proposed by geometry.
+        #
+        # AUTO follows geometry and disappears.
+        # CONFIRMED survives as manager physical truth.
+        # BLOCKED survives as manager negative truth.
         for table_set, rule in (
             existing_by_members.items()
         ):
@@ -240,15 +277,9 @@ class SmartLayoutService:
                 rule.status
                 == TableCombinationRuleStatus.AUTO
             ):
-                # Important ordering:
-                #
-                # 1. remove executable Smart Layout
-                #    combination
-                # 2. remove AUTO rule
-                #
-                # This prevents ON DELETE SET NULL from
-                # leaving an orphaned combination that
-                # would look manual.
+                # Defensive legacy cleanup remains safe and
+                # idempotent. The migration pass above should
+                # already have removed any M4 executable.
                 await (
                     self.materialization_service
                     .dematerialize_rule(
@@ -266,31 +297,83 @@ class SmartLayoutService:
                 rule.status
                 == TableCombinationRuleStatus.CONFIRMED
             ):
-                # Manager truth survives geometry
-                # disappearance and remains executable.
-                await (
-                    self.materialization_service
-                    .materialize_rule(
-                        rule
-                    )
-                )
-
                 preserved_confirmed_count += 1
 
             elif (
                 rule.status
                 == TableCombinationRuleStatus.BLOCKED
             ):
-                # BLOCKED survives as physical-rule
-                # memory but must never remain executable.
-                await (
-                    self.materialization_service
-                    .materialize_rule(
-                        rule
-                    )
+                preserved_blocked_count += 1
+
+        # Reload authoritative physical-rule truth after
+        # reconciliation. This includes newly-created AUTO
+        # joins and persistent CONFIRMED/BLOCKED joins.
+        reconciled_rules = (
+            await self.rule_repository
+            .list_by_floor_plan(
+                floor_plan_id
+            )
+        )
+
+        effective_joins = []
+
+        for rule in reconciled_rules:
+            member_ids = frozenset(
+                member.table_id
+                for member in rule.members
+            )
+
+            # New topology contract:
+            # a physical rule is one join edge only.
+            #
+            # Legacy multi-table rules are deliberately
+            # excluded from the new derivation pipeline.
+            if len(member_ids) != 2:
+                continue
+
+            if (
+                rule.status
+                == TableCombinationRuleStatus.BLOCKED
+            ):
+                # Manager BLOCKED always overrides
+                # automatic geometry.
+                continue
+
+            if rule.status in {
+                TableCombinationRuleStatus.AUTO,
+                TableCombinationRuleStatus.CONFIRMED,
+            }:
+                effective_joins.append(
+                    member_ids
                 )
 
-                preserved_blocked_count += 1
+        derived_table_sets = (
+            derive_table_combinations(
+                effective_joins
+            )
+        )
+
+        # Materialization needs Table models for capacity
+        # calculation. Placement rows already represent the
+        # tables participating in this Floor Plan.
+        tables_by_id = {
+            placement.table_id: placement.table
+            for placement in placements
+            if placement.table is not None
+        }
+
+        await (
+            self.derived_materialization_service
+            .sync(
+                restaurant_id=restaurant_id,
+                service_area_id=service_area_id,
+                floor_plan_id=floor_plan_id,
+                derived_table_sets=(
+                    derived_table_sets
+                ),
+                tables_by_id=tables_by_id,
+            )
+        )
 
         return SmartLayoutAnalysisResult(
             discovered_count=len(

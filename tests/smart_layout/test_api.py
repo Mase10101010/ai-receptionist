@@ -140,10 +140,22 @@ async def _count_smart_combinations(
             select(func.count())
             .select_from(TableCombination)
             .where(
-                TableCombination.smart_layout_rule_id.is_not(None)
+                TableCombination.smart_layout_key.is_not(None)
             )
         )
     ).scalar_one()
+
+def _smart_layout_key_for_rule_payload(
+    rule: dict,
+) -> str:
+    member_key = "|".join(
+        sorted(
+            member["table_id"]
+            for member in rule["members"]
+        )
+    )
+
+    return f'{rule["floor_plan_id"]}:{member_key}'
 
 
 async def test_analyze_creates_and_persists_smart_layout(
@@ -492,7 +504,9 @@ async def test_manager_control_full_authority_cycle(
     client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    _, restaurant, area, tables = await _get_workspace(db_session)
+    _, restaurant, area, tables = await _get_workspace(
+        db_session
+    )
 
     floor_plan = await _create_floor_plan_with_adjacent_tables(
         db_session,
@@ -507,15 +521,19 @@ async def test_manager_control_full_authority_cycle(
         "/smart-layout"
     )
 
-    # ---------------------------------------------------------
-    # 1. ANALYZE -> AUTO rule + executable combination
-    # ---------------------------------------------------------
-
-    response = await client.post(f"{base_url}/analyze")
+    # 1. ANALYZE -> AUTO physical join +
+    # derived executable combination.
+    response = await client.post(
+        f"{base_url}/analyze"
+    )
     assert response.status_code == 200, response.text
 
-    rules_response = await client.get(f"{base_url}/rules")
-    assert rules_response.status_code == 200, rules_response.text
+    rules_response = await client.get(
+        f"{base_url}/rules"
+    )
+    assert (
+        rules_response.status_code == 200
+    ), rules_response.text
 
     rules = rules_response.json()
     assert len(rules) >= 1
@@ -524,17 +542,31 @@ async def test_manager_control_full_authority_cycle(
     rule_id = rule["id"]
 
     assert rule["status"] == "auto"
+    assert len(rule["members"]) == 2
 
-    smart_combination_count = await _count_smart_combinations(
-        db_session
+    smart_layout_key = (
+        _smart_layout_key_for_rule_payload(
+            rule
+        )
     )
-    assert smart_combination_count >= 1
 
-    # ---------------------------------------------------------
-    # 2. AUTO -> BLOCKED
-    # Rule survives, executable disappears immediately.
-    # ---------------------------------------------------------
+    combination = (
+        await db_session.execute(
+            select(TableCombination).where(
+                TableCombination.smart_layout_key
+                == smart_layout_key
+            )
+        )
+    ).scalar_one_or_none()
 
+    assert combination is not None
+    combination_id = combination.id
+    assert combination.smart_layout_rule_id is None
+
+    # 2. AUTO -> BLOCKED.
+    #
+    # Rule survives as manager authority.
+    # Derived executable disappears immediately.
     response = await client.patch(
         f"{base_url}/rules/{rule_id}",
         json={"status": "blocked"},
@@ -546,7 +578,8 @@ async def test_manager_control_full_authority_cycle(
     persisted_rule = (
         await db_session.execute(
             select(TableCombinationRule).where(
-                TableCombinationRule.id == uuid.UUID(rule_id)
+                TableCombinationRule.id
+                == uuid.UUID(rule_id)
             )
         )
     ).scalar_one_or_none()
@@ -557,26 +590,26 @@ async def test_manager_control_full_authority_cycle(
     combination = (
         await db_session.execute(
             select(TableCombination).where(
-                TableCombination.smart_layout_rule_id
-                == uuid.UUID(rule_id)
+                TableCombination.smart_layout_key
+                == smart_layout_key
             )
         )
     ).scalar_one_or_none()
 
     assert combination is None
 
-    # ---------------------------------------------------------
     # 3. Analyze again while BLOCKED.
-    # BLOCKED must override automatic discovery.
-    # ---------------------------------------------------------
-
-    response = await client.post(f"{base_url}/analyze")
+    # BLOCKED must override geometry.
+    response = await client.post(
+        f"{base_url}/analyze"
+    )
     assert response.status_code == 200, response.text
 
     persisted_rule = (
         await db_session.execute(
             select(TableCombinationRule).where(
-                TableCombinationRule.id == uuid.UUID(rule_id)
+                TableCombinationRule.id
+                == uuid.UUID(rule_id)
             )
         )
     ).scalar_one_or_none()
@@ -587,19 +620,18 @@ async def test_manager_control_full_authority_cycle(
     combination = (
         await db_session.execute(
             select(TableCombination).where(
-                TableCombination.smart_layout_rule_id
-                == uuid.UUID(rule_id)
+                TableCombination.smart_layout_key
+                == smart_layout_key
             )
         )
     ).scalar_one_or_none()
 
     assert combination is None
 
-    # ---------------------------------------------------------
-    # 4. BLOCKED -> CONFIRMED
-    # Executable must return immediately.
-    # ---------------------------------------------------------
-
+    # 4. BLOCKED -> CONFIRMED.
+    #
+    # The physical join becomes effective again,
+    # therefore derived execution returns immediately.
     response = await client.patch(
         f"{base_url}/rules/{rule_id}",
         json={"status": "confirmed"},
@@ -611,24 +643,25 @@ async def test_manager_control_full_authority_cycle(
     combination = (
         await db_session.execute(
             select(TableCombination).where(
-                TableCombination.smart_layout_rule_id
-                == uuid.UUID(rule_id)
+                TableCombination.smart_layout_key
+                == smart_layout_key
             )
         )
     ).scalar_one_or_none()
 
     assert combination is not None
 
-    # ---------------------------------------------------------
-    # 5. Destroy geometric adjacency.
-    # CONFIRMED must survive Analyze.
-    # ---------------------------------------------------------
+    confirmed_combination_id = combination.id
 
+    # 5. Destroy geometric adjacency.
+    # CONFIRMED remains authoritative.
     placement = (
         await db_session.execute(
             select(TablePlacement).where(
-                TablePlacement.floor_plan_id == floor_plan.id,
-                TablePlacement.table_id == tables[1].id,
+                TablePlacement.floor_plan_id
+                == floor_plan.id,
+                TablePlacement.table_id
+                == tables[1].id,
             )
         )
     ).scalar_one()
@@ -637,13 +670,16 @@ async def test_manager_control_full_authority_cycle(
     placement.y = 600
     await db_session.flush()
 
-    response = await client.post(f"{base_url}/analyze")
+    response = await client.post(
+        f"{base_url}/analyze"
+    )
     assert response.status_code == 200, response.text
 
     persisted_rule = (
         await db_session.execute(
             select(TableCombinationRule).where(
-                TableCombinationRule.id == uuid.UUID(rule_id)
+                TableCombinationRule.id
+                == uuid.UUID(rule_id)
             )
         )
     ).scalar_one_or_none()
@@ -654,22 +690,21 @@ async def test_manager_control_full_authority_cycle(
     combination = (
         await db_session.execute(
             select(TableCombination).where(
-                TableCombination.smart_layout_rule_id
-                == uuid.UUID(rule_id)
+                TableCombination.smart_layout_key
+                == smart_layout_key
             )
         )
     ).scalar_one_or_none()
 
     assert combination is not None
+    assert combination.id == confirmed_combination_id
 
-    # ---------------------------------------------------------
-    # 6. CONFIRMED -> AUTO while geometry no longer supports it.
+    # 6. CONFIRMED -> AUTO while geometry no longer
+    # supports the join.
     #
     # AUTO returns authority to current geometry.
-    # Reconciliation must therefore remove both executable
-    # combination and obsolete AUTO rule immediately.
-    # ---------------------------------------------------------
-
+    # Analyze removes the obsolete rule and derived
+    # executable immediately.
     response = await client.patch(
         f"{base_url}/rules/{rule_id}",
         json={"status": "auto"},
@@ -681,7 +716,8 @@ async def test_manager_control_full_authority_cycle(
     persisted_rule = (
         await db_session.execute(
             select(TableCombinationRule).where(
-                TableCombinationRule.id == uuid.UUID(rule_id)
+                TableCombinationRule.id
+                == uuid.UUID(rule_id)
             )
         )
     ).scalar_one_or_none()
@@ -691,8 +727,8 @@ async def test_manager_control_full_authority_cycle(
     combination = (
         await db_session.execute(
             select(TableCombination).where(
-                TableCombination.smart_layout_rule_id
-                == uuid.UUID(rule_id)
+                TableCombination.smart_layout_key
+                == smart_layout_key
             )
         )
     ).scalar_one_or_none()
@@ -837,10 +873,24 @@ async def test_patch_foreign_owner_returns_404_without_mutation(
     await db_session.refresh(rule)
     assert rule.status.value == "auto"
 
+    member_key = "|".join(
+        sorted(
+            (
+                str(tables[0].id),
+                str(tables[1].id),
+            )
+        )
+    )
+
+    smart_layout_key = (
+        f"{floor_plan.id}:{member_key}"
+    )
+
     combination = (
         await db_session.execute(
             select(TableCombination).where(
-                TableCombination.smart_layout_rule_id == rule.id
+                TableCombination.smart_layout_key
+                == smart_layout_key
             )
         )
     ).scalar_one_or_none()
@@ -895,10 +945,24 @@ async def test_patch_wrong_floor_plan_returns_404_without_mutation(
     await db_session.refresh(rule)
     assert rule.status.value == "auto"
 
+    member_key = "|".join(
+        sorted(
+            (
+                str(tables[0].id),
+                str(tables[1].id),
+            )
+        )
+    )
+
+    smart_layout_key = (
+        f"{floor_plan.id}:{member_key}"
+    )
+
     combination = (
         await db_session.execute(
             select(TableCombination).where(
-                TableCombination.smart_layout_rule_id == rule.id
+                TableCombination.smart_layout_key
+                == smart_layout_key
             )
         )
     ).scalar_one_or_none()
@@ -956,10 +1020,24 @@ async def test_patch_inactive_subscription_returns_403_without_mutation(
     await db_session.refresh(rule)
     assert rule.status.value == "auto"
 
+    member_key = "|".join(
+        sorted(
+            (
+                str(tables[0].id),
+                str(tables[1].id),
+            )
+        )
+    )
+
+    smart_layout_key = (
+        f"{floor_plan.id}:{member_key}"
+    )
+
     combination = (
         await db_session.execute(
             select(TableCombination).where(
-                TableCombination.smart_layout_rule_id == rule.id
+                TableCombination.smart_layout_key
+                == smart_layout_key
             )
         )
     ).scalar_one_or_none()

@@ -33,6 +33,8 @@ from app.services.smart_layout.materialization import (
     SmartLayoutMaterializationService,
 )
 
+from app.models.table_combination import TableCombination
+
 
 @pytest.mark.asyncio
 async def test_analysis_creates_auto_rule_for_adjacent_tables(
@@ -599,8 +601,21 @@ async def test_analysis_rejects_floor_plan_from_other_area(
             floor_plan_id=other_floor_plan.id,
         )
 
+def smart_layout_key_for_table_ids(
+    floor_plan_id,
+    table_ids,
+):
+    member_key = "|".join(
+        sorted(
+            str(table_id)
+            for table_id in table_ids
+        )
+    )
+
+    return f"{floor_plan_id}:{member_key}"
+
 @pytest.mark.asyncio
-async def test_analysis_creates_executable_combination_for_auto_rule(
+async def test_analysis_creates_derived_executable_combination_for_auto_join(
     db_session,
 ):
     scenario = await build_reconciliation_scenario(
@@ -634,10 +649,22 @@ async def test_analysis_creates_executable_combination_for_auto_rule(
         ):
             continue
 
+        rule_table_ids = {
+            member.table_id
+            for member in rule.members
+        }
+
+        assert len(rule_table_ids) == 2
+
         combination = (
             await combination_repository
-            .get_by_smart_layout_rule_id(
-                smart_layout_rule_id=rule.id,
+            .get_by_smart_layout_key(
+                smart_layout_key=(
+                    smart_layout_key_for_table_ids(
+                        scenario["floor_plan"].id,
+                        rule_table_ids,
+                    )
+                ),
                 restaurant_id=scenario[
                     "restaurant"
                 ].id,
@@ -648,23 +675,21 @@ async def test_analysis_creates_executable_combination_for_auto_rule(
         assert combination.is_active is True
         assert (
             combination.smart_layout_rule_id
-            == rule.id
+            is None
         )
-
-        rule_table_ids = {
-            member.table_id
-            for member in rule.members
-        }
 
         combination_table_ids = {
             member.table_id
             for member in combination.members
         }
 
-        assert combination_table_ids == rule_table_ids
+        assert (
+            combination_table_ids
+            == rule_table_ids
+        )
 
 @pytest.mark.asyncio
-async def test_obsolete_auto_removes_rule_and_executable_combination(
+async def test_obsolete_auto_removes_join_and_derived_executable_combination(
     db_session,
 ):
     scenario = await build_reconciliation_scenario(
@@ -694,14 +719,26 @@ async def test_obsolete_auto_removes_rule_and_executable_combination(
 
     target_rule = auto_rules[0]
 
+    target_table_ids = {
+        member.table_id
+        for member in target_rule.members
+    }
+
+    target_key = (
+        smart_layout_key_for_table_ids(
+            scenario["floor_plan"].id,
+            target_table_ids,
+        )
+    )
+
     combination_repository = TableCombinationRepository(
         db_session
     )
 
     combination_before = (
         await combination_repository
-        .get_by_smart_layout_rule_id(
-            smart_layout_rule_id=target_rule.id,
+        .get_by_smart_layout_key(
+            smart_layout_key=target_key,
             restaurant_id=scenario[
                 "restaurant"
             ].id,
@@ -709,11 +746,6 @@ async def test_obsolete_auto_removes_rule_and_executable_combination(
     )
 
     assert combination_before is not None
-
-    target_table_ids = {
-        member.table_id
-        for member in target_rule.members
-    }
 
     placements = await scenario[
         "placement_repository"
@@ -756,8 +788,8 @@ async def test_obsolete_auto_removes_rule_and_executable_combination(
 
     combination_after = (
         await combination_repository
-        .get_by_smart_layout_rule_id(
-            smart_layout_rule_id=target_rule.id,
+        .get_by_smart_layout_key(
+            smart_layout_key=target_key,
             restaurant_id=scenario[
                 "restaurant"
             ].id,
@@ -767,7 +799,7 @@ async def test_obsolete_auto_removes_rule_and_executable_combination(
     assert combination_after is None
 
 @pytest.mark.asyncio
-async def test_blocked_rule_survives_analysis_but_executable_is_removed(
+async def test_blocked_join_survives_analysis_but_is_excluded_from_execution(
     db_session,
 ):
     scenario = await build_reconciliation_scenario(
@@ -797,11 +829,16 @@ async def test_blocked_rule_survives_analysis_but_executable_is_removed(
 
     target_rule = auto_rules[0]
 
-    target_rule = await scenario[
-        "rule_repository"
-    ].set_status(
-        target_rule,
-        TableCombinationRuleStatus.BLOCKED,
+    target_table_ids = {
+        member.table_id
+        for member in target_rule.members
+    }
+
+    target_key = (
+        smart_layout_key_for_table_ids(
+            scenario["floor_plan"].id,
+            target_table_ids,
+        )
     )
 
     combination_repository = TableCombinationRepository(
@@ -810,8 +847,8 @@ async def test_blocked_rule_survives_analysis_but_executable_is_removed(
 
     combination_before = (
         await combination_repository
-        .get_by_smart_layout_rule_id(
-            smart_layout_rule_id=target_rule.id,
+        .get_by_smart_layout_key(
+            smart_layout_key=target_key,
             restaurant_id=scenario[
                 "restaurant"
             ].id,
@@ -819,6 +856,13 @@ async def test_blocked_rule_survives_analysis_but_executable_is_removed(
     )
 
     assert combination_before is not None
+
+    target_rule = await scenario[
+        "rule_repository"
+    ].set_status(
+        target_rule,
+        TableCombinationRuleStatus.BLOCKED,
+    )
 
     await scenario["service"].analyze_floor_plan(
         restaurant_id=scenario["restaurant"].id,
@@ -849,8 +893,8 @@ async def test_blocked_rule_survives_analysis_but_executable_is_removed(
 
     combination_after = (
         await combination_repository
-        .get_by_smart_layout_rule_id(
-            smart_layout_rule_id=target_rule.id,
+        .get_by_smart_layout_key(
+            smart_layout_key=target_key,
             restaurant_id=scenario[
                 "restaurant"
             ].id,
@@ -860,7 +904,7 @@ async def test_blocked_rule_survives_analysis_but_executable_is_removed(
     assert combination_after is None
 
 @pytest.mark.asyncio
-async def test_confirmed_rule_survives_geometry_disappearance_and_remains_executable(
+async def test_confirmed_join_survives_geometry_disappearance_and_remains_executable(
     db_session,
 ):
     scenario = await build_reconciliation_scenario(
@@ -890,6 +934,18 @@ async def test_confirmed_rule_survives_geometry_disappearance_and_remains_execut
 
     target_rule = auto_rules[0]
 
+    target_table_ids = {
+        member.table_id
+        for member in target_rule.members
+    }
+
+    target_key = (
+        smart_layout_key_for_table_ids(
+            scenario["floor_plan"].id,
+            target_table_ids,
+        )
+    )
+
     target_rule = await scenario[
         "rule_repository"
     ].set_status(
@@ -903,8 +959,8 @@ async def test_confirmed_rule_survives_geometry_disappearance_and_remains_execut
 
     combination_before = (
         await combination_repository
-        .get_by_smart_layout_rule_id(
-            smart_layout_rule_id=target_rule.id,
+        .get_by_smart_layout_key(
+            smart_layout_key=target_key,
             restaurant_id=scenario[
                 "restaurant"
             ].id,
@@ -913,10 +969,7 @@ async def test_confirmed_rule_survives_geometry_disappearance_and_remains_execut
 
     assert combination_before is not None
 
-    target_table_ids = {
-        member.table_id
-        for member in target_rule.members
-    }
+    combination_id = combination_before.id
 
     placements = await scenario[
         "placement_repository"
@@ -969,8 +1022,8 @@ async def test_confirmed_rule_survives_geometry_disappearance_and_remains_execut
 
     combination_after = (
         await combination_repository
-        .get_by_smart_layout_rule_id(
-            smart_layout_rule_id=target_rule.id,
+        .get_by_smart_layout_key(
+            smart_layout_key=target_key,
             restaurant_id=scenario[
                 "restaurant"
             ].id,
@@ -978,7 +1031,443 @@ async def test_confirmed_rule_survives_geometry_disappearance_and_remains_execut
     )
 
     assert combination_after is not None
+
+    # Stable executable identity survives geometry
+    # disappearance because CONFIRMED remains an
+    # effective physical join.
+    assert combination_after.id == combination_id
     assert (
         combination_after.smart_layout_rule_id
-        == target_rule.id
+        is None
     )
+
+@pytest.mark.asyncio
+async def test_join_chain_derives_executable_multi_table_combination(
+    db_session,
+):
+    scenario = await build_reconciliation_scenario(
+        db_session
+    )
+
+    restaurant = scenario["restaurant"]
+    area = scenario["area"]
+    floor_plan = scenario["floor_plan"]
+
+    third_table = Table(
+        restaurant_id=restaurant.id,
+        service_area_id=area.id,
+        table_code=f"CHAIN-{uuid.uuid4()}",
+        table_number="3",
+        seats=4,
+        is_active=True,
+    )
+    db_session.add(third_table)
+    await db_session.flush()
+
+    third_placement = TablePlacement(
+        floor_plan_id=floor_plan.id,
+        table_id=third_table.id,
+        x=200,
+        y=0,
+        width=80,
+        height=80,
+        rotation=0,
+        is_visible=True,
+    )
+    db_session.add(third_placement)
+    await db_session.flush()
+
+    await scenario["service"].analyze_floor_plan(
+        restaurant_id=restaurant.id,
+        service_area_id=area.id,
+        floor_plan_id=floor_plan.id,
+    )
+
+    rules = await scenario[
+        "rule_repository"
+    ].list_by_floor_plan(
+        floor_plan.id
+    )
+
+    assert len(rules) == 2
+    assert all(
+        len(rule.members) == 2
+        for rule in rules
+    )
+
+    combination_repository = (
+        TableCombinationRepository(
+            db_session
+        )
+    )
+
+    combinations = (
+        await combination_repository
+        .list_by_restaurant(
+            restaurant_id=restaurant.id,
+            service_area_id=area.id,
+            include_inactive=True,
+        )
+    )
+
+    derived = [
+        combination
+        for combination in combinations
+        if combination.smart_layout_key is not None
+    ]
+
+    assert len(derived) == 3
+
+    member_sets = {
+        frozenset(
+            member.table_id
+            for member in combination.members
+        )
+        for combination in derived
+    }
+
+    assert member_sets == {
+        frozenset({
+            scenario["tables"][0].id,
+            scenario["tables"][1].id,
+        }),
+        frozenset({
+            scenario["tables"][1].id,
+            third_table.id,
+        }),
+        frozenset({
+            scenario["tables"][0].id,
+            scenario["tables"][1].id,
+            third_table.id,
+        }),
+    }
+
+    assert all(
+        combination.smart_layout_rule_id is None
+        for combination in derived
+    )
+
+
+@pytest.mark.asyncio
+async def test_blocked_join_is_excluded_from_derived_execution(
+    db_session,
+):
+    scenario = await build_reconciliation_scenario(
+        db_session
+    )
+
+    restaurant = scenario["restaurant"]
+    area = scenario["area"]
+    floor_plan = scenario["floor_plan"]
+
+    third_table = Table(
+        restaurant_id=restaurant.id,
+        service_area_id=area.id,
+        table_code=f"BLOCK-CHAIN-{uuid.uuid4()}",
+        table_number="3",
+        seats=4,
+        is_active=True,
+    )
+    db_session.add(third_table)
+    await db_session.flush()
+
+    db_session.add(
+        TablePlacement(
+            floor_plan_id=floor_plan.id,
+            table_id=third_table.id,
+            x=200,
+            y=0,
+            width=80,
+            height=80,
+            rotation=0,
+            is_visible=True,
+        )
+    )
+    await db_session.flush()
+
+    await scenario["service"].analyze_floor_plan(
+        restaurant_id=restaurant.id,
+        service_area_id=area.id,
+        floor_plan_id=floor_plan.id,
+    )
+
+    rules = await scenario[
+        "rule_repository"
+    ].list_by_floor_plan(
+        floor_plan.id
+    )
+
+    middle_table_id = scenario["tables"][1].id
+
+    bc_rule = next(
+        rule
+        for rule in rules
+        if {
+            member.table_id
+            for member in rule.members
+        } == {
+            middle_table_id,
+            third_table.id,
+        }
+    )
+
+    await scenario[
+        "rule_repository"
+    ].set_status(
+        bc_rule,
+        TableCombinationRuleStatus.BLOCKED,
+    )
+
+    await scenario["service"].analyze_floor_plan(
+        restaurant_id=restaurant.id,
+        service_area_id=area.id,
+        floor_plan_id=floor_plan.id,
+    )
+
+    combination_repository = (
+        TableCombinationRepository(
+            db_session
+        )
+    )
+
+    combinations = (
+        await combination_repository
+        .list_by_restaurant(
+            restaurant_id=restaurant.id,
+            service_area_id=area.id,
+            include_inactive=True,
+        )
+    )
+
+    derived = [
+        combination
+        for combination in combinations
+        if combination.smart_layout_key is not None
+    ]
+
+    assert len(derived) == 1
+
+    assert {
+        member.table_id
+        for member in derived[0].members
+    } == {
+        scenario["tables"][0].id,
+        scenario["tables"][1].id,
+    }
+
+@pytest.mark.asyncio
+async def test_analyze_migrates_legacy_rule_materialization_to_scoped_derived_combination(
+    db_session,
+):
+    scenario = await build_reconciliation_scenario(
+        db_session
+    )
+
+    restaurant = scenario["restaurant"]
+    area = scenario["area"]
+    floor_plan = scenario["floor_plan"]
+    service = scenario["service"]
+    rule_repository = scenario["rule_repository"]
+
+    combination_repository = TableCombinationRepository(
+        db_session
+    )
+
+    # First analysis creates the physical join rules and
+    # the new topology-derived executable combinations.
+    await service.analyze_floor_plan(
+        restaurant_id=restaurant.id,
+        service_area_id=area.id,
+        floor_plan_id=floor_plan.id,
+    )
+
+    rules = await rule_repository.list_by_floor_plan(
+        floor_plan.id
+    )
+
+    auto_rules = [
+        rule
+        for rule in rules
+        if (
+            rule.status
+            == TableCombinationRuleStatus.AUTO
+            and len(rule.members) == 2
+        )
+    ]
+
+    assert auto_rules
+
+    target_rule = auto_rules[0]
+
+    target_table_ids = {
+        member.table_id
+        for member in target_rule.members
+    }
+
+    scoped_key = smart_layout_key_for_table_ids(
+        floor_plan.id,
+        target_table_ids,
+    )
+
+    # Remove the current derived executable so that we can
+    # recreate the exact legacy M4 production state.
+    current_derived = (
+        await combination_repository
+        .get_by_smart_layout_key(
+            smart_layout_key=scoped_key,
+            restaurant_id=restaurant.id,
+        )
+    )
+
+    assert current_derived is not None
+
+    await combination_repository.delete(
+        current_derived
+    )
+
+    # Recreate a legacy M4 executable:
+    # smart_layout_rule_id != NULL
+    # smart_layout_key == NULL
+    legacy_combination = TableCombination(
+        restaurant_id=restaurant.id,
+        service_area_id=area.id,
+        smart_layout_rule_id=target_rule.id,
+        smart_layout_key=None,
+        name=f"Legacy Smart Layout {target_rule.id}",
+        min_capacity=1,
+        max_capacity=sum(
+            member.table.seats
+            for member in target_rule.members
+        ),
+        setup_minutes=0,
+        is_active=True,
+    )
+
+    legacy_combination = (
+        await combination_repository.create(
+            legacy_combination
+        )
+    )
+
+    legacy_combination = (
+        await combination_repository.replace_members(
+            combination=legacy_combination,
+            table_ids=sorted(
+                target_table_ids,
+                key=str,
+            ),
+        )
+    )
+
+    legacy_combination_id = legacy_combination.id
+
+    # Also create a manual combination.
+    # Migration cleanup must never touch it.
+    manual_combination = TableCombination(
+        restaurant_id=restaurant.id,
+        service_area_id=area.id,
+        name=f"Manual Control {uuid.uuid4()}",
+        min_capacity=1,
+        max_capacity=sum(
+            member.table.seats
+            for member in target_rule.members
+        ),
+        setup_minutes=0,
+        is_active=True,
+    )
+
+    manual_combination = (
+        await combination_repository.create(
+            manual_combination
+        )
+    )
+
+    manual_combination = (
+        await combination_repository.replace_members(
+            combination=manual_combination,
+            table_ids=sorted(
+                target_table_ids,
+                key=str,
+            ),
+        )
+    )
+
+    manual_combination_id = manual_combination.id
+
+    await db_session.flush()
+
+    # Sanity check: we are now simulating the old production
+    # materialization state.
+    legacy_before = (
+        await combination_repository
+        .get_by_smart_layout_rule_id(
+            smart_layout_rule_id=target_rule.id,
+            restaurant_id=restaurant.id,
+        )
+    )
+
+    assert legacy_before is not None
+    assert legacy_before.id == legacy_combination_id
+    assert legacy_before.smart_layout_key is None
+
+    # Analyze again using the new topology pipeline.
+    await service.analyze_floor_plan(
+        restaurant_id=restaurant.id,
+        service_area_id=area.id,
+        floor_plan_id=floor_plan.id,
+    )
+
+    # The physical authority rule must survive.
+    rule_after = await rule_repository.get_by_id(
+        rule_id=target_rule.id,
+        restaurant_id=restaurant.id,
+    )
+
+    assert rule_after is not None
+    assert (
+        rule_after.status
+        == TableCombinationRuleStatus.AUTO
+    )
+
+    # Legacy M4 executable must be gone.
+    legacy_after = (
+        await combination_repository
+        .get_by_smart_layout_rule_id(
+            smart_layout_rule_id=target_rule.id,
+            restaurant_id=restaurant.id,
+        )
+    )
+
+    assert legacy_after is None
+
+    # New Floor-Plan-scoped derived executable must exist.
+    derived_after = (
+        await combination_repository
+        .get_by_smart_layout_key(
+            smart_layout_key=scoped_key,
+            restaurant_id=restaurant.id,
+        )
+    )
+
+    assert derived_after is not None
+    assert derived_after.id != legacy_combination_id
+    assert derived_after.smart_layout_rule_id is None
+    assert derived_after.smart_layout_key == scoped_key
+
+    derived_table_ids = {
+        member.table_id
+        for member in derived_after.members
+    }
+
+    assert derived_table_ids == target_table_ids
+
+    # Manual manager-created combination must remain untouched.
+    manual_after = await combination_repository.get_by_id(
+        combination_id=manual_combination_id,
+        restaurant_id=restaurant.id,
+    )
+
+    assert manual_after is not None
+    assert manual_after.id == manual_combination_id
+    assert manual_after.smart_layout_rule_id is None
+    assert manual_after.smart_layout_key is None

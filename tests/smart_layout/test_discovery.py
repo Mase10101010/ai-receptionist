@@ -1,7 +1,6 @@
 import uuid
 
 from app.services.smart_layout.discovery import (
-    MAX_COMBINATION_SIZE,
     discover_connected_table_sets,
 )
 
@@ -28,7 +27,7 @@ def test_isolated_table_discovers_nothing():
     ) == []
 
 
-def test_adjacent_pair_is_discovered():
+def test_adjacent_pair_is_discovered_as_physical_join():
     first = table_id()
     second = table_id()
 
@@ -50,7 +49,7 @@ def test_adjacent_pair_is_discovered():
     }
 
 
-def test_linear_three_table_layout_discovers_connected_sets():
+def test_linear_three_table_layout_discovers_only_physical_join_edges():
     first = table_id()
     second = table_id()
     third = table_id()
@@ -77,17 +76,10 @@ def test_linear_three_table_layout_discovers_connected_sets():
         frozenset(
             {second, third}
         ),
-        frozenset(
-            {
-                first,
-                second,
-                third,
-            }
-        ),
     }
 
 
-def test_disconnected_pair_is_never_invented():
+def test_transitive_pair_is_never_invented():
     first = table_id()
     second = table_id()
     third = table_id()
@@ -142,7 +134,7 @@ def test_separate_clusters_remain_separate():
     }
 
 
-def test_linear_four_table_set_is_rejected_as_insufficiently_cohesive():
+def test_linear_four_table_layout_discovers_only_three_join_edges():
     tables = [
         table_id()
         for _ in range(4)
@@ -171,12 +163,29 @@ def test_linear_four_table_set_is_rejected_as_insufficiently_cohesive():
         )
     )
 
-    assert frozenset(
-        tables
-    ) not in discovered
+    assert discovered == {
+        frozenset(
+            {
+                tables[0],
+                tables[1],
+            }
+        ),
+        frozenset(
+            {
+                tables[1],
+                tables[2],
+            }
+        ),
+        frozenset(
+            {
+                tables[2],
+                tables[3],
+            }
+        ),
+    }
 
 
-def test_cohesive_four_table_set_is_discovered():
+def test_dense_layout_discovers_edges_not_multi_table_combinations():
     tables = [
         table_id()
         for _ in range(4)
@@ -207,12 +216,64 @@ def test_cohesive_four_table_set_is_discovered():
         )
     )
 
-    assert frozenset(
-        tables
-    ) in discovered
+    assert discovered == {
+        frozenset(
+            {
+                tables[0],
+                tables[1],
+            }
+        ),
+        frozenset(
+            {
+                tables[0],
+                tables[2],
+            }
+        ),
+        frozenset(
+            {
+                tables[1],
+                tables[3],
+            }
+        ),
+        frozenset(
+            {
+                tables[2],
+                tables[3],
+            }
+        ),
+    }
+
+    assert all(
+        len(join) == 2
+        for join in discovered
+    )
 
 
-def test_default_discovery_never_exceeds_maximum_combination_size():
+def test_duplicate_bidirectional_edges_are_returned_once():
+    first = table_id()
+    second = table_id()
+
+    graph = {
+        first: {second},
+        second: {first},
+    }
+
+    discovered = (
+        discover_connected_table_sets(
+            graph
+        )
+    )
+
+    assert len(discovered) == 1
+    assert discovered[0] == frozenset(
+        {
+            first,
+            second,
+        }
+    )
+
+
+def test_every_discovered_item_is_a_physical_join_pair():
     tables = [
         table_id()
         for _ in range(5)
@@ -246,56 +307,7 @@ def test_default_discovery_never_exceeds_maximum_combination_size():
     )
 
     assert discovered
-
     assert all(
-        len(table_set)
-        <= MAX_COMBINATION_SIZE
-        for table_set in discovered
+        len(join) == 2
+        for join in discovered
     )
-
-    assert frozenset(
-        tables
-    ) not in discovered
-
-
-def test_custom_max_size_is_respected():
-    first = table_id()
-    second = table_id()
-    third = table_id()
-
-    graph = {
-        first: {second},
-        second: {
-            first,
-            third,
-        },
-        third: {second},
-    }
-
-    discovered = (
-        discover_connected_table_sets(
-            graph,
-            max_size=2,
-        )
-    )
-
-    assert discovered
-    assert all(
-        len(table_set) == 2
-        for table_set in discovered
-    )
-
-
-def test_invalid_max_size_discovers_nothing():
-    first = table_id()
-    second = table_id()
-
-    graph = {
-        first: {second},
-        second: {first},
-    }
-
-    assert discover_connected_table_sets(
-        graph,
-        max_size=1,
-    ) == []

@@ -64,6 +64,11 @@ class TableCombination(Base):
         index=True,
     )
 
+    smart_layout_key: Mapped[str | None] = mapped_column(
+        String(512),
+        nullable=True,
+    )
+
     name: Mapped[str] = mapped_column(
         String(100),
         nullable=False,

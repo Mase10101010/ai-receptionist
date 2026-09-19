@@ -554,3 +554,200 @@ async def test_blocking_smart_rule_does_not_delete_manual_combination(
     assert manual_after.smart_layout_rule_id is None
 
     assert smart_after is None
+
+@pytest.mark.asyncio
+async def test_get_by_smart_layout_key_returns_derived_combination(
+    db_session,
+):
+    scenario = (
+        await build_materialization_repository_scenario(
+            db_session
+        )
+    )
+
+    restaurant = scenario["restaurant"]
+    area = scenario["area"]
+    tables = scenario["tables"]
+
+    repository = TableCombinationRepository(
+        db_session
+    )
+
+    smart_layout_key = "|".join(
+        sorted(
+            str(table.id)
+            for table in tables
+        )
+    )
+
+    combination = TableCombination(
+        restaurant_id=restaurant.id,
+        service_area_id=area.id,
+        smart_layout_key=smart_layout_key,
+        name=f"Smart Layout Derived {smart_layout_key}",
+        min_capacity=1,
+        max_capacity=sum(
+            table.seats
+            for table in tables
+        ),
+        setup_minutes=0,
+        is_active=True,
+        members=[
+            TableCombinationMember(
+                table_id=table.id,
+                sort_order=index,
+            )
+            for index, table in enumerate(
+                sorted(
+                    tables,
+                    key=lambda table: str(
+                        table.id
+                    ),
+                )
+            )
+        ],
+    )
+
+    combination = await repository.create(
+        combination
+    )
+
+    found = (
+        await repository.get_by_smart_layout_key(
+            smart_layout_key=smart_layout_key,
+            restaurant_id=restaurant.id,
+        )
+    )
+
+    assert found is not None
+    assert found.id == combination.id
+    assert (
+        found.smart_layout_key
+        == smart_layout_key
+    )
+
+
+@pytest.mark.asyncio
+async def test_smart_layout_key_preserves_stable_combination_identity(
+    db_session,
+):
+    scenario = (
+        await build_materialization_repository_scenario(
+            db_session
+        )
+    )
+
+    restaurant = scenario["restaurant"]
+    area = scenario["area"]
+    tables = scenario["tables"]
+
+    repository = TableCombinationRepository(
+        db_session
+    )
+
+    smart_layout_key = "|".join(
+        sorted(
+            str(table.id)
+            for table in tables
+        )
+    )
+
+    combination = TableCombination(
+        restaurant_id=restaurant.id,
+        service_area_id=area.id,
+        smart_layout_key=smart_layout_key,
+        name=f"Smart Layout Derived {smart_layout_key}",
+        min_capacity=1,
+        max_capacity=sum(
+            table.seats
+            for table in tables
+        ),
+        setup_minutes=0,
+        is_active=True,
+    )
+
+    combination = await repository.create(
+        combination
+    )
+
+    combination = (
+        await repository.replace_members(
+            combination=combination,
+            table_ids=sorted(
+                (
+                    table.id
+                    for table in tables
+                ),
+                key=str,
+            ),
+        )
+    )
+
+    original_id = combination.id
+
+    found = (
+        await repository.get_by_smart_layout_key(
+            smart_layout_key=smart_layout_key,
+            restaurant_id=restaurant.id,
+        )
+    )
+
+    assert found is not None
+    assert found.id == original_id
+
+    found_again = (
+        await repository.get_by_smart_layout_key(
+            smart_layout_key=smart_layout_key,
+            restaurant_id=restaurant.id,
+        )
+    )
+
+    assert found_again is not None
+    assert found_again.id == original_id
+
+
+@pytest.mark.asyncio
+async def test_manual_combination_has_no_smart_layout_key(
+    db_session,
+):
+    scenario = (
+        await build_materialization_repository_scenario(
+            db_session
+        )
+    )
+
+    restaurant = scenario["restaurant"]
+    area = scenario["area"]
+    tables = scenario["tables"]
+
+    repository = TableCombinationRepository(
+        db_session
+    )
+
+    manual = TableCombination(
+        restaurant_id=restaurant.id,
+        service_area_id=area.id,
+        name=f"Manual {uuid.uuid4()}",
+        min_capacity=1,
+        max_capacity=sum(
+            table.seats
+            for table in tables
+        ),
+        setup_minutes=0,
+        is_active=True,
+    )
+
+    manual = await repository.create(
+        manual
+    )
+
+    manual = await repository.replace_members(
+        combination=manual,
+        table_ids=[
+            table.id
+            for table in tables
+        ],
+    )
+
+    assert manual.smart_layout_rule_id is None
+    assert manual.smart_layout_key is None

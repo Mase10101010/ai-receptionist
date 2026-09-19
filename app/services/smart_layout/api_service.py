@@ -189,22 +189,6 @@ class SmartLayoutApiService:
             status=new_status,
         )
 
-        if new_status == TableCombinationRuleStatus.BLOCKED:
-            await (
-                self.smart_layout_service
-                .materialization_service
-                .dematerialize_rule(rule)
-            )
-            return rule
-
-        if new_status == TableCombinationRuleStatus.CONFIRMED:
-            await (
-                self.smart_layout_service
-                .materialization_service
-                .materialize_rule(rule)
-            )
-            return rule
-
         await self.smart_layout_service.analyze_floor_plan(
             restaurant_id=restaurant_id,
             service_area_id=area_id,
