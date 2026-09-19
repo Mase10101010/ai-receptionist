@@ -533,3 +533,74 @@ async def test_sync_isolated_between_floor_plans(
 
     assert combination_a_after.id == combination_a_id
     assert combination_b_after.id == combination_b_id
+
+@pytest.mark.asyncio
+async def test_sync_uses_short_human_readable_name(
+    db_session,
+):
+    scenario = await build_derived_materialization_scenario(
+        db_session
+    )
+
+    restaurant = scenario["restaurant"]
+    area = scenario["area"]
+    floor_plan = scenario["floor_plan"]
+    repository = scenario["repository"]
+    service = scenario["service"]
+
+    tables = scenario["tables"]
+
+    fourth_table = Table(
+        restaurant_id=restaurant.id,
+        service_area_id=area.id,
+        table_code=f"DER-{uuid.uuid4()}",
+        table_number="4",
+        seats=4,
+        is_active=True,
+    )
+
+    db_session.add(fourth_table)
+    await db_session.flush()
+
+    all_tables = [
+        *tables,
+        fourth_table,
+    ]
+
+    four_table_set = frozenset(
+        table.id
+        for table in all_tables
+    )
+
+    await service.sync(
+        restaurant_id=restaurant.id,
+        service_area_id=area.id,
+        floor_plan_id=floor_plan.id,
+        derived_table_sets=[four_table_set],
+        tables_by_id={
+            table.id: table
+            for table in all_tables
+        },
+    )
+
+    smart_layout_key = combination_key(
+        floor_plan.id,
+        four_table_set,
+    )
+
+    combination = (
+        await repository.get_by_smart_layout_key(
+            smart_layout_key=smart_layout_key,
+            restaurant_id=restaurant.id,
+        )
+    )
+
+    assert combination is not None
+
+    # Technical identity remains complete and stable.
+    assert combination.smart_layout_key == smart_layout_key
+
+    # Human-readable name must never mirror the long UUID key.
+    assert combination.name == "Smart Layout 1 + 2 + 3 + 4"
+    assert len(combination.name) <= 100
+    assert str(floor_plan.id) not in combination.name

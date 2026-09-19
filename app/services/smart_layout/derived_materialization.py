@@ -88,19 +88,23 @@ class SmartLayoutDerivedMaterializationService:
             if any(table is None for table in tables):
                 continue
 
+            resolved_tables = [
+                table
+                for table in tables
+                if table is not None
+            ]
+
             combination = TableCombination(
                 restaurant_id=restaurant_id,
                 service_area_id=service_area_id,
                 smart_layout_key=smart_layout_key,
-                name=(
-                    "Smart Layout Derived "
-                    f"{smart_layout_key}"
+                name=self._build_name(
+                    resolved_tables
                 ),
                 min_capacity=1,
                 max_capacity=sum(
                     table.seats
-                    for table in tables
-                    if table is not None
+                    for table in resolved_tables
                 ),
                 setup_minutes=0,
                 is_active=True,
@@ -143,3 +147,20 @@ class SmartLayoutDerivedMaterializationService:
         )
 
         return f"{floor_plan_id}:{member_key}"
+
+    @staticmethod
+    def _build_name(
+        tables: Iterable[Table],
+    ) -> str:
+        labels = sorted(
+            (
+                str(table.table_number)
+                for table in tables
+            ),
+            key=str,
+        )
+
+        return (
+            "Smart Layout "
+            + " + ".join(labels)
+        )
