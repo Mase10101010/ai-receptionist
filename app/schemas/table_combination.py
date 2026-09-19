@@ -139,6 +139,9 @@ class TableCombinationResponse(BaseModel):
     setup_minutes: int
     is_active: bool
 
+    smart_layout_rule_id: uuid.UUID | None = None
+    smart_layout_key: str | None = None
+
     members: list[
         TableCombinationMemberResponse
     ]
