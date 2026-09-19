@@ -57,6 +57,8 @@ def serialize_combination(
         max_capacity=combination.max_capacity,
         setup_minutes=combination.setup_minutes,
         is_active=combination.is_active,
+        smart_layout_rule_id=combination.smart_layout_rule_id,
+        smart_layout_key=combination.smart_layout_key,
         members=[
             TableCombinationMemberResponse(
                 table_id=member.table_id,
