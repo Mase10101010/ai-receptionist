@@ -35,6 +35,15 @@ from app.services.smart_layout.materialization import (
 
 from app.models.table_combination import TableCombination
 
+from app.repositories.restaurant_repository import (
+    RestaurantRepository,
+)
+from app.repositories.table_repository import TableRepository
+from app.schemas.table_placement import TablePlacementUpdate
+from app.services.table_placement_service import (
+    TablePlacementService,
+)
+
 
 @pytest.mark.asyncio
 async def test_analysis_creates_auto_rule_for_adjacent_tables(
@@ -1513,3 +1522,150 @@ async def test_placement_repository_eager_loads_table_relationship(
     }
 
     assert loaded_table_ids == expected_table_ids
+
+@pytest.mark.asyncio
+async def test_placement_update_reconciles_stale_auto_topology(
+    db_session,
+):
+    scenario = await build_reconciliation_scenario(
+        db_session
+    )
+
+    restaurant = scenario["restaurant"]
+    area = scenario["area"]
+    floor_plan = scenario["floor_plan"]
+    tables = scenario["tables"]
+    smart_layout_service = scenario["service"]
+    rule_repository = scenario["rule_repository"]
+
+    placement_repository = TablePlacementRepository(
+        db_session
+    )
+
+    combination_repository = TableCombinationRepository(
+        db_session
+    )
+
+    # Establish the initial physical truth.
+    #
+    # The scenario starts with two geometrically adjacent
+    # tables, so Analyze must create one AUTO physical join
+    # and its derived executable combination.
+    await smart_layout_service.analyze_floor_plan(
+        restaurant_id=restaurant.id,
+        service_area_id=area.id,
+        floor_plan_id=floor_plan.id,
+    )
+
+    rules_before = await rule_repository.list_by_floor_plan(
+        floor_plan.id
+    )
+
+    auto_rules_before = [
+        rule
+        for rule in rules_before
+        if (
+            rule.status
+            == TableCombinationRuleStatus.AUTO
+            and {
+                member.table_id
+                for member in rule.members
+            }
+            == {
+                tables[0].id,
+                tables[1].id,
+            }
+        )
+    ]
+
+    assert len(auto_rules_before) == 1
+
+    derived_before = [
+        combination
+        for combination in (
+            await combination_repository.list_by_restaurant(
+                restaurant.id
+            )
+        )
+        if combination.smart_layout_key is not None
+    ]
+
+    assert derived_before
+
+    # Exercise the exact production mutation path.
+    #
+    # Move table B far enough away that the previous AUTO
+    # physical join is no longer geometrically possible.
+    placement_service = TablePlacementService(
+        placement_repository=placement_repository,
+        table_repository=TableRepository(db_session),
+        floor_plan_repository=FloorPlanRepository(
+            db_session
+        ),
+        restaurant_repository=RestaurantRepository(
+            db_session
+        ),
+        smart_layout_service=smart_layout_service,
+    )
+
+    await placement_service.update_placement(
+        restaurant_id=restaurant.id,
+        floor_plan_id=floor_plan.id,
+        table_id=tables[1].id,
+        owner_id=restaurant.owner_id,
+        payload=TablePlacementUpdate(
+            x=600,
+        ),
+    )
+
+    # No second explicit Analyze call is allowed here.
+    #
+    # update_placement() itself owns reconciliation after a
+    # geometry mutation. This is the regression contract for
+    # the production stale-topology bug.
+    rules_after = await rule_repository.list_by_floor_plan(
+        floor_plan.id
+    )
+
+    stale_auto_rules = [
+        rule
+        for rule in rules_after
+        if (
+            rule.status
+            == TableCombinationRuleStatus.AUTO
+            and {
+                member.table_id
+                for member in rule.members
+            }
+            == {
+                tables[0].id,
+                tables[1].id,
+            }
+        )
+    ]
+
+    assert stale_auto_rules == []
+
+    combinations_after = (
+        await combination_repository.list_by_restaurant(
+            restaurant.id
+        )
+    )
+
+    stale_derived = [
+        combination
+        for combination in combinations_after
+        if (
+            combination.smart_layout_key is not None
+            and {
+                member.table_id
+                for member in combination.members
+            }
+            == {
+                tables[0].id,
+                tables[1].id,
+            }
+        )
+    ]
+
+    assert stale_derived == []

@@ -12,6 +12,7 @@ from app.repositories.table_placement_repository import (
 )
 from app.repositories.table_repository import TableRepository
 from app.schemas.table_placement import TablePlacementUpdate
+from app.services.smart_layout.service import SmartLayoutService
 
 
 class TablePlacementService:
@@ -21,11 +22,13 @@ class TablePlacementService:
         table_repository: TableRepository,
         floor_plan_repository: FloorPlanRepository,
         restaurant_repository: RestaurantRepository,
+        smart_layout_service: SmartLayoutService | None = None,
     ) -> None:
         self.placement_repository = placement_repository
         self.table_repository = table_repository
         self.floor_plan_repository = floor_plan_repository
         self.restaurant_repository = restaurant_repository
+        self.smart_layout_service = smart_layout_service
 
     async def update_placement(
         self,
@@ -76,7 +79,33 @@ class TablePlacementService:
         if not updates:
             return placement
 
-        return await self.placement_repository.update(
+        placement = await self.placement_repository.update(
             placement,
             updates,
         )
+
+        geometry_fields = {
+            "x",
+            "y",
+            "width",
+            "height",
+            "rotation",
+            "is_visible",
+        }
+
+        geometry_changed = any(
+            field in updates
+            for field in geometry_fields
+        )
+
+        if (
+            geometry_changed
+            and self.smart_layout_service is not None
+        ):
+            await self.smart_layout_service.analyze_floor_plan(
+                restaurant_id=restaurant_id,
+                service_area_id=floor_plan.service_area_id,
+                floor_plan_id=floor_plan_id,
+            )
+
+        return placement
