@@ -59,7 +59,17 @@ Communication rules:
 
 Reservation rules:
   • Always collect first name, last name, phone number, email, party size, and date/time before booking.
+  • Date, exact reservation time, and party size are required customer-intent fields. Never invent, infer, default, or silently complete a missing required field.
+  • A calendar date without a time does not authorize choosing a time. Ask the guest what time they want.
+  • A time without a calendar date does not authorize choosing a date. Ask the guest which date they want.
+  • A date and time without a party size does not authorize assuming a party size. Ask how many guests.
+  • Never use the restaurant opening time, closing time, availability-window boundary, current time, or any other internal/default value as if the guest selected it.
+  • A broad daypart such as breakfast, lunch, afternoon, dinner, or evening is not an exact booking time. Use it only to help offer suitable times; do not create a reservation until the guest selects or explicitly accepts an exact time.
+  • Approximate times such as "around 7pm" are guest-provided time intent and may be used to search around that time. If an alternative exact time is offered, create the reservation only after the guest explicitly accepts that exact alternative.
   • The guest must provide both first name and last name. If they provide only one name, politely ask for the missing part before booking.
+  • For reservation tools, customer_provided_date, customer_provided_time, and customer_provided_party_size describe provenance, not whether the tool has a syntactically valid value.
+  • Set a customer_provided_* field to true only when that booking component was explicitly stated by the guest in the conversation or explicitly accepted by the guest after you proposed it.
+  • Never set a customer_provided_* field to true merely because you inferred, defaulted, calculated, or generated the corresponding value yourself.
   • Before creating the reservation, ask whether the guest has any special requests, allergies, seating preferences, or notes. If they have none, continue with an empty special_requests value.
   • Email is required because guests receive their reservation confirmation by email.
   • Interpret all guest-provided dates and times in the restaurant timezone.
@@ -98,8 +108,17 @@ TOOLS: list[dict[str, Any]] = [
                         "format": "date-time",
                     },
                     "party_size": {"type": "integer", "minimum": 1},
+                    "customer_provided_date": {"type": "boolean"},
+                    "customer_provided_time": {"type": "boolean"},
+                    "customer_provided_party_size": {"type": "boolean"},
                 },
-                "required": ["reservation_time", "party_size"],
+                "required": [
+                    "reservation_time",
+                    "party_size",
+                    "customer_provided_date",
+                    "customer_provided_time",
+                    "customer_provided_party_size",
+                ],
             },
         },
     },
@@ -137,16 +156,19 @@ TOOLS: list[dict[str, Any]] = [
                     "customer_email": {"type": "string"},
                     "party_size": {"type": "integer"},
                     "reservation_time": {"type": "string"},
+                    "customer_provided_date": {"type": "boolean"},
+                    "customer_provided_time": {"type": "boolean"},
+                    "customer_provided_party_size": {"type": "boolean"},
                     "special_requests": {
                         "type": "string",
                         "description": "Optional guest notes such as allergies, dietary restrictions, seating preferences, celebrations or other requests. Use an empty string if the guest has no special requests."},
                 },
                 "required": [
-                    "customer_name",
-                    "customer_phone",
-                    "customer_email",
-                    "party_size",
                     "reservation_time",
+                    "party_size",
+                    "customer_provided_date",
+                    "customer_provided_time",
+                    "customer_provided_party_size",
                 ],
             },
         },
@@ -200,6 +222,22 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
 ]
+
+def _missing_required_booking_intent(
+    arguments: dict[str, Any],
+) -> list[str]:
+    missing: list[str] = []
+
+    if arguments.get("customer_provided_date") is not True:
+        missing.append("date")
+
+    if arguments.get("customer_provided_time") is not True:
+        missing.append("time")
+
+    if arguments.get("customer_provided_party_size") is not True:
+        missing.append("party_size")
+
+    return missing
 
 
 class AIService:
@@ -368,6 +406,20 @@ class AIService:
     ) -> tuple[dict[str, Any], uuid.UUID | None]:
 
         args = json.loads(raw_arguments or "{}")
+
+        if name in {"check_availability", "create_reservation"}:
+            missing_intent = _missing_required_booking_intent(args)
+
+            if missing_intent:
+                return {
+                    "error": "missing_customer_booking_intent",
+                    "missing_fields": missing_intent,
+                    "instruction": (
+                        "Do not infer or default these booking fields. "
+                        "Ask the guest to provide the missing information."
+                    ),
+                }, None
+
 
         try:
             if name == "check_availability":
