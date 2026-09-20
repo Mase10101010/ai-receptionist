@@ -2,6 +2,7 @@ import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.table_placement import TablePlacement
 
@@ -39,6 +40,9 @@ class TablePlacementRepository:
     ) -> list[TablePlacement]:
         result = await self.db.execute(
             select(TablePlacement)
+            .options(
+                selectinload(TablePlacement.table),
+            )
             .where(
                 TablePlacement.floor_plan_id
                 == floor_plan_id,

@@ -1471,3 +1471,45 @@ async def test_analyze_migrates_legacy_rule_materialization_to_scoped_derived_co
     assert manual_after.id == manual_combination_id
     assert manual_after.smart_layout_rule_id is None
     assert manual_after.smart_layout_key is None
+
+@pytest.mark.asyncio
+async def test_placement_repository_eager_loads_table_relationship(
+    db_session,
+):
+    scenario = await build_reconciliation_scenario(
+        db_session
+    )
+
+    floor_plan_id = scenario["floor_plan"].id
+    expected_table_ids = {
+        table.id
+        for table in scenario["tables"]
+    }
+
+    # Simulate a fresh request/session state.
+    #
+    # Existing reconciliation tests create Table and
+    # TablePlacement objects in the same SQLAlchemy session,
+    # which can leave Table instances in the identity map and
+    # hide an accidental lazy load.
+    db_session.expire_all()
+
+    repository = TablePlacementRepository(
+        db_session
+    )
+
+    placements = await repository.list_by_floor_plan(
+        floor_plan_id
+    )
+
+    assert len(placements) == 2
+
+    # This access must not trigger async lazy loading.
+    # list_by_floor_plan() owns the contract of returning
+    # placements with TablePlacement.table already loaded.
+    loaded_table_ids = {
+        placement.table.id
+        for placement in placements
+    }
+
+    assert loaded_table_ids == expected_table_ids
