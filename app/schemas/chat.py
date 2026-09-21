@@ -23,9 +23,11 @@ class ChatResponse(BaseModel):
     """The AI's reply plus session metadata."""
     session_id: str
     reply: str
-    # If the AI created/cancelled a reservation during this turn,
-    # we surface its id so the client can show a confirmation.
+
+    # If a reservation was affected during this turn, surface its identity
+    # and authoritative lifecycle status to the client.
     reservation_id: uuid.UUID | None = None
+    reservation_status: str | None = None
 
 
 class MessageResponse(BaseModel):

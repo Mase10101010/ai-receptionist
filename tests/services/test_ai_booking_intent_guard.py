@@ -1,12 +1,10 @@
 import json
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 
-from app.services.ai_service import (
-    AIService,
-    _missing_required_booking_intent,
-)
+import uuid
+
+import pytest
 
 from app.services.ai_service import (
     AIService,
@@ -312,7 +310,7 @@ async def test_completion_loop_recovers_from_invented_time_and_asks_guest():
         },
     ]
 
-    reply, reservation_id = await service._run_completion_loop(
+    reply, reservation_id, reservation_status = await service._run_completion_loop(
         messages=messages,
         restaurant_id=None,
         session_id="lab-005-test",
@@ -320,6 +318,7 @@ async def test_completion_loop_recovers_from_invented_time_and_asks_guest():
 
     assert reply == "Che orario preferisci?"
     assert reservation_id is None
+    assert reservation_status is None
 
     reservation_service.assess_booking_availability.assert_not_awaited()
     reservation_service.create_reservation.assert_not_awaited()
@@ -338,3 +337,92 @@ async def test_completion_loop_recovers_from_invented_time_and_asks_guest():
 
     assert tool_result["error"] == "missing_customer_booking_intent"
     assert tool_result["missing_fields"] == ["time"]
+
+@pytest.mark.asyncio
+async def test_completion_loop_propagates_pending_reservation_status():
+    service, reservation_service = _build_ai_service()
+
+    reservation_id = uuid.uuid4()
+
+    fake_reservation = MagicMock()
+    fake_reservation.id = reservation_id
+    fake_reservation.status.value = "pending"
+    fake_reservation.customer_name = "Luigi Fossato"
+    fake_reservation.customer_email = "luigi@example.com"
+    fake_reservation.customer_phone = "3333333333"
+    fake_reservation.party_size = 10
+    fake_reservation.reservation_time = __import__(
+        "datetime"
+    ).datetime.fromisoformat("2026-09-25T11:00:00")
+    fake_reservation.special_requests = ""
+
+    reservation_service.create_reservation.return_value = fake_reservation
+
+    create_tool_call = MagicMock()
+    create_tool_call.id = "call_create_pending"
+    create_tool_call.function.name = "create_reservation"
+    create_tool_call.function.arguments = json.dumps(
+        {
+            "customer_name": "Luigi Fossato",
+            "customer_phone": "3333333333",
+            "customer_email": "luigi@example.com",
+            "party_size": 10,
+            "reservation_time": "2026-09-25T11:00:00",
+            "special_requests": "",
+            "customer_provided_date": True,
+            "customer_provided_time": True,
+            "customer_provided_party_size": True,
+        }
+    )
+
+    first_message = MagicMock()
+    first_message.content = None
+    first_message.tool_calls = [create_tool_call]
+
+    first_response = MagicMock()
+    first_response.choices = [MagicMock(message=first_message)]
+
+    second_message = MagicMock()
+    second_message.content = (
+        "La richiesta di prenotazione è stata registrata "
+        "ed è in attesa di conferma."
+    )
+    second_message.tool_calls = None
+
+    second_response = MagicMock()
+    second_response.choices = [MagicMock(message=second_message)]
+
+    service.client.chat.completions.create = AsyncMock(
+        side_effect=[
+            first_response,
+            second_response,
+        ]
+    )
+
+    messages = [
+        {
+            "role": "system",
+            "content": "Test system prompt",
+        },
+        {
+            "role": "user",
+            "content": (
+                "Vorrei prenotare per 10 persone "
+                "il 25 settembre alle 11:00."
+            ),
+        },
+    ]
+
+    reply, returned_reservation_id, reservation_status = (
+        await service._run_completion_loop(
+            messages=messages,
+            restaurant_id=None,
+            session_id="lab-006-pending-status",
+        )
+    )
+
+    assert returned_reservation_id == reservation_id
+    assert reservation_status == "pending"
+    assert "attesa di conferma" in reply
+
+    reservation_service.create_reservation.assert_awaited_once()

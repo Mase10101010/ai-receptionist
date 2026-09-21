@@ -262,7 +262,7 @@ class AIService:
         session_id: str | None, 
         user_message: str,
         restaurant_id: uuid.UUID | None = None,
-    ) -> tuple[str, str, uuid.UUID | None]:
+    ) -> tuple[str, str, uuid.UUID | None, str | None]:
 
         if session_id is None:
             session_id = uuid.uuid4().hex
@@ -313,7 +313,7 @@ class AIService:
                 {"role": msg.role, "content": msg.content}
             )
 
-        reply, reservation_id = await self._run_completion_loop(
+        reply, reservation_id, reservation_status = await self._run_completion_loop(
             messages,
             restaurant_id,
             session_id,
@@ -325,16 +325,17 @@ class AIService:
             reply
         )
 
-        return session_id, reply, reservation_id
+        return session_id, reply, reservation_id, reservation_status
 
     async def _run_completion_loop(
         self,
         messages: list[dict[str, Any]],
         restaurant_id: uuid.UUID | None = None,
         session_id: str | None = None,
-    ) -> tuple[str, uuid.UUID | None]:
+    ) -> tuple[str, uuid.UUID | None, str | None]:
 
         reservation_id: uuid.UUID | None = None
+        reservation_status: str | None = None
 
         for _ in range(5):
 
@@ -352,7 +353,7 @@ class AIService:
             msg = response.choices[0].message
 
             if not msg.tool_calls:
-                return msg.content or "", reservation_id
+                return msg.content or "", reservation_id, reservation_status
 
             messages.append(
                 {
@@ -382,6 +383,10 @@ class AIService:
 
                 if rid:
                     reservation_id = rid
+                    status_value = result.get("status")
+
+                    if isinstance(status_value, str):
+                        reservation_status = status_value
 
                 messages.append(
                     {
@@ -395,6 +400,7 @@ class AIService:
             "Mi dispiace, non riesco a completare la verifica in questo momento. "
             "Puoi provare un altro orario oppure contattare direttamente il ristorante.",
             reservation_id,
+            reservation_status,
         )
 
     async def _execute_tool(

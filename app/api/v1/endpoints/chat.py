@@ -26,7 +26,7 @@ async def send_message(
     payload: ChatRequest,
     ai_service: AIServiceDep,
 ) -> ChatResponse:
-    session_id, reply, reservation_id = await ai_service.handle_message(
+    session_id, reply, reservation_id, reservation_status = await ai_service.handle_message(
         payload.session_id,
         payload.message,
         payload.restaurant_id,
@@ -36,6 +36,7 @@ async def send_message(
         session_id=session_id,
         reply=reply,
         reservation_id=reservation_id,
+        reservation_status=reservation_status,
     )
 
 
@@ -66,7 +67,7 @@ async def send_public_message(
             f"Restaurant '{restaurant_slug}' not found"
         )
 
-    session_id, reply, reservation_id = await ai_service.handle_message(
+    session_id, reply, reservation_id, reservation_status = await ai_service.handle_message(
         payload.session_id,
         payload.message,
         restaurant.id,
@@ -76,6 +77,7 @@ async def send_public_message(
         session_id=session_id,
         reply=reply,
         reservation_id=reservation_id,
+        reservation_status=reservation_status,
     )
 
 

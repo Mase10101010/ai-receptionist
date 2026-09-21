@@ -370,12 +370,6 @@ class ReservationService:
             payload.restaurant_id,
         )
 
-        await self._enforce_capacity(
-            reservation_time=payload.reservation_time,
-            party_size=payload.party_size,
-            restaurant_id=payload.restaurant_id,
-        )
-
         assigned_table_ids: list[uuid.UUID] = []
         requires_reoptimization = False
 
@@ -1315,18 +1309,19 @@ class ReservationService:
         restaurant_id: uuid.UUID | None = None,
         duration_minutes: int = settings.RESERVATION_DURATION_MINUTES,
     ) -> BookingAvailabilityOutcome:
-        """Classify a request using the same intelligence used at booking."""
+        """
+        Classify a request using Alias Intelligence as the primary source of truth.
+
+        The legacy aggregate-capacity check is used only as part of the legacy
+        fallback path if AIE itself fails. It must not veto an executable AIE
+        assignment.
+        """
         try:
             await self._validate_reservation_time(
                 reservation_time,
                 restaurant_id,
             )
-            await self._enforce_capacity(
-                reservation_time=reservation_time,
-                party_size=party_size,
-                restaurant_id=restaurant_id,
-            )
-        except (ValidationError, ConflictError):
+        except ValidationError:
             return BookingAvailabilityOutcome.UNAVAILABLE
 
         if restaurant_id is None:
@@ -1354,6 +1349,7 @@ class ReservationService:
                 and result.recommended.table_ids
             ):
                 return BookingAvailabilityOutcome.DIRECT_AVAILABLE
+
         except Exception:
             logger.exception(
                 "AIE booking assessment optimize step failed; trying legacy "
@@ -1361,6 +1357,12 @@ class ReservationService:
             )
 
             try:
+                await self._enforce_capacity(
+                    reservation_time=reservation_time,
+                    party_size=party_size,
+                    restaurant_id=restaurant_id,
+                )
+
                 fallback_table_id = await self._assign_available_table(
                     reservation_time=reservation_time,
                     party_size=party_size,
@@ -1439,21 +1441,16 @@ class ReservationService:
 
         Alias Intelligence is the primary source of truth so availability
         uses the same single-table and multi-table optimization logic used
-        when a reservation is created. The legacy allocator is retained only
-        as a resilience fallback if the intelligence service itself fails.
+        when a reservation is created. The legacy allocator and aggregate
+        capacity check are retained only as resilience fallbacks if the
+        intelligence service itself fails.
         """
         try:
             await self._validate_reservation_time(
                 reservation_time,
                 restaurant_id,
             )
-
-            await self._enforce_capacity(
-                reservation_time=reservation_time,
-                party_size=party_size,
-                restaurant_id=restaurant_id,
-            )
-        except (ValidationError, ConflictError):
+        except ValidationError:
             return False
 
         if restaurant_id is not None:
@@ -1482,6 +1479,7 @@ class ReservationService:
                     and recommendation is not None
                     and recommendation.table_ids
                 )
+
             except Exception:
                 logger.exception(
                     (
@@ -1491,6 +1489,12 @@ class ReservationService:
                 )
 
         try:
+            await self._enforce_capacity(
+                reservation_time=reservation_time,
+                party_size=party_size,
+                restaurant_id=restaurant_id,
+            )
+
             fallback_table_id = await self._assign_available_table(
                 reservation_time=reservation_time,
                 party_size=party_size,

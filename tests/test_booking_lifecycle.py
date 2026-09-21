@@ -321,3 +321,140 @@ async def test_reoptimization_booking_passes_suggestion_to_autopilot(
 
     email_service.send_reservation_confirmation.assert_not_awaited()
     email_service.send_restaurant_reservation_notification.assert_not_awaited()
+
+@pytest.mark.asyncio
+async def test_direct_aie_capacity_is_not_blocked_by_legacy_aggregate_capacity():
+    """
+    LAB-006 regression.
+
+    When Alias Intelligence has a valid executable seating assignment,
+    customer-facing availability must not be rejected by the legacy
+    aggregate capacity heuristic before AIE is evaluated.
+
+    Capacity truth for direct booking must remain aligned with the
+    operational optimizer.
+    """
+    restaurant_id = uuid4()
+    table_2_id = uuid4()
+    table_3_id = uuid4()
+
+    repository = FakeReservationRepository()
+    repository.list_in_window = AsyncMock(
+        return_value=[
+            SimpleNamespace(
+                id=uuid4(),
+                party_size=75,
+            ),
+        ],
+    )
+
+    restaurant_repository = FakeRestaurantRepository()
+    restaurant_repository.get_by_id = AsyncMock(
+        return_value=SimpleNamespace(
+            number_of_tables=20,
+        ),
+    )
+
+    intelligence_service = SimpleNamespace(
+        optimize=AsyncMock(
+            return_value=SimpleNamespace(
+                available=True,
+                recommended=SimpleNamespace(
+                    table_ids=[
+                        table_3_id,
+                        table_2_id,
+                    ],
+                ),
+            ),
+        ),
+    )
+
+    service = ReservationService(
+        repository=repository,
+        restaurant_repository=restaurant_repository,
+        table_repository=FakeTableRepository(),
+        email_service=FakeEmailService(),
+        intelligence_service=intelligence_service,
+    )
+
+    service._validate_reservation_time = AsyncMock()
+
+    outcome = await service.assess_booking_availability(
+        reservation_time=_future_reservation_time(),
+        party_size=10,
+        restaurant_id=restaurant_id,
+        duration_minutes=90,
+    )
+
+    assert outcome.value == "direct_available"
+
+    intelligence_service.optimize.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_create_reservation_aie_assignment_is_not_blocked_by_legacy_capacity():
+    """
+    LAB-006 regression.
+
+    A valid executable AIE assignment must be allowed to create the
+    reservation even when the legacy aggregate-capacity heuristic would
+    reject the same request.
+    """
+    restaurant_id = uuid4()
+    table_2_id = uuid4()
+    table_3_id = uuid4()
+
+    repository = FakeReservationRepository()
+    repository.list_in_window = AsyncMock(
+        return_value=[
+            SimpleNamespace(
+                id=uuid4(),
+                party_size=75,
+            ),
+        ],
+    )
+
+    restaurant_repository = FakeRestaurantRepository()
+    restaurant_repository.get_by_id = AsyncMock(
+        return_value=SimpleNamespace(
+            number_of_tables=20,
+        ),
+    )
+
+    service = ReservationService(
+        repository=repository,
+        restaurant_repository=restaurant_repository,
+        table_repository=FakeTableRepository(),
+        email_service=FakeEmailService(),
+        intelligence_service=SimpleNamespace(),
+    )
+
+    service._validate_reservation_time = AsyncMock()
+
+    service._assign_tables_with_aie = AsyncMock(
+        return_value=(
+            table_3_id,
+            [table_3_id, table_2_id],
+        ),
+    )
+
+    service._record_reservation_event = AsyncMock()
+    service._try_record_temporal_prediction = AsyncMock()
+
+    reservation = await service.create_reservation(
+        ReservationCreate(
+            restaurant_id=restaurant_id,
+            customer_name="LAB-006 Guest",
+            customer_phone="+15551234567",
+            customer_email="guest@example.com",
+            party_size=10,
+            reservation_time=_future_reservation_time(),
+            duration_minutes=90,
+        ),
+    )
+
+    assert reservation.status == ReservationStatus.CONFIRMED
+    assert reservation.table_id == table_3_id
+
+    service._assign_tables_with_aie.assert_awaited_once()
+
+    assert repository.created
