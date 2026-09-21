@@ -40,7 +40,14 @@ class FakeReservationRepository:
 
 class FakeRestaurantRepository:
     async def get_by_id(self, restaurant_id):
-        return None
+        return SimpleNamespace(
+            id=restaurant_id,
+            name="Test Restaurant",
+            timezone="UTC",
+            preferred_language="en",
+            email="restaurant@example.com",
+            autopilot_enabled=False,
+        )
 
 
 class FakeTableRepository:
@@ -51,6 +58,9 @@ class FakeEmailService:
     def __init__(self):
         self.send_reservation_confirmation = AsyncMock()
         self.send_restaurant_reservation_notification = AsyncMock()
+
+        self.send_reservation_pending_confirmation = AsyncMock()
+        self.send_restaurant_pending_reservation_notification = AsyncMock()
 
 
 class FakeScalarCollection:
@@ -170,7 +180,12 @@ async def test_reoptimization_booking_is_pending_creates_suggestion_and_sends_no
     )
     service._reoptimization_available = AsyncMock(return_value=True)
 
-    analyze_reservation = AsyncMock(return_value=object())
+    analyze_reservation = AsyncMock(
+        return_value=SimpleNamespace(
+            id=uuid4(),
+            payload={},
+        )
+    )
     monkeypatch.setattr(
         AISuggestionService,
         "analyze_reservation",
@@ -186,8 +201,8 @@ async def test_reoptimization_booking_is_pending_creates_suggestion_and_sends_no
     assert len(repository.created) == 1
 
     analyze_reservation.assert_awaited_once_with(reservation)
-    email_service.send_reservation_confirmation.assert_not_awaited()
-    email_service.send_restaurant_reservation_notification.assert_not_awaited()
+    email_service.send_reservation_pending_confirmation.assert_awaited_once()
+    email_service.send_restaurant_pending_reservation_notification.assert_awaited_once()
 
 
 @pytest.mark.asyncio

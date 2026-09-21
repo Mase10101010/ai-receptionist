@@ -290,6 +290,143 @@ class EmailService:
         except Exception as e:
             logger.exception("Failed to send confirmation email: %s", e)
     
+    async def send_reservation_pending_confirmation(
+        self,
+        to_email: str,
+        restaurant_name: str,
+        customer_name: str,
+        reservation_id: str,
+        reservation_time: str,
+        party_size: int,
+        language: str = "en",
+    ) -> None:
+        if not settings.RESEND_API_KEY:
+            logger.warning("RESEND_API_KEY missing - skipping pending reservation email")
+            return
+
+        content = {
+            "en": {
+                "subject": f"Reservation request received - {restaurant_name}",
+                "title": "Reservation request received",
+                "greeting": f"Hello {customer_name},",
+                "body": f"We received your reservation request at {restaurant_name}. It is awaiting final confirmation from the restaurant.",
+                "party_label": "Party Size", "guest_word": "guests", "date_label": "Date & Time", "reservation_id_label": "Reservation ID",
+                "note": "Your reservation is not confirmed yet. You will receive another email once the restaurant confirms your request.",
+            },
+            "it": {
+                "subject": f"Richiesta di prenotazione ricevuta - {restaurant_name}",
+                "title": "Richiesta di prenotazione ricevuta",
+                "greeting": f"Ciao {customer_name},",
+                "body": f"Abbiamo ricevuto la tua richiesta di prenotazione presso {restaurant_name}. È in attesa della conferma finale del ristorante.",
+                "party_label": "Numero ospiti", "guest_word": "ospiti", "date_label": "Data e ora", "reservation_id_label": "ID prenotazione",
+                "note": "La prenotazione non è ancora confermata. Riceverai un'altra email quando il ristorante avrà confermato la richiesta.",
+            },
+            "es": {
+                "subject": f"Solicitud de reserva recibida - {restaurant_name}",
+                "title": "Solicitud de reserva recibida",
+                "greeting": f"Hola {customer_name},",
+                "body": f"Hemos recibido tu solicitud de reserva en {restaurant_name}. Está pendiente de la confirmación final del restaurante.",
+                "party_label": "Número de personas", "guest_word": "personas", "date_label": "Fecha y hora", "reservation_id_label": "ID de reserva",
+                "note": "Tu reserva aún no está confirmada. Recibirás otro correo cuando el restaurante confirme tu solicitud.",
+            },
+            "fr": {
+                "subject": f"Demande de réservation reçue - {restaurant_name}",
+                "title": "Demande de réservation reçue",
+                "greeting": f"Bonjour {customer_name},",
+                "body": f"Nous avons reçu votre demande de réservation chez {restaurant_name}. Elle attend la confirmation finale du restaurant.",
+                "party_label": "Nombre de personnes", "guest_word": "personnes", "date_label": "Date et heure", "reservation_id_label": "ID de réservation",
+                "note": "Votre réservation n'est pas encore confirmée. Vous recevrez un autre e-mail lorsque le restaurant aura confirmé votre demande.",
+            },
+            "de": {
+                "subject": f"Reservierungsanfrage erhalten - {restaurant_name}",
+                "title": "Reservierungsanfrage erhalten",
+                "greeting": f"Hallo {customer_name},",
+                "body": f"Wir haben Ihre Reservierungsanfrage für {restaurant_name} erhalten. Sie wartet auf die endgültige Bestätigung des Restaurants.",
+                "party_label": "Anzahl Gäste", "guest_word": "Gäste", "date_label": "Datum & Uhrzeit", "reservation_id_label": "Reservierungs-ID",
+                "note": "Ihre Reservierung ist noch nicht bestätigt. Sie erhalten eine weitere E-Mail, sobald das Restaurant Ihre Anfrage bestätigt hat.",
+            },
+        }
+        language = (language or "en").lower()
+        text = content.get(language, content["en"])
+        try:
+            resend.Emails.send({
+                "from": settings.EMAIL_FROM, "to": [to_email], "subject": text["subject"],
+                "html": f"""
+                <div style="background:#0b0b0b;padding:40px 20px;font-family:Arial,sans-serif;color:white;">
+                    <div style="max-width:600px;margin:0 auto;background:#111111;border:1px solid #222;border-radius:20px;overflow:hidden;">
+                        <div style="padding:40px 20px;text-align:center;background:black;"><img src="https://www.aliasconcierge.com/alias-word-dark.png" alt="Alias" style="max-width:260px;width:100%;" /></div>
+                        <div style="padding:40px;">
+                            <h1 style="margin-top:0;font-size:28px;color:white;">{text["title"]}</h1>
+                            <p style="color:#cccccc;font-size:16px;line-height:1.7;">{text["greeting"]}</p>
+                            <p style="color:#cccccc;font-size:16px;line-height:1.7;">{text["body"]}</p>
+                            <div style="margin:30px 0;padding:24px;background:#181818;border-radius:16px;border:1px solid #2a2a2a;">
+                                <p><strong>{text["reservation_id_label"]}:</strong><br>{reservation_id}</p>
+                                <p><strong>{text["date_label"]}:</strong><br>{reservation_time}</p>
+                                <p><strong>{text["party_label"]}:</strong><br>{party_size} {text["guest_word"]}</p>
+                            </div>
+                            <p style="color:#aaaaaa;font-size:14px;line-height:1.7;">{text["note"]}</p>
+                        </div>
+                    </div>
+                </div>
+                """,
+            })
+        except Exception as e:
+            logger.exception("Failed to send pending reservation email: %s", e)
+
+    async def send_restaurant_pending_reservation_notification(
+        self,
+        restaurant_email: str,
+        restaurant_name: str,
+        customer_name: str,
+        customer_email: str | None,
+        customer_phone: str,
+        reservation_time: str,
+        party_size: int,
+        special_requests: str | None = None,
+        language: str = "en",
+    ) -> None:
+        if not settings.RESEND_API_KEY:
+            logger.warning("RESEND_API_KEY missing - skipping restaurant pending notification")
+            return
+
+        content = {
+            "en": {"subject": f"Reservation request awaiting review - {restaurant_name}", "title": "Reservation request awaiting review", "body": "Alias received a reservation request that requires a seating decision before it can be confirmed.", "guest_label": "Guest", "email_label": "Email", "phone_label": "Phone", "party_label": "Party size", "date_label": "Date & Time", "notes_label": "Special requests", "no_notes": "No special requests", "not_provided": "Not provided", "footer": "Review the pending reservation and seating plan inside your Alias dashboard."},
+            "it": {"subject": f"Richiesta di prenotazione da verificare - {restaurant_name}", "title": "Richiesta di prenotazione in attesa", "body": "Alias ha ricevuto una richiesta di prenotazione che richiede una decisione sulla disposizione dei tavoli prima di poter essere confermata.", "guest_label": "Cliente", "email_label": "Email", "phone_label": "Telefono", "party_label": "Numero ospiti", "date_label": "Data e ora", "notes_label": "Richieste speciali", "no_notes": "Nessuna richiesta speciale", "not_provided": "Non fornita", "footer": "Controlla la prenotazione in attesa e il piano tavoli nella dashboard di Alias."},
+            "es": {"subject": f"Solicitud de reserva pendiente de revisión - {restaurant_name}", "title": "Solicitud de reserva pendiente", "body": "Alias ha recibido una solicitud de reserva que requiere una decisión sobre la distribución de mesas antes de poder confirmarse.", "guest_label": "Cliente", "email_label": "Correo electrónico", "phone_label": "Teléfono", "party_label": "Número de personas", "date_label": "Fecha y hora", "notes_label": "Solicitudes especiales", "no_notes": "Sin solicitudes especiales", "not_provided": "No proporcionado", "footer": "Revisa la reserva pendiente y el plan de mesas en tu panel de Alias."},
+            "fr": {"subject": f"Demande de réservation à vérifier - {restaurant_name}", "title": "Demande de réservation en attente", "body": "Alias a reçu une demande de réservation qui nécessite une décision sur le plan de salle avant de pouvoir être confirmée.", "guest_label": "Client", "email_label": "Email", "phone_label": "Téléphone", "party_label": "Nombre de personnes", "date_label": "Date et heure", "notes_label": "Demandes spéciales", "no_notes": "Aucune demande spéciale", "not_provided": "Non fourni", "footer": "Consultez la réservation en attente et le plan de salle dans votre tableau de bord Alias."},
+            "de": {"subject": f"Reservierungsanfrage zur Prüfung - {restaurant_name}", "title": "Reservierungsanfrage wartet auf Prüfung", "body": "Alias hat eine Reservierungsanfrage erhalten, die eine Entscheidung zur Tischplanung erfordert, bevor sie bestätigt werden kann.", "guest_label": "Gast", "email_label": "E-Mail", "phone_label": "Telefon", "party_label": "Anzahl Gäste", "date_label": "Datum & Uhrzeit", "notes_label": "Besondere Wünsche", "no_notes": "Keine besonderen Wünsche", "not_provided": "Nicht angegeben", "footer": "Prüfen Sie die ausstehende Reservierung und den Tischplan im Alias-Dashboard."},
+        }
+        language = (language or "en").lower()
+        text = content.get(language, content["en"])
+        customer_email_text = customer_email or text["not_provided"]
+        notes_text = special_requests or text["no_notes"]
+        try:
+            resend.Emails.send({
+                "from": settings.EMAIL_FROM, "to": [restaurant_email], "subject": text["subject"],
+                "html": f"""
+                <div style="background:#0b0b0b;padding:40px 20px;font-family:Arial,sans-serif;color:white;">
+                    <div style="max-width:600px;margin:0 auto;background:#111111;border:1px solid #222;border-radius:20px;overflow:hidden;">
+                        <div style="padding:40px 20px;text-align:center;background:black;"><img src="https://www.aliasconcierge.com/alias-word-dark.png" alt="Alias" style="max-width:260px;width:100%;" /></div>
+                        <div style="padding:40px;">
+                            <h1 style="margin-top:0;font-size:28px;color:white;">{text["title"]}</h1>
+                            <p style="color:#cccccc;font-size:16px;line-height:1.7;">{text["body"]}</p>
+                            <div style="margin:30px 0;padding:24px;background:#181818;border-radius:16px;border:1px solid #2a2a2a;">
+                                <p><strong>{text["guest_label"]}:</strong><br>{customer_name}</p>
+                                <p><strong>{text["email_label"]}:</strong><br>{customer_email_text}</p>
+                                <p><strong>{text["phone_label"]}:</strong><br>{customer_phone}</p>
+                                <p><strong>{text["party_label"]}:</strong><br>{party_size}</p>
+                                <p><strong>{text["date_label"]}:</strong><br>{reservation_time}</p>
+                                <p><strong>{text["notes_label"]}:</strong><br>{notes_text}</p>
+                            </div>
+                            <p style="color:#aaaaaa;font-size:14px;line-height:1.7;">{text["footer"]}</p>
+                        </div>
+                    </div>
+                </div>
+                """,
+            })
+        except Exception as e:
+            logger.exception("Failed to send restaurant pending reservation notification: %s", e)
+
     async def send_reservation_update_confirmation(
         self,
         to_email: str,

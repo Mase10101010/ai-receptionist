@@ -523,6 +523,72 @@ class ReservationService:
         # A pending reservation is a request awaiting a seating decision, not a
         # confirmed booking. Confirmation emails are sent only for reservations
         # that are already operationally confirmed.
+        if created.status == ReservationStatus.PENDING:
+            try:
+                restaurant_name = settings.RESTAURANT_NAME
+                restaurant_timezone = "UTC"
+                restaurant_language = "en"
+                restaurant = None
+
+                if created.restaurant_id:
+                    restaurant = await self.restaurant_repository.get_by_id(
+                        created.restaurant_id
+                    )
+
+                    if restaurant is not None:
+                        restaurant_name = restaurant.name
+                        restaurant_timezone = restaurant.timezone or "UTC"
+                        restaurant_language = (
+                            restaurant.preferred_language or "en"
+                        )
+
+                try:
+                    localized_time = created.reservation_time.astimezone(
+                        ZoneInfo(restaurant_timezone)
+                    )
+                except Exception:
+                    logger.exception(
+                        "Invalid restaurant timezone: %s. Falling back to UTC.",
+                        restaurant_timezone,
+                    )
+                    localized_time = created.reservation_time.astimezone(
+                        ZoneInfo("UTC")
+                    )
+
+                formatted_time = _format_reservation_time_for_language(
+                    localized_time,
+                    restaurant_language,
+                )
+
+                if created.customer_email:
+                    await self.email_service.send_reservation_pending_confirmation(
+                        to_email=created.customer_email,
+                        restaurant_name=restaurant_name,
+                        customer_name=created.customer_name,
+                        reservation_id=str(created.id),
+                        reservation_time=formatted_time,
+                        party_size=created.party_size,
+                        language=restaurant_language,
+                    )
+
+                if restaurant is not None and restaurant.email:
+                    await self.email_service.send_restaurant_pending_reservation_notification(
+                        restaurant_email=restaurant.email,
+                        restaurant_name=restaurant.name,
+                        customer_name=created.customer_name,
+                        customer_email=created.customer_email,
+                        customer_phone=created.customer_phone,
+                        reservation_time=formatted_time,
+                        party_size=created.party_size,
+                        special_requests=created.special_requests,
+                        language=restaurant_language,
+                    )
+
+            except Exception:
+                logger.exception(
+                    "Pending reservation notification failed, "
+                    "but reservation was created."
+                )
         if (
             created.status == ReservationStatus.CONFIRMED
             and created.customer_email

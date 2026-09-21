@@ -1,4 +1,5 @@
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from fastapi import (
     APIRouter,
@@ -10,10 +11,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import CurrentUserDep
 from app.core.exceptions import ValidationError
+from app.core.logging import get_logger
 from app.db.session import get_db
+
+from app.models.reservation import ReservationStatus
 
 from app.intelligence_execution.gate import (
     IntelligenceExecutionGate,
+)
+from app.services.reservation_service import (
+    _format_reservation_time_for_language,
 )
 
 from app.intelligence_events.models import (
@@ -40,6 +47,7 @@ from app.repositories.restaurant_repository import (
 from app.services.ai_suggestion_service import (
     AISuggestionService,
 )
+from app.services.email_service import EmailService
 
 from app.intelligence_events.schemas import (
     IntelligenceEventResponse,
@@ -70,6 +78,8 @@ router = APIRouter(
 )
 
 service = IntelligenceOptimizationService()
+
+logger = get_logger(__name__)
 
 
 @router.post(
@@ -147,17 +157,12 @@ async def apply_reoptimization(
     current_user: CurrentUserDep,
     session: AsyncSession = Depends(get_db),
 ) -> IntelligenceApplyReoptimizationResponse:
-    restaurant_repository = (
-        RestaurantRepository(
-            session,
-        )
+    restaurant_repository = RestaurantRepository(
+        session,
     )
 
-    restaurants = (
-        await restaurant_repository
-        .list_by_owner(
-            current_user.id,
-        )
+    restaurants = await restaurant_repository.list_by_owner(
+        current_user.id,
     )
 
     allowed_restaurant_ids = [
@@ -171,6 +176,26 @@ async def apply_reoptimization(
         }
     ]
 
+    reservation_repository = ReservationRepository(
+        session,
+    )
+
+    # Capture lifecycle truth before execution.
+    # A confirmation email is valid only for a real
+    # PENDING -> CONFIRMED transition.
+    previous_reservation = (
+        await reservation_repository.get_by_id_for_restaurants(
+            reservation_id=payload.new_reservation_id,
+            restaurant_ids=allowed_restaurant_ids,
+        )
+    )
+
+    previous_status = (
+        previous_reservation.status
+        if previous_reservation is not None
+        else None
+    )
+
     result = await IntelligenceExecutionOrchestrator(
         intelligence_service=service,
     ).apply_reoptimization(
@@ -181,7 +206,106 @@ async def apply_reoptimization(
         actor_user_id=current_user.id,
     )
 
+    confirmed_reservation = (
+        await reservation_repository.get_by_id_for_restaurants(
+            reservation_id=payload.new_reservation_id,
+            restaurant_ids=allowed_restaurant_ids,
+        )
+    )
+
+    should_send_confirmation = (
+        previous_status == ReservationStatus.PENDING
+        and confirmed_reservation is not None
+        and confirmed_reservation.status
+        == ReservationStatus.CONFIRMED
+        and bool(confirmed_reservation.customer_email)
+    )
+
+    notification_data = None
+
+    if should_send_confirmation:
+        try:
+            restaurant = await restaurant_repository.get_by_id(
+                confirmed_reservation.restaurant_id
+            )
+
+            if restaurant is not None:
+                restaurant_timezone = (
+                    restaurant.timezone or "UTC"
+                )
+                restaurant_language = (
+                    restaurant.preferred_language or "en"
+                )
+
+                try:
+                    localized_time = (
+                        confirmed_reservation
+                        .reservation_time
+                        .astimezone(
+                            ZoneInfo(restaurant_timezone)
+                        )
+                    )
+                except Exception:
+                    logger.exception(
+                        "Invalid restaurant timezone: %s. "
+                        "Falling back to UTC.",
+                        restaurant_timezone,
+                    )
+                    localized_time = (
+                        confirmed_reservation
+                        .reservation_time
+                        .astimezone(
+                            ZoneInfo("UTC")
+                        )
+                    )
+
+                notification_data = {
+                    "to_email": (
+                        confirmed_reservation.customer_email
+                    ),
+                    "restaurant_name": restaurant.name,
+                    "customer_name": (
+                        confirmed_reservation.customer_name
+                    ),
+                    "reservation_id": str(
+                        confirmed_reservation.id
+                    ),
+                    "reservation_time": (
+                        _format_reservation_time_for_language(
+                            localized_time,
+                            restaurant_language,
+                        )
+                    ),
+                    "party_size": (
+                        confirmed_reservation.party_size
+                    ),
+                    "language": restaurant_language,
+                }
+
+        except Exception:
+            logger.exception(
+                "Post-reoptimization confirmation "
+                "notification preparation failed: "
+                "reservation_id=%s",
+                payload.new_reservation_id,
+            )
+
+    # Database truth must become durable before any external
+    # confirmation is sent.
     await session.commit()
+
+    if notification_data is not None:
+        try:
+            await EmailService().send_reservation_confirmation(
+                **notification_data,
+            )
+        except Exception:
+            logger.exception(
+                "Post-reoptimization reservation "
+                "confirmation email failed: "
+                "reservation_id=%s",
+                payload.new_reservation_id,
+            )
 
     return result
 
@@ -232,6 +356,7 @@ async def apply_recommendation(
     await session.commit()
 
     return result
+
 
 @router.get(
     "/events",

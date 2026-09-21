@@ -10,10 +10,13 @@ without rebuilding the full database/optimizer stack.
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
+from datetime import datetime
 
 import pytest
 
 import app.intelligence.router as intelligence_router
+
+from app.models.reservation import ReservationStatus
 from app.intelligence.schemas import (
     IntelligenceApplyReoptimizationRequest,
     IntelligenceApplyReoptimizationResponse,
@@ -63,6 +66,8 @@ class FakeReservationRepository:
             return SimpleNamespace(
                 id=RESERVATION_ID,
                 restaurant_id=RESTAURANT_ID,
+                status=ReservationStatus.PENDING,
+                customer_email=None,
             )
 
         return None
@@ -157,6 +162,12 @@ class FakeSession:
     def __init__(self):
         self.commit = AsyncMock()
 
+class FakeEmailService:
+    confirmation_calls = []
+
+    async def send_reservation_confirmation(self, **kwargs):
+        self.__class__.confirmation_calls.append(kwargs)
+
 
 def build_payload():
     return IntelligenceApplyReoptimizationRequest(
@@ -183,6 +194,11 @@ def patch_router_dependencies(
         intelligence_router,
         "RestaurantRepository",
         FakeRestaurantRepository,
+    )
+    monkeypatch.setattr(
+        intelligence_router,
+        "ReservationRepository",
+        FakeReservationRepository,
     )
     monkeypatch.setattr(
         intelligence_router,
@@ -379,3 +395,165 @@ async def test_autonomous_apply_uses_ai_source_without_manager_actor(
     )
 
     session.commit.assert_not_awaited()
+
+@pytest.mark.asyncio
+async def test_manager_apply_reoptimization_sends_confirmation_email(
+    monkeypatch,
+):
+    optimization_service = FakeOptimizationService()
+
+    patch_router_dependencies(
+        monkeypatch,
+        optimization_service=optimization_service,
+    )
+
+    FakeEmailService.confirmation_calls = []
+
+    pending_reservation = SimpleNamespace(
+        id=RESERVATION_ID,
+        restaurant_id=RESTAURANT_ID,
+        customer_name="Claudio Bisio",
+        customer_email="claudio@example.com",
+        reservation_time=datetime.fromisoformat(
+            "2026-09-27T11:00:00+08:00"
+        ),
+        party_size=10,
+        language="it",
+        status=ReservationStatus.PENDING,
+    )
+
+    confirmed_reservation = SimpleNamespace(
+        id=RESERVATION_ID,
+        restaurant_id=RESTAURANT_ID,
+        customer_name="Claudio Bisio",
+        customer_email="claudio@example.com",
+        reservation_time=datetime.fromisoformat(
+            "2026-09-27T11:00:00+08:00"
+        ),
+        party_size=10,
+        language="it",
+        status=ReservationStatus.CONFIRMED,
+    )
+
+    restaurant = SimpleNamespace(
+        id=RESTAURANT_ID,
+        name="Perugino",
+        subscription_status="active",
+        timezone="Australia/Perth",
+        preferred_language="it",
+    )
+
+    reservation_reads = 0
+
+    async def get_reservation(*args, **kwargs):
+        nonlocal reservation_reads
+        reservation_reads += 1
+
+        if reservation_reads == 1:
+            return pending_reservation
+
+        return confirmed_reservation
+
+    async def get_restaurant(*args, **kwargs):
+        return restaurant
+
+    monkeypatch.setattr(
+        intelligence_router,
+        "EmailService",
+        FakeEmailService,
+        raising=False,
+    )
+
+    monkeypatch.setattr(
+        intelligence_router.ReservationRepository,
+        "get_by_id_for_restaurants",
+        get_reservation,
+        raising=False,
+    )
+
+    monkeypatch.setattr(
+        intelligence_router.RestaurantRepository,
+        "get_by_id",
+        get_restaurant,
+        raising=False,
+    )
+
+    session = FakeSession()
+    current_user = SimpleNamespace(id=USER_ID)
+    payload = build_payload()
+
+    result = await intelligence_router.apply_reoptimization(
+        payload=payload,
+        current_user=current_user,
+        session=session,
+    )
+
+    assert result.applied is True
+
+    assert FakeEmailService.confirmation_calls == [
+        {
+            "to_email": "claudio@example.com",
+            "restaurant_name": "Perugino",
+            "customer_name": "Claudio Bisio",
+            "reservation_id": str(RESERVATION_ID),
+            "reservation_time": "27/09/2026 alle 11:00",
+            "party_size": 10,
+            "language": "it",
+        }
+    ]
+
+@pytest.mark.asyncio
+async def test_manager_apply_reoptimization_does_not_resend_confirmation_for_already_confirmed_reservation(
+    monkeypatch,
+):
+    optimization_service = FakeOptimizationService()
+
+    patch_router_dependencies(
+        monkeypatch,
+        optimization_service=optimization_service,
+    )
+
+    FakeEmailService.confirmation_calls = []
+
+    confirmed_reservation = SimpleNamespace(
+        id=RESERVATION_ID,
+        restaurant_id=RESTAURANT_ID,
+        customer_name="Claudio Bisio",
+        customer_email="claudio@example.com",
+        reservation_time=datetime.fromisoformat(
+            "2026-09-27T11:00:00+08:00"
+        ),
+        party_size=10,
+        language="it",
+        status=ReservationStatus.CONFIRMED,
+    )
+
+    async def get_reservation(*args, **kwargs):
+        return confirmed_reservation
+
+    monkeypatch.setattr(
+        intelligence_router,
+        "EmailService",
+        FakeEmailService,
+        raising=False,
+    )
+
+    monkeypatch.setattr(
+        intelligence_router.ReservationRepository,
+        "get_by_id_for_restaurants",
+        get_reservation,
+        raising=False,
+    )
+
+    session = FakeSession()
+    current_user = SimpleNamespace(id=USER_ID)
+    payload = build_payload()
+
+    result = await intelligence_router.apply_reoptimization(
+        payload=payload,
+        current_user=current_user,
+        session=session,
+    )
+
+    assert result.applied is True
+    assert FakeEmailService.confirmation_calls == []
