@@ -16,7 +16,7 @@ from app.services.reservation_service import (
 from openai import AsyncOpenAI, OpenAIError
 
 from app.core.config import settings
-from app.core.exceptions import AIServiceError
+from app.core.exceptions import AIServiceError, ConflictError
 from app.core.logging import get_logger
 from app.models.conversation import MessageRole
 from app.repositories.conversation_repository import ConversationRepository
@@ -93,6 +93,9 @@ Reservation rules:
   • An alternative offered for a modification must be validated as a modification of the existing reservation, not as a new competing reservation.
   • If the guest explicitly accepts an offered alternative time, use that exact time in update_reservation. The backend will revalidate it before changing the existing reservation.
   • Never create a second reservation to implement a modification.
+  • If update_reservation returns error=modification_unavailable, the existing reservation is still unchanged and valid.
+  • After error=modification_unavailable, you MUST call suggest_alternative_slots using the reservation_id returned by update_reservation and the requested reservation_time and party_size. Do not stop at a generic unavailable message and do not tell the guest to contact the restaurant before checking alternatives.
+  • Offer only the alternative times returned by suggest_alternative_slots. Never invent, infer, or reuse an alternative that was not returned by that tool call.
   • If no year is provided, assume current or next occurrence.
 
 Today is {datetime.utcnow().strftime("%A, %B %d, %Y")} (UTC).
@@ -606,10 +609,34 @@ class AIService:
                 
                 
 
-                reservation = await self.reservation_service.update_reservation(
-                    reservation_id=uuid.UUID(args["reservation_id"]),
-                    payload=ReservationUpdate(**update_data),
-                )
+                try:
+                    reservation = await self.reservation_service.update_reservation(
+                        reservation_id=uuid.UUID(args["reservation_id"]),
+                        payload=ReservationUpdate(**update_data),
+                    )
+                except ConflictError:
+                    requested_reservation_id = str(args["reservation_id"])
+
+                    requested_time = update_data.get("reservation_time")
+                    requested_party_size = update_data.get("party_size")
+
+                    return {
+                        "success": False,
+                        "error": "modification_unavailable",
+                        "reservation_id": requested_reservation_id,
+                        "reservation_time": (
+                            requested_time.isoformat()
+                            if requested_time is not None
+                            else None
+                        ),
+                        "party_size": requested_party_size,
+                        "instruction": (
+                            "The requested modification is not directly available. "
+                            "Keep the existing reservation unchanged and call "
+                            "suggest_alternative_slots with this reservation_id, "
+                            "reservation_time, and party_size."
+                        ),
+                    }, None
 
                 return {
                     "success": True,
