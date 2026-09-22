@@ -429,6 +429,13 @@ class AIService:
 
         args = json.loads(raw_arguments or "{}")
 
+        logger.info(
+            "AI tool call: name=%s restaurant_id=%s reservation_id=%s",
+            name,
+            restaurant_id,
+            args.get("reservation_id"),
+        )
+
         if name in {"check_availability", "create_reservation"}:
             missing_intent = _missing_required_booking_intent(args)
 
@@ -500,6 +507,16 @@ class AIService:
                     party_size=int(args["party_size"]),
                     restaurant_id=restaurant_id,
                     reservation_id=existing_reservation_id,
+                )
+
+                logger.info(
+                    (
+                        "AI alternative slots result: "
+                        "reservation_id=%s count=%d slots=%s"
+                    ),
+                    existing_reservation_id,
+                    len(slots),
+                    [slot.isoformat() for slot in slots],
                 )
 
                 return {
@@ -619,6 +636,16 @@ class AIService:
 
                     requested_time = update_data.get("reservation_time")
                     requested_party_size = update_data.get("party_size")
+
+                    logger.info(
+                        (
+                            "AI reservation modification unavailable: "
+                            "reservation_id=%s reservation_time=%s party_size=%s"
+                        ),
+                        requested_reservation_id,
+                        requested_time.isoformat() if requested_time is not None else None,
+                        requested_party_size,
+                    )
 
                     return {
                         "success": False,
