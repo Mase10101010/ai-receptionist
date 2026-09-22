@@ -758,11 +758,19 @@ class ReservationService:
             updates=updates,
         )
 
-        if "customer_email" in updates and updates["customer_email"] is not None:
-            updates["customer_email"] = str(updates["customer_email"])
+        new_time = updates.get(
+            "reservation_time",
+            reservation.reservation_time,
+        )
+        new_party = updates.get(
+            "party_size",
+            reservation.party_size,
+        )
 
-        new_time = updates.get("reservation_time", reservation.reservation_time)
-        new_party = updates.get("party_size", reservation.party_size)
+        capacity_affecting_update = (
+            "reservation_time" in updates
+            or "party_size" in updates
+        )
 
         if "reservation_time" in updates:
             await self._validate_reservation_time(
@@ -770,18 +778,37 @@ class ReservationService:
                 reservation.restaurant_id,
             )
 
-        if "reservation_time" in updates or "party_size" in updates:
-            await self._enforce_capacity(
+        primary_table_id: uuid.UUID | None = None
+        assigned_table_ids: list[uuid.UUID] = []
+
+        if capacity_affecting_update:
+            (
+                primary_table_id,
+                assigned_table_ids,
+            ) = await self._assign_tables_with_aie(
                 reservation_time=new_time,
                 party_size=new_party,
                 restaurant_id=reservation.restaurant_id,
-                exclude_id=reservation.id,
+                reservation_id=reservation.id,
             )
 
+            if not assigned_table_ids:
+                raise ConflictError(
+                    "No direct table assignment is available "
+                    "for the requested reservation modification."
+                )
+
         updated = await self.repository.update(
-            reservation, 
+            reservation,
             updates,
         )
+
+        if capacity_affecting_update:
+            updated = await self.repository.replace_table_assignments(
+                updated,
+                assigned_table_ids,
+                primary_table_id=primary_table_id,
+            )
 
         if (
             previous_status != ReservationStatus.COMPLETED
@@ -1501,6 +1528,7 @@ class ReservationService:
         reservation_time: datetime,
         party_size: int,
         restaurant_id: uuid.UUID | None = None,
+        reservation_id: uuid.UUID | None = None,
     ) -> bool:
         """
         Return whether the requested slot has a direct valid assignment.
@@ -1525,7 +1553,7 @@ class ReservationService:
                     session=self.repository.db,
                     payload=IntelligenceOptimizeRequest(
                         restaurant_id=restaurant_id,
-                        reservation_id=None,
+                        reservation_id=reservation_id,
                         requested_start=reservation_time,
                         party_size=party_size,
                         duration_minutes=(
@@ -1559,6 +1587,7 @@ class ReservationService:
                 reservation_time=reservation_time,
                 party_size=party_size,
                 restaurant_id=restaurant_id,
+                exclude_id=reservation_id,
             )
 
             fallback_table_id = await self._assign_available_table(
@@ -1576,6 +1605,7 @@ class ReservationService:
         reservation_time: datetime,
         party_size: int,
         restaurant_id: uuid.UUID | None = None,
+        reservation_id: uuid.UUID | None = None,
     ) -> list[datetime]:
         """
         Suggest nearby directly bookable slots using the same AIE-aware
@@ -1591,6 +1621,7 @@ class ReservationService:
                 reservation_time=candidate,
                 party_size=party_size,
                 restaurant_id=restaurant_id,
+                reservation_id=reservation_id,
             ):
                 suggestions.append(candidate)
 
@@ -1606,6 +1637,7 @@ class ReservationService:
         party_size: int,
         restaurant_id: uuid.UUID | None = None,
         duration_minutes: int = settings.RESERVATION_DURATION_MINUTES,
+        reservation_id: uuid.UUID | None = None,
     ) -> tuple[uuid.UUID | None, list[uuid.UUID]]:
         """
         Use AIE to choose the best valid single-table or multi-table
@@ -1623,7 +1655,7 @@ class ReservationService:
                 session=self.repository.db,
                 payload=IntelligenceOptimizeRequest(
                     restaurant_id=restaurant_id,
-                    reservation_id=None,
+                    reservation_id=reservation_id,
                     requested_start=reservation_time,
                     party_size=party_size,
                     duration_minutes=duration_minutes,
@@ -1661,6 +1693,23 @@ class ReservationService:
                 )
 
                 return primary_table_id, table_ids
+
+            # AIE completed successfully but found no direct executable
+            # assignment. This result is authoritative and must not be
+            # contradicted by the legacy allocator.
+            logger.info(
+                (
+                    "AIE found no direct assignment: "
+                    "restaurant_id=%s reservation_id=%s "
+                    "party=%d time=%s"
+                ),
+                restaurant_id,
+                reservation_id,
+                party_size,
+                reservation_time.isoformat(),
+            )
+
+            return None, []
 
         except Exception:
             logger.exception(
@@ -1940,3 +1989,4 @@ class ReservationService:
                 "Sorry, we don't have availability for that time. "
                 "Please try a different time slot."
             )
+

@@ -88,6 +88,11 @@ Reservation rules:
   • When the guest provides a reservation id for modification or cancellation, first call get_reservation.
   • After retrieving the reservation, mention the guest name linked to that reservation and ask what they would like to modify or confirm cancellation.
   • Never call update_reservation immediately after receiving only a reservation id.
+  • When checking availability for a modification to an existing reservation, include that reservation's reservation_id in check_availability.
+  • When suggesting alternative times for a modification, include that same reservation_id in suggest_alternative_slots.
+  • An alternative offered for a modification must be validated as a modification of the existing reservation, not as a new competing reservation.
+  • If the guest explicitly accepts an offered alternative time, use that exact time in update_reservation. The backend will revalidate it before changing the existing reservation.
+  • Never create a second reservation to implement a modification.
   • If no year is provided, assume current or next occurrence.
 
 Today is {datetime.utcnow().strftime("%A, %B %d, %Y")} (UTC).
@@ -108,6 +113,10 @@ TOOLS: list[dict[str, Any]] = [
                         "format": "date-time",
                     },
                     "party_size": {"type": "integer", "minimum": 1},
+                    "reservation_id": {
+                        "type": "string",
+                        "description": "Existing reservation id when checking a modification. Omit for a new booking.",
+                    },
                     "customer_provided_date": {"type": "boolean"},
                     "customer_provided_time": {"type": "boolean"},
                     "customer_provided_party_size": {"type": "boolean"},
@@ -135,6 +144,10 @@ TOOLS: list[dict[str, Any]] = [
                         "format": "date-time",
                     },
                     "party_size": {"type": "integer", "minimum": 1},
+                    "reservation_id": {
+                        "type": "string",
+                        "description": "Existing reservation id when alternatives are for a modification. Omit for a new booking.",
+                    },
                 },
                 "required": ["reservation_time", "party_size"],
             },
@@ -429,13 +442,35 @@ class AIService:
 
         try:
             if name == "check_availability":
-                outcome = await self.reservation_service.assess_booking_availability(
-                    reservation_time=datetime.fromisoformat(
-                        args["reservation_time"].replace("Z", "+00:00")
-                    ),
-                    party_size=int(args["party_size"]),
-                    restaurant_id=restaurant_id,
+                requested_time = datetime.fromisoformat(
+                    args["reservation_time"].replace("Z", "+00:00")
                 )
+                requested_party_size = int(args["party_size"])
+                existing_reservation_id = (
+                    uuid.UUID(args["reservation_id"])
+                    if args.get("reservation_id")
+                    else None
+                )
+
+                if existing_reservation_id is not None:
+                    available = await self.reservation_service.check_availability(
+                        reservation_time=requested_time,
+                        party_size=requested_party_size,
+                        restaurant_id=restaurant_id,
+                        reservation_id=existing_reservation_id,
+                    )
+
+                    outcome = (
+                        BookingAvailabilityOutcome.DIRECT_AVAILABLE
+                        if available
+                        else BookingAvailabilityOutcome.UNAVAILABLE
+                    )
+                else:
+                    outcome = await self.reservation_service.assess_booking_availability(
+                        reservation_time=requested_time,
+                        party_size=requested_party_size,
+                        restaurant_id=restaurant_id,
+                    )
 
                 return {
                     "available": (
@@ -449,12 +484,19 @@ class AIService:
                 }, None
             
             if name == "suggest_alternative_slots":
+                existing_reservation_id = (
+                    uuid.UUID(args["reservation_id"])
+                    if args.get("reservation_id")
+                    else None
+                )
+
                 slots = await self.reservation_service.suggest_alternative_slots(
                     reservation_time=datetime.fromisoformat(
                         args["reservation_time"].replace("Z", "+00:00")
                     ),
                     party_size=int(args["party_size"]),
                     restaurant_id=restaurant_id,
+                    reservation_id=existing_reservation_id,
                 )
 
                 return {
