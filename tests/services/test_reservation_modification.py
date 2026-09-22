@@ -544,3 +544,79 @@ async def test_modification_uses_legacy_fallback_when_aie_raises():
         [fallback_table_id],
         primary_table_id=fallback_table_id,
     )
+
+@pytest.mark.asyncio
+async def test_accepted_alternative_is_revalidated_and_lost_slot_leaves_original_untouched():
+    reservation_id = uuid4()
+    old_table_id = uuid4()
+
+    original_time = datetime(
+        2026,
+        9,
+        26,
+        12,
+        0,
+        tzinfo=timezone.utc,
+    )
+
+    accepted_alternative = datetime(
+        2026,
+        9,
+        26,
+        13,
+        0,
+        tzinfo=timezone.utc,
+    )
+
+    reservation = SimpleNamespace(
+        id=reservation_id,
+        restaurant_id=uuid4(),
+        reservation_time=original_time,
+        party_size=6,
+        duration_minutes=90,
+        table_id=old_table_id,
+        status=SimpleNamespace(value="confirmed"),
+    )
+
+    service, repository = _build_service(
+        reservation=reservation,
+    )
+
+    service._validate_reservation_time = AsyncMock()
+
+    # The alternative may have been available when it was offered,
+    # but by the time the guest accepts it another reservation has
+    # consumed the capacity. update_reservation must revalidate.
+    service._assign_tables_with_aie = AsyncMock(
+        return_value=(None, []),
+    )
+
+    payload = ReservationUpdate(
+        reservation_time=accepted_alternative,
+    )
+
+    with pytest.raises(Exception):
+        await service.update_reservation(
+            reservation_id=reservation_id,
+            payload=payload,
+        )
+
+    service._validate_reservation_time.assert_awaited_once_with(
+        accepted_alternative,
+        reservation.restaurant_id,
+    )
+
+    service._assign_tables_with_aie.assert_awaited_once()
+
+    aie_call = service._assign_tables_with_aie.await_args
+
+    assert aie_call.kwargs["reservation_id"] == reservation_id
+    assert aie_call.kwargs["reservation_time"] == accepted_alternative
+    assert aie_call.kwargs["party_size"] == 6
+
+    repository.update.assert_not_awaited()
+    repository.replace_table_assignments.assert_not_awaited()
+
+    assert reservation.reservation_time == original_time
+    assert reservation.party_size == 6
+    assert reservation.table_id == old_table_id
