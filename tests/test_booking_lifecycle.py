@@ -14,6 +14,10 @@ from app.models.reservation import ReservationStatus
 from app.schemas.reservation import ReservationCreate
 from app.services.ai_suggestion_service import AISuggestionService
 from app.services.reservation_service import ReservationService
+from app.core.exceptions import (
+    ConflictError,
+    ValidationError,
+)
 
 
 class FakeReservationRepository:
@@ -87,32 +91,77 @@ class FakeResult:
 
 
 class FakeApplySession:
-    """Minimal async session for apply_reoptimization with no moved bookings."""
+    """Minimal async session for apply_reoptimization."""
 
-    def __init__(self, *, reservation, tables):
+    def __init__(
+        self,
+        *,
+        reservation,
+        tables,
+        suggestion=None,
+        conflicting_reservations=None,
+    ):
+        self.reservation = reservation
+        self.tables = tables
+        self.suggestion = suggestion
+        self.conflicting_reservations = (
+            []
+            if conflicting_reservations is None
+            else conflicting_reservations
+        )
+
         self._results = [
-            FakeResult(scalar=reservation),
-            FakeResult(items=tables),
-            FakeResult(items=[]),
+            FakeResult(
+                scalar=reservation,
+            ),
+            FakeResult(
+                items=tables,
+            ),
+            FakeResult(
+                items=self.conflicting_reservations,
+            ),
             FakeResult(),
         ]
+
         self.added = []
         self.flush = AsyncMock()
 
-    async def execute(self, statement):
+    async def execute(
+        self,
+        statement,
+    ):
+        statement_text = str(statement)
+
+        if (
+            self.suggestion is not None
+            and "ai_suggestions" in statement_text
+        ):
+            return FakeResult(
+                scalar=self.suggestion,
+            )
+
         if not self._results:
-            raise AssertionError("Unexpected extra database query")
+            raise AssertionError(
+                "Unexpected extra database query"
+            )
+
         return self._results.pop(0)
 
-    def add(self, item):
+    def add(
+        self,
+        item,
+    ):
         self.added.append(item)
-
 
 def _future_reservation_time() -> datetime:
     return datetime.now(timezone.utc) + timedelta(days=7)
 
 
-def _payload(*, restaurant_id, customer_email="guest@example.com") -> ReservationCreate:
+def _payload(
+    *,
+    restaurant_id,
+    customer_email="guest@example.com",
+) -> ReservationCreate:
     return ReservationCreate(
         restaurant_id=restaurant_id,
         customer_name="Lifecycle Guest",
@@ -281,6 +330,118 @@ async def test_apply_reoptimization_promotes_pending_reservation_to_confirmed():
     assert result.applied_moves == []
     assert len(session.added) == 1
     session.flush.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_apply_modification_reoptimization_updates_same_reservation_requested_state():
+    restaurant_id = uuid4()
+    reservation_id = uuid4()
+    suggestion_id = uuid4()
+    old_table_id = uuid4()
+    new_table_id = uuid4()
+    service_area_id = uuid4()
+
+    original_time = (
+        datetime.now(timezone.utc)
+        + timedelta(days=7)
+    )
+
+    requested_time = (
+        original_time
+        + timedelta(hours=1)
+    )
+
+    reservation = SimpleNamespace(
+        id=reservation_id,
+        restaurant_id=restaurant_id,
+        status=ReservationStatus.CONFIRMED,
+        party_size=6,
+        reservation_time=original_time,
+        duration_minutes=90,
+        table_id=old_table_id,
+    )
+
+    suggestion = SimpleNamespace(
+        id=suggestion_id,
+        restaurant_id=restaurant_id,
+        reservation_id=reservation_id,
+        payload={
+            "reservation": {
+                "id": str(reservation_id),
+                "party_size": 6,
+                "reservation_time": (
+                    original_time.isoformat()
+                ),
+                "duration_minutes": 90,
+                "status": "confirmed",
+                "primary_table_id": str(
+                    old_table_id
+                ),
+                "table_ids": [
+                    str(old_table_id),
+                ],
+            },
+            "requested_modification": {
+                "party_size": 10,
+                "reservation_time": (
+                    requested_time.isoformat()
+                ),
+            },
+            "plan": {},
+        },
+    )
+
+    table = SimpleNamespace(
+        id=new_table_id,
+        restaurant_id=restaurant_id,
+        service_area_id=service_area_id,
+        seats=10,
+        table_number="20",
+        is_active=True,
+    )
+
+    session = FakeApplySession(
+        reservation=reservation,
+        tables=[table],
+        suggestion=suggestion,
+    )
+
+    service = IntelligenceOptimizationService()
+
+    result = await service.apply_reoptimization(
+        session=session,
+        payload=IntelligenceApplyReoptimizationRequest(
+            suggestion_id=suggestion_id,
+            new_reservation_id=reservation_id,
+            new_reservation_table_ids=[
+                new_table_id,
+            ],
+            new_reservation_primary_table_id=(
+                new_table_id
+            ),
+            moves=[],
+        ),
+        allowed_restaurant_ids=[
+            restaurant_id,
+        ],
+    )
+
+    assert reservation.id == reservation_id
+    assert reservation.party_size == 10
+    assert (
+        reservation.reservation_time
+        == requested_time
+    )
+    assert (
+        reservation.status
+        == ReservationStatus.CONFIRMED
+    )
+    assert reservation.table_id == new_table_id
+
+    assert result.new_reservation_id == reservation_id
+    assert (
+        result.new_reservation_primary_table_id
+        == new_table_id
+    )
 
 @pytest.mark.asyncio
 async def test_reoptimization_booking_passes_suggestion_to_autopilot(
@@ -473,3 +634,254 @@ async def test_create_reservation_aie_assignment_is_not_blocked_by_legacy_capaci
     service._assign_tables_with_aie.assert_awaited_once()
 
     assert repository.created
+
+@pytest.mark.asyncio
+async def test_apply_modification_reoptimization_validates_capacity_against_requested_party_size():
+    restaurant_id = uuid4()
+    reservation_id = uuid4()
+    suggestion_id = uuid4()
+    old_table_id = uuid4()
+    target_table_id = uuid4()
+    service_area_id = uuid4()
+
+    reservation_time = (
+        datetime.now(timezone.utc)
+        + timedelta(days=7)
+    )
+
+    reservation = SimpleNamespace(
+        id=reservation_id,
+        restaurant_id=restaurant_id,
+        status=ReservationStatus.CONFIRMED,
+        party_size=6,
+        reservation_time=reservation_time,
+        duration_minutes=90,
+        table_id=old_table_id,
+    )
+
+    suggestion = SimpleNamespace(
+        id=suggestion_id,
+        restaurant_id=restaurant_id,
+        reservation_id=reservation_id,
+        payload={
+            "reservation": {
+                "id": str(reservation_id),
+                "party_size": 6,
+                "reservation_time": (
+                    reservation_time.isoformat()
+                ),
+                "duration_minutes": 90,
+                "status": "confirmed",
+                "primary_table_id": str(
+                    old_table_id
+                ),
+                "table_ids": [
+                    str(old_table_id),
+                ],
+            },
+            "requested_modification": {
+                "party_size": 10,
+                "reservation_time": (
+                    reservation_time.isoformat()
+                ),
+            },
+            "plan": {},
+        },
+    )
+
+    # Valid for the old party size (6), but NOT for
+    # the requested modification party size (10).
+    target_table = SimpleNamespace(
+        id=target_table_id,
+        restaurant_id=restaurant_id,
+        service_area_id=service_area_id,
+        seats=6,
+        table_number="20",
+        is_active=True,
+    )
+
+    session = FakeApplySession(
+        reservation=reservation,
+        tables=[
+            target_table,
+        ],
+        suggestion=suggestion,
+    )
+
+    service = IntelligenceOptimizationService()
+
+    with pytest.raises(
+        ValidationError,
+        match="do not have enough capacity",
+    ):
+        await service.apply_reoptimization(
+            session=session,
+            payload=IntelligenceApplyReoptimizationRequest(
+                suggestion_id=suggestion_id,
+                new_reservation_id=reservation_id,
+                new_reservation_table_ids=[
+                    target_table_id,
+                ],
+                new_reservation_primary_table_id=(
+                    target_table_id
+                ),
+                moves=[],
+            ),
+            allowed_restaurant_ids=[
+                restaurant_id,
+            ],
+        )
+
+    assert reservation.id == reservation_id
+    assert reservation.party_size == 6
+    assert (
+        reservation.reservation_time
+        == reservation_time
+    )
+    assert reservation.table_id == old_table_id
+    assert (
+        reservation.status
+        == ReservationStatus.CONFIRMED
+    )
+
+@pytest.mark.asyncio
+async def test_apply_modification_reoptimization_validates_collision_at_requested_time():
+    restaurant_id = uuid4()
+    reservation_id = uuid4()
+    suggestion_id = uuid4()
+
+    old_table_id = uuid4()
+    target_table_id = uuid4()
+    conflicting_reservation_id = uuid4()
+
+    service_area_id = uuid4()
+
+    original_time = (
+        datetime.now(timezone.utc)
+        + timedelta(days=7)
+    )
+
+    requested_time = (
+        original_time
+        + timedelta(hours=3)
+    )
+
+    reservation = SimpleNamespace(
+        id=reservation_id,
+        restaurant_id=restaurant_id,
+        status=ReservationStatus.CONFIRMED,
+        party_size=6,
+        reservation_time=original_time,
+        duration_minutes=90,
+        table_id=old_table_id,
+    )
+
+    suggestion = SimpleNamespace(
+        id=suggestion_id,
+        restaurant_id=restaurant_id,
+        reservation_id=reservation_id,
+        payload={
+            "reservation": {
+                "id": str(reservation_id),
+                "party_size": 6,
+                "reservation_time": (
+                    original_time.isoformat()
+                ),
+                "duration_minutes": 90,
+                "status": "confirmed",
+                "primary_table_id": str(
+                    old_table_id
+                ),
+                "table_ids": [
+                    str(old_table_id),
+                ],
+            },
+            "requested_modification": {
+                "party_size": 10,
+                "reservation_time": (
+                    requested_time.isoformat()
+                ),
+            },
+            "plan": {},
+        },
+    )
+
+    target_table = SimpleNamespace(
+        id=target_table_id,
+        restaurant_id=restaurant_id,
+        service_area_id=service_area_id,
+        seats=10,
+        table_number="20",
+        is_active=True,
+    )
+
+    # This booking conflicts with the TARGET table at the
+    # requested modification time, but not at the original
+    # reservation time.
+    conflicting_reservation = SimpleNamespace(
+        id=conflicting_reservation_id,
+        restaurant_id=restaurant_id,
+        status=ReservationStatus.CONFIRMED,
+        party_size=2,
+        reservation_time=(
+            requested_time
+            + timedelta(minutes=15)
+        ),
+        duration_minutes=90,
+        table_id=target_table_id,
+        assigned_table_ids=[
+            target_table_id,
+        ],
+    )
+
+    session = FakeApplySession(
+        reservation=reservation,
+        tables=[
+            target_table,
+        ],
+        suggestion=suggestion,
+        conflicting_reservations=[
+            conflicting_reservation,
+        ],
+    )
+
+    service = IntelligenceOptimizationService()
+
+    with pytest.raises(
+        ValidationError,
+    ):
+        await service.apply_reoptimization(
+            session=session,
+            payload=IntelligenceApplyReoptimizationRequest(
+                suggestion_id=suggestion_id,
+                new_reservation_id=reservation_id,
+                new_reservation_table_ids=[
+                    target_table_id,
+                ],
+                new_reservation_primary_table_id=(
+                    target_table_id
+                ),
+                moves=[],
+            ),
+            allowed_restaurant_ids=[
+                restaurant_id,
+            ],
+        )
+
+    # Fail closed: the customer's valid confirmed booking
+    # must remain completely untouched.
+    assert reservation.id == reservation_id
+    assert reservation.party_size == 6
+    assert (
+        reservation.reservation_time
+        == original_time
+    )
+    assert reservation.table_id == old_table_id
+    assert (
+        reservation.status
+        == ReservationStatus.CONFIRMED
+    )
+
+    # Physical mutation must not have started.
+    assert session.added == []
+    session.flush.assert_not_awaited()

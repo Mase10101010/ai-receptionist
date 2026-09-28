@@ -12,6 +12,8 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 from datetime import datetime
 
+from app.core.exceptions import ValidationError
+
 import pytest
 
 import app.intelligence.router as intelligence_router
@@ -50,6 +52,8 @@ class FakeRestaurantRepository:
 
 
 class FakeReservationRepository:
+    current_reservation = None
+
     def __init__(self, session):
         self.session = session
 
@@ -60,32 +64,63 @@ class FakeReservationRepository:
         restaurant_ids,
     ):
         if (
-            reservation_id == RESERVATION_ID
-            and RESTAURANT_ID in restaurant_ids
+            reservation_id != RESERVATION_ID
+            or RESTAURANT_ID not in restaurant_ids
         ):
-            return SimpleNamespace(
-                id=RESERVATION_ID,
-                restaurant_id=RESTAURANT_ID,
-                status=ReservationStatus.PENDING,
-                customer_email=None,
-            )
+            return None
 
-        return None
+        if self.__class__.current_reservation is not None:
+            return self.__class__.current_reservation
+
+        return SimpleNamespace(
+            id=RESERVATION_ID,
+            restaurant_id=RESTAURANT_ID,
+            status=ReservationStatus.PENDING,
+            customer_email=None,
+            party_size=10,
+            reservation_time=datetime.fromisoformat(
+                "2026-09-27T11:00:00+08:00"
+            ),
+            duration_minutes=90,
+            table_id=TABLE_ID,
+            assigned_table_ids=[TABLE_ID],
+        )
 
 
 class FakeSuggestionRepository:
+    current_suggestion = None
+
     def __init__(self, session):
         self.session = session
+
+    async def get_by_id(
+        self,
+        suggestion_id,
+        restaurant_ids=None,
+    ):
+        if self.__class__.current_suggestion is not None:
+            return self.__class__.current_suggestion
+
+        return SimpleNamespace(
+            id=SUGGESTION_ID,
+            restaurant_id=RESTAURANT_ID,
+            reservation_id=RESERVATION_ID,
+            payload={},
+        )
 
 
 class FakeExecutionGate:
     calls = []
+    error = None
 
     def __init__(self, *, repository):
         self.repository = repository
 
     async def validate_reoptimization(self, **kwargs):
         self.__class__.calls.append(kwargs)
+
+        if self.__class__.error is not None:
+            raise self.__class__.error
 
 
 class FakeAISuggestionService:
@@ -185,6 +220,9 @@ def patch_router_dependencies(
     optimization_service,
 ):
     FakeExecutionGate.calls = []
+    FakeExecutionGate.error = None
+    FakeReservationRepository.current_reservation = None
+    FakeSuggestionRepository.current_suggestion = None
     FakeAISuggestionService.accept_calls = []
     FakeIntelligenceEventService.record_calls = []
 
@@ -199,6 +237,11 @@ def patch_router_dependencies(
         intelligence_router,
         "ReservationRepository",
         FakeReservationRepository,
+    )
+    monkeypatch.setattr(
+        intelligence_router,
+        "AISuggestionRepository",
+        FakeSuggestionRepository,
     )
     monkeypatch.setattr(
         intelligence_router,
@@ -273,6 +316,24 @@ async def test_apply_reoptimization_executes_accepts_audits_and_commits(
     assert gate_call["new_reservation_table_ids"] == [TABLE_ID]
     assert gate_call["new_reservation_primary_table_id"] == TABLE_ID
     assert gate_call["moves"] == []
+
+    current_state = gate_call[
+        "current_reservation_state"
+    ]
+
+    assert current_state == {
+        "id": str(RESERVATION_ID),
+        "party_size": 10,
+        "reservation_time": (
+            "2026-09-27T11:00:00+08:00"
+        ),
+        "duration_minutes": 90,
+        "status": "pending",
+        "primary_table_id": str(TABLE_ID),
+        "table_ids": [
+            str(TABLE_ID),
+        ],
+    }
 
     optimization_service.apply_reoptimization.assert_awaited_once_with(
         session=session,
@@ -418,6 +479,7 @@ async def test_manager_apply_reoptimization_sends_confirmation_email(
             "2026-09-27T11:00:00+08:00"
         ),
         party_size=10,
+        duration_minutes=90,
         language="it",
         status=ReservationStatus.PENDING,
     )
@@ -431,6 +493,7 @@ async def test_manager_apply_reoptimization_sends_confirmation_email(
             "2026-09-27T11:00:00+08:00"
         ),
         party_size=10,
+        duration_minutes=90,
         language="it",
         status=ReservationStatus.CONFIRMED,
     )
@@ -524,6 +587,7 @@ async def test_manager_apply_reoptimization_does_not_resend_confirmation_for_alr
             "2026-09-27T11:00:00+08:00"
         ),
         party_size=10,
+        duration_minutes=90,
         language="it",
         status=ReservationStatus.CONFIRMED,
     )
@@ -557,3 +621,53 @@ async def test_manager_apply_reoptimization_does_not_resend_confirmation_for_alr
 
     assert result.applied is True
     assert FakeEmailService.confirmation_calls == []
+
+@pytest.mark.asyncio
+async def test_stale_modification_gate_failure_stops_before_physical_apply(
+    monkeypatch,
+):
+    optimization_service = FakeOptimizationService()
+
+    patch_router_dependencies(
+        monkeypatch,
+        optimization_service=optimization_service,
+    )
+
+    FakeExecutionGate.error = ValidationError(
+        "Modification reoptimization original reservation "
+        "state is stale: party size changed."
+    )
+
+    session = FakeSession()
+    current_user = SimpleNamespace(
+        id=USER_ID,
+    )
+    payload = build_payload()
+
+    with pytest.raises(
+        ValidationError,
+        match="original reservation state is stale",
+    ):
+        await intelligence_router.apply_reoptimization(
+            payload=payload,
+            current_user=current_user,
+            session=session,
+        )
+
+    assert len(
+        FakeExecutionGate.calls
+    ) == 1
+
+    optimization_service.apply_reoptimization.assert_not_awaited()
+
+    assert (
+        FakeAISuggestionService.accept_calls
+        == []
+    )
+
+    assert (
+        FakeIntelligenceEventService.record_calls
+        == []
+    )
+
+    session.commit.assert_not_awaited()

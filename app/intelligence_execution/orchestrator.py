@@ -46,6 +46,69 @@ class IntelligenceExecutionOrchestrator:
             or IntelligenceOptimizationService()
         )
 
+    @staticmethod
+    def _build_current_reservation_state(
+        reservation,
+    ) -> dict:
+        status = reservation.status
+
+        if hasattr(status, "value"):
+            status = status.value
+
+        reservation_time = (
+            reservation.reservation_time
+        )
+
+        if hasattr(
+            reservation_time,
+            "isoformat",
+        ):
+            reservation_time = (
+                reservation_time.isoformat()
+            )
+
+        primary_table_id = getattr(
+            reservation,
+            "table_id",
+            None,
+        )
+
+        assigned_table_ids = getattr(
+            reservation,
+            "assigned_table_ids",
+            None,
+        )
+
+        if assigned_table_ids is None:
+            table_ids = (
+                [primary_table_id]
+                if primary_table_id is not None
+                else []
+            )
+        else:
+            table_ids = list(
+                assigned_table_ids
+            )
+
+        return {
+            "id": str(reservation.id),
+            "party_size": reservation.party_size,
+            "reservation_time": reservation_time,
+            "duration_minutes": (
+                reservation.duration_minutes
+            ),
+            "status": status,
+            "primary_table_id": (
+                str(primary_table_id)
+                if primary_table_id is not None
+                else None
+            ),
+            "table_ids": [
+                str(table_id)
+                for table_id in table_ids
+            ],
+        }
+
     async def apply_reoptimization(
         self,
         *,
@@ -55,10 +118,33 @@ class IntelligenceExecutionOrchestrator:
         source: IntelligenceEventSource,
         actor_user_id: UUID | None = None,
     ) -> IntelligenceApplyReoptimizationResponse:
-        reservation_repository = ReservationRepository(session)
-        suggestion_repository = AISuggestionRepository(session)
+        reservation_repository = ReservationRepository(
+            session
+        )
+        suggestion_repository = AISuggestionRepository(
+            session
+        )
 
         if payload.suggestion_id is not None:
+            current_reservation = (
+                await reservation_repository.get_by_id_for_restaurants(
+                    reservation_id=payload.new_reservation_id,
+                    restaurant_ids=allowed_restaurant_ids,
+                )
+            )
+
+            if current_reservation is None:
+                raise ValidationError(
+                    "Reservation could not be resolved "
+                    "for reoptimization validation."
+                )
+
+            current_reservation_state = (
+                self._build_current_reservation_state(
+                    current_reservation
+                )
+            )
+
             await IntelligenceExecutionGate(
                 repository=suggestion_repository,
             ).validate_reoptimization(
@@ -75,12 +161,17 @@ class IntelligenceExecutionOrchestrator:
                     move.model_dump()
                     for move in payload.moves
                 ],
+                current_reservation_state=(
+                    current_reservation_state
+                ),
             )
 
-        result = await self.intelligence_service.apply_reoptimization(
-            session=session,
-            payload=payload,
-            allowed_restaurant_ids=allowed_restaurant_ids,
+        result = (
+            await self.intelligence_service.apply_reoptimization(
+                session=session,
+                payload=payload,
+                allowed_restaurant_ids=allowed_restaurant_ids,
+            )
         )
 
         if payload.suggestion_id is not None:
@@ -115,10 +206,14 @@ class IntelligenceExecutionOrchestrator:
             )
 
         await IntelligenceEventService(
-            repository=IntelligenceEventRepository(session),
+            repository=IntelligenceEventRepository(
+                session
+            ),
         ).record(
             restaurant_id=audit_reservation.restaurant_id,
-            event_type=IntelligenceEventType.SEATING_PLAN_APPLIED,
+            event_type=(
+                IntelligenceEventType.SEATING_PLAN_APPLIED
+            ),
             source=source,
             entity_type="reservation",
             entity_id=payload.new_reservation_id,
@@ -134,7 +229,8 @@ class IntelligenceExecutionOrchestrator:
                 ),
                 "new_reservation_table_ids": [
                     str(table_id)
-                    for table_id in result.new_reservation_table_ids
+                    for table_id
+                    in result.new_reservation_table_ids
                 ],
                 "new_reservation_table_numbers": (
                     result.new_reservation_table_numbers
@@ -151,7 +247,9 @@ class IntelligenceExecutionOrchestrator:
                             str(table_id)
                             for table_id in move.table_ids
                         ],
-                        "table_numbers": move.table_numbers,
+                        "table_numbers": (
+                            move.table_numbers
+                        ),
                     }
                     for move in result.applied_moves
                 ],

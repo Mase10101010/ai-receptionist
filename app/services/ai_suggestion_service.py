@@ -544,6 +544,193 @@ class AISuggestionService:
 
         return created
 
+    async def analyze_reservation_modification(
+        self,
+        reservation: Reservation,
+        *,
+        requested_party_size: int | None = None,
+        requested_reservation_time: datetime | None = None,
+    ) -> AISuggestion | None:
+        """
+        Analyze a requested modification without mutating the existing
+        reservation.
+
+        This is the proposal phase of the modification reoptimization
+        lifecycle. The existing confirmed reservation remains authoritative
+        until a stored proposal is successfully executed.
+        """
+        if reservation.restaurant_id is None:
+            return None
+
+        if reservation.status in {
+            ReservationStatus.CANCELLED,
+            ReservationStatus.COMPLETED,
+            ReservationStatus.NO_SHOW,
+        }:
+            return None
+
+        effective_party_size = (
+            requested_party_size
+            if requested_party_size is not None
+            else reservation.party_size
+        )
+
+        effective_reservation_time = (
+            requested_reservation_time
+            if requested_reservation_time is not None
+            else reservation.reservation_time
+        )
+
+        result = await self.intelligence_service.reoptimize(
+            session=self.repository.db,
+            payload=IntelligenceReoptimizeRequest(
+                restaurant_id=reservation.restaurant_id,
+                reservation_id=reservation.id,
+                requested_start=effective_reservation_time,
+                party_size=effective_party_size,
+                duration_minutes=reservation.duration_minutes,
+                buffer_before_minutes=0,
+                buffer_after_minutes=0,
+                preferred_service_area_id=None,
+                max_reservations_to_move=1,
+                max_plans=5,
+            ),
+        )
+
+        plan = result.recommended
+
+        if (
+            not result.available
+            or plan is None
+            or plan.moved_reservations_count < 1
+        ):
+            return None
+
+        assignment = plan.new_reservation_assignment
+
+        if not assignment.table_ids:
+            return None
+
+        table_label = self._format_tables(
+            assignment.table_numbers,
+        )
+
+        move_count = plan.moved_reservations_count
+
+        title = "Reservation modification available"
+
+        description = (
+            f"Alias can accommodate the requested modification for "
+            f"{reservation.customer_name} at {table_label} by moving "
+            f"{move_count} existing "
+            f"{'reservation' if move_count == 1 else 'reservations'}."
+        )
+
+        original_table_ids = list(
+            dict.fromkeys(
+                reservation.assigned_table_ids
+                or (
+                    [reservation.table_id]
+                    if reservation.table_id is not None
+                    else []
+                )
+            )
+        )
+
+        payload = {
+            "reservation": {
+                "id": str(reservation.id),
+                "customer_name": reservation.customer_name,
+                "party_size": reservation.party_size,
+                "reservation_time": (
+                    reservation.reservation_time.isoformat()
+                ),
+                "duration_minutes": reservation.duration_minutes,
+                "status": reservation.status.value,
+                "primary_table_id": (
+                    str(reservation.table_id)
+                    if reservation.table_id is not None
+                    else None
+                ),
+                "table_ids": [
+                    str(table_id)
+                    for table_id in original_table_ids
+                ],
+            },
+            "requested_modification": {
+                "party_size": effective_party_size,
+                "reservation_time": (
+                    effective_reservation_time.isoformat()
+                ),
+            },
+            "plan": plan.model_dump(
+                mode="json",
+                exclude={
+                    "temporal_autopilot_safety",
+                },
+            ),
+            "engine_version": result.engine_version,
+            "mode": result.mode,
+        }
+
+        if plan.temporal_autopilot_safety is not None:
+            payload["temporal_autopilot_safety"] = {
+                "schema_version": (
+                    "temporal_autopilot_safety.v1"
+                ),
+                "context": (
+                    plan.temporal_autopilot_safety.model_dump(
+                        mode="json",
+                    )
+                ),
+            }
+
+        # A newly validated modification proposal supersedes any older
+        # pending proposal tied to this reservation. Expiration happens
+        # only after a valid replacement plan has been found.
+        await self.expire_for_reservation(
+            reservation.id,
+        )
+
+        suggestion = AISuggestion(
+            restaurant_id=reservation.restaurant_id,
+            reservation_id=reservation.id,
+            suggestion_type=(
+                AISuggestionType.REOPTIMIZATION
+            ),
+            status=AISuggestionStatus.PENDING,
+            title=title,
+            description=description,
+            score=plan.score,
+            payload=payload,
+            is_read=False,
+            expires_at=(
+                effective_reservation_time
+                + timedelta(
+                    minutes=reservation.duration_minutes,
+                )
+            ),
+        )
+
+        created = await self.repository.create(
+            suggestion,
+        )
+
+        await self._record_ai_suggestion_event(
+            suggestion=created,
+            event_type=(
+                IntelligenceEventType
+                .AI_SUGGESTION_CREATED
+            ),
+            source=IntelligenceEventSource.AI,
+        )
+
+        await self._refresh_learning_profile(
+            restaurant_id=created.restaurant_id,
+        )
+
+        return created
+
     async def analyze_reservation_by_id(
         self,
         reservation_id: uuid.UUID,

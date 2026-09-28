@@ -93,6 +93,10 @@ Reservation rules:
   • An alternative offered for a modification must be validated as a modification of the existing reservation, not as a new competing reservation.
   • If the guest explicitly accepts an offered alternative time, use that exact time in update_reservation. The backend will revalidate it before changing the existing reservation.
   • Never create a second reservation to implement a modification.
+  • If update_reservation returns booking_outcome=reoptimization_available and modification_status=pending, the requested modification has NOT been applied yet. Tell the guest that the restaurant has received the modification request and that it is awaiting final approval.
+  • In that state, the guest's existing reservation remains confirmed and unchanged until the restaurant successfully applies the modification.
+  • Never describe a pending modification request as confirmed, completed, or already changed.
+  • After booking_outcome=reoptimization_available for a modification, do NOT call suggest_alternative_slots unless the guest explicitly asks to consider different times instead.
   • If update_reservation returns error=modification_unavailable, the existing reservation is still unchanged and valid.
   • After error=modification_unavailable, you MUST call suggest_alternative_slots using the reservation_id returned by update_reservation and the requested reservation_time and party_size. Do not stop at a generic unavailable message and do not tell the guest to contact the restaurant before checking alternatives.
   • Offer only the alternative times returned by suggest_alternative_slots. Never invent, infer, or reuse an alternative that was not returned by that tool call.
@@ -463,17 +467,14 @@ class AIService:
                 )
 
                 if existing_reservation_id is not None:
-                    available = await self.reservation_service.check_availability(
-                        reservation_time=requested_time,
-                        party_size=requested_party_size,
-                        restaurant_id=restaurant_id,
-                        reservation_id=existing_reservation_id,
-                    )
-
-                    outcome = (
-                        BookingAvailabilityOutcome.DIRECT_AVAILABLE
-                        if available
-                        else BookingAvailabilityOutcome.UNAVAILABLE
+                    outcome = await (
+                        self.reservation_service
+                        .assess_modification_availability(
+                            reservation_time=requested_time,
+                            party_size=requested_party_size,
+                            restaurant_id=restaurant_id,
+                            reservation_id=existing_reservation_id,
+                        )
                     )
                 else:
                     outcome = await self.reservation_service.assess_booking_availability(
@@ -632,25 +633,116 @@ class AIService:
                         payload=ReservationUpdate(**update_data),
                     )
                 except ConflictError:
-                    requested_reservation_id = str(args["reservation_id"])
+                    requested_reservation_id = uuid.UUID(
+                        args["reservation_id"]
+                    )
 
-                    requested_time = update_data.get("reservation_time")
-                    requested_party_size = update_data.get("party_size")
+                    requested_time = update_data.get(
+                        "reservation_time"
+                    )
+                    requested_party_size = update_data.get(
+                        "party_size"
+                    )
+
+                    logger.info(
+                        (
+                            "AI direct reservation modification unavailable: "
+                            "reservation_id=%s reservation_time=%s "
+                            "party_size=%s"
+                        ),
+                        requested_reservation_id,
+                        (
+                            requested_time.isoformat()
+                            if requested_time is not None
+                            else None
+                        ),
+                        requested_party_size,
+                    )
+
+                    suggestion = await (
+                        self.reservation_service
+                        .propose_reservation_modification_reoptimization(
+                            reservation_id=requested_reservation_id,
+                            payload=ReservationUpdate(
+                                **update_data
+                            ),
+                        )
+                    )
+
+                    if suggestion is not None:
+                        logger.info(
+                            (
+                                "AI reservation modification "
+                                "reoptimization available: "
+                                "restaurant_id=%s reservation_id=%s "
+                                "suggestion_id=%s"
+                            ),
+                            restaurant_id,
+                            requested_reservation_id,
+                            suggestion.id,
+                        )
+
+                        return {
+                            "success": True,
+                            "booking_outcome": (
+                                "reoptimization_available"
+                            ),
+                            "modification_status": "pending",
+                            "modification_applied": False,
+                            "reservation_status": "confirmed",
+                            "requires_restaurant_confirmation": True,
+                            "reservation_id": str(
+                                requested_reservation_id
+                            ),
+                            "suggestion_id": str(
+                                suggestion.id
+                            ),
+                            "requested_reservation_time": (
+                                requested_time.isoformat()
+                                if requested_time is not None
+                                else None
+                            ),
+                            "requested_party_size": (
+                                requested_party_size
+                            ),
+                            "instruction": (
+                                "The requested modification has not "
+                                "been applied yet. Alias found a "
+                                "reoptimization plan and the "
+                                "modification request is awaiting "
+                                "restaurant approval. The existing "
+                                "reservation remains confirmed and "
+                                "unchanged until the restaurant "
+                                "approves and successfully applies "
+                                "the modification. Do not call "
+                                "suggest_alternative_slots and do "
+                                "not describe the modification as "
+                                "confirmed."
+                            ),
+                        }, requested_reservation_id
 
                     logger.info(
                         (
                             "AI reservation modification unavailable: "
-                            "reservation_id=%s reservation_time=%s party_size=%s"
+                            "reservation_id=%s reservation_time=%s "
+                            "party_size=%s"
                         ),
                         requested_reservation_id,
-                        requested_time.isoformat() if requested_time is not None else None,
+                        (
+                            requested_time.isoformat()
+                            if requested_time is not None
+                            else None
+                        ),
                         requested_party_size,
                     )
 
                     return {
                         "success": False,
                         "error": "modification_unavailable",
-                        "reservation_id": requested_reservation_id,
+                        "booking_outcome": "unavailable",
+                        "reservation_id": str(
+                            requested_reservation_id
+                        ),
                         "reservation_time": (
                             requested_time.isoformat()
                             if requested_time is not None
@@ -658,10 +750,14 @@ class AIService:
                         ),
                         "party_size": requested_party_size,
                         "instruction": (
-                            "The requested modification is not directly available. "
-                            "Keep the existing reservation unchanged and call "
-                            "suggest_alternative_slots with this reservation_id, "
-                            "reservation_time, and party_size."
+                            "The requested modification is not "
+                            "directly available and no safe "
+                            "reoptimization plan is available. "
+                            "Keep the existing reservation "
+                            "unchanged and call "
+                            "suggest_alternative_slots with this "
+                            "reservation_id, reservation_time, "
+                            "and party_size."
                         ),
                     }, None
 

@@ -180,6 +180,34 @@ async def apply_reoptimization(
         session,
     )
 
+    suggestion_repository = AISuggestionRepository(
+        session,
+    )
+
+    apply_suggestion = await suggestion_repository.get_by_id(
+        suggestion_id=payload.suggestion_id,
+        restaurant_ids=allowed_restaurant_ids,
+    )
+
+    suggestion_payload = (
+        apply_suggestion.payload
+        if apply_suggestion is not None
+        and isinstance(apply_suggestion.payload, dict)
+        else {}
+    )
+
+    is_modification_reoptimization = (
+        apply_suggestion is not None
+        and apply_suggestion.reservation_id
+        == payload.new_reservation_id
+        and isinstance(
+            suggestion_payload.get(
+                "requested_modification"
+            ),
+            dict,
+        )
+    )
+
     # Capture lifecycle truth before execution.
     # A confirmation email is valid only for a real
     # PENDING -> CONFIRMED transition.
@@ -214,7 +242,14 @@ async def apply_reoptimization(
     )
 
     should_send_confirmation = (
-        previous_status == ReservationStatus.PENDING
+        (
+            previous_status == ReservationStatus.PENDING
+            or (
+                previous_status
+                == ReservationStatus.CONFIRMED
+                and is_modification_reoptimization
+            )
+        )
         and confirmed_reservation is not None
         and confirmed_reservation.status
         == ReservationStatus.CONFIRMED

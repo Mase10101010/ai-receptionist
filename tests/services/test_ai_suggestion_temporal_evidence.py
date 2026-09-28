@@ -317,3 +317,182 @@ async def test_missing_temporal_safety_does_not_fabricate_evidence():
         "temporal_autopilot_safety"
         not in payload["plan"]
     )
+
+@pytest.mark.asyncio
+async def test_modification_reoptimization_uses_requested_state_without_mutating_reservation():
+    original_table_id = uuid4()
+    target_table_id = uuid4()
+
+    reservation = SimpleNamespace(
+        id=uuid4(),
+        restaurant_id=uuid4(),
+        status=ReservationStatus.CONFIRMED,
+        customer_name="Modification Guest",
+        customer_phone="+390000000001",
+        customer_email="modification@example.com",
+        party_size=6,
+        reservation_time=NOW,
+        duration_minutes=90,
+        table_id=original_table_id,
+        assigned_table_ids=[original_table_id],
+    )
+
+    requested_time = datetime(
+        2026,
+        9,
+        8,
+        20,
+        0,
+        tzinfo=timezone.utc,
+    )
+
+    assignment = SimpleNamespace(
+        table_ids=[target_table_id],
+        table_numbers=["20"],
+    )
+
+    plan = SimpleNamespace(
+        moved_reservations_count=1,
+        score=95.0,
+        new_reservation_assignment=assignment,
+        temporal_autopilot_safety=None,
+    )
+
+    def model_dump(
+        *,
+        mode,
+        exclude=None,
+    ):
+        payload = {
+            "new_reservation_assignment": {
+                "table_ids": [
+                    str(target_table_id),
+                ],
+                "primary_table_id": str(
+                    target_table_id
+                ),
+            },
+            "moves": [
+                {
+                    "reservation_id": str(
+                        uuid4()
+                    ),
+                    "to_table_ids": [
+                        str(uuid4()),
+                    ],
+                    "primary_table_id": str(
+                        uuid4()
+                    ),
+                },
+            ],
+            "score": 95.0,
+            "moved_reservations_count": 1,
+            "temporal_autopilot_safety": None,
+        }
+
+        if (
+            exclude
+            and "temporal_autopilot_safety"
+            in exclude
+        ):
+            payload.pop(
+                "temporal_autopilot_safety",
+                None,
+            )
+
+        return payload
+
+    plan.model_dump = model_dump
+
+    service, repository = _service(
+        result=_result(
+            plan=plan,
+        )
+    )
+
+    service.expire_for_reservation = AsyncMock(
+        return_value=1,
+    )
+
+    suggestion = (
+        await service
+        .analyze_reservation_modification(
+            reservation,
+            requested_party_size=10,
+            requested_reservation_time=(
+                requested_time
+            ),
+        )
+    )
+
+    assert suggestion is not None
+    assert len(repository.created) == 1
+
+    reoptimize_call = (
+        service.intelligence_service
+        .reoptimize.await_args
+    )
+
+    request = reoptimize_call.kwargs[
+        "payload"
+    ]
+
+    assert request.reservation_id == reservation.id
+    assert request.party_size == 10
+    assert request.requested_start == requested_time
+    assert request.duration_minutes == 90
+
+    payload = suggestion.payload
+
+    assert payload["reservation"]["id"] == str(
+        reservation.id
+    )
+    assert payload["reservation"]["party_size"] == 6
+    assert (
+        payload["reservation"]["reservation_time"]
+        == NOW.isoformat()
+    )
+    assert (
+        payload["reservation"]["status"]
+        == ReservationStatus.CONFIRMED.value
+    )
+    assert (
+        payload["reservation"]["primary_table_id"]
+        == str(original_table_id)
+    )
+    assert payload["reservation"]["table_ids"] == [
+        str(original_table_id)
+    ]
+
+    assert (
+        payload["requested_modification"][
+            "party_size"
+        ]
+        == 10
+    )
+    assert (
+        payload["requested_modification"][
+            "reservation_time"
+        ]
+        == requested_time.isoformat()
+    )
+
+    assert (
+        payload["plan"][
+            "new_reservation_assignment"
+        ]["table_ids"]
+        == [str(target_table_id)]
+    )
+
+    service.expire_for_reservation.assert_awaited_once_with(
+        reservation.id
+    )
+
+    # Proposal creation must never mutate the live reservation.
+    assert reservation.party_size == 6
+    assert reservation.reservation_time == NOW
+    assert reservation.status == ReservationStatus.CONFIRMED
+    assert reservation.table_id == original_table_id
+    assert reservation.assigned_table_ids == [
+        original_table_id
+    ]

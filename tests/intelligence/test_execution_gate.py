@@ -63,12 +63,77 @@ def build_suggestion(
     ),
     reservation_id=RESERVATION_ID,
     expires_at=None,
+    modification=False,
 ):
     if expires_at is None:
         expires_at = (
             datetime.now(timezone.utc)
             + timedelta(hours=1)
         )
+
+    payload = {
+        "plan": {
+            "new_reservation_assignment": {
+                "table_ids": [
+                    str(TABLE_1_ID),
+                    str(TABLE_2_ID),
+                ],
+            },
+            "moves": [
+                {
+                    "reservation_id": str(
+                        MOVED_RESERVATION_ID
+                    ),
+                    "to_table_ids": [
+                        str(MOVE_TABLE_ID),
+                    ],
+                },
+            ],
+        },
+    }
+
+    if modification:
+        original_time = datetime(
+            2026,
+            9,
+            26,
+            11,
+            0,
+            tzinfo=timezone.utc,
+        )
+
+        requested_time = datetime(
+            2026,
+            9,
+            26,
+            11,
+            0,
+            tzinfo=timezone.utc,
+        )
+
+        payload["reservation"] = {
+            "id": str(RESERVATION_ID),
+            "party_size": 6,
+            "reservation_time": (
+                original_time.isoformat()
+            ),
+            "duration_minutes": 90,
+            "status": "confirmed",
+            "primary_table_id": str(
+                TABLE_1_ID
+            ),
+            "table_ids": [
+                str(TABLE_1_ID),
+                str(TABLE_2_ID),
+            ],
+        }
+
+        payload["requested_modification"] = {
+            "party_size": 10,
+            "reservation_time": (
+                requested_time.isoformat()
+            ),
+        }
 
     return SimpleNamespace(
         id=SUGGESTION_ID,
@@ -77,26 +142,7 @@ def build_suggestion(
         suggestion_type=suggestion_type,
         status=status,
         expires_at=expires_at,
-        payload={
-            "plan": {
-                "new_reservation_assignment": {
-                    "table_ids": [
-                        str(TABLE_1_ID),
-                        str(TABLE_2_ID),
-                    ],
-                },
-                "moves": [
-                    {
-                        "reservation_id": str(
-                            MOVED_RESERVATION_ID
-                        ),
-                        "to_table_ids": [
-                            str(MOVE_TABLE_ID),
-                        ],
-                    },
-                ],
-            },
-        },
+        payload=payload,
     )
 
 
@@ -117,6 +163,7 @@ async def validate(
     new_reservation_table_ids=None,
     new_reservation_primary_table_id=TABLE_1_ID,
     moves=None,
+    current_reservation_state=None,
 ):
     if new_reservation_table_ids is None:
         new_reservation_table_ids = [
@@ -154,6 +201,9 @@ async def validate(
             new_reservation_primary_table_id
         ),
         moves=moves,
+        current_reservation_state=(
+            current_reservation_state
+        ),
     )
 
 
@@ -321,3 +371,112 @@ async def test_move_primary_table_mismatch_is_rejected():
                 },
             ],
         )
+
+@pytest.mark.asyncio
+async def test_modification_reoptimization_allows_matching_original_snapshot():
+    gate = build_gate(
+        build_suggestion(
+            modification=True,
+        ),
+    )
+
+    await validate(
+        gate,
+        current_reservation_state={
+            "id": str(RESERVATION_ID),
+            "party_size": 6,
+            "reservation_time": (
+                "2026-09-26T11:00:00+00:00"
+            ),
+            "duration_minutes": 90,
+            "status": "confirmed",
+            "primary_table_id": str(
+                TABLE_1_ID
+            ),
+            "table_ids": [
+                str(TABLE_1_ID),
+                str(TABLE_2_ID),
+            ],
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_modification_reoptimization_rejects_changed_party_size():
+    gate = build_gate(
+        build_suggestion(
+            modification=True,
+        ),
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="original reservation state",
+    ):
+        await validate(
+            gate,
+            current_reservation_state={
+                "id": str(RESERVATION_ID),
+                "party_size": 8,
+                "reservation_time": (
+                    "2026-09-26T11:00:00+00:00"
+                ),
+                "duration_minutes": 90,
+                "status": "confirmed",
+                "primary_table_id": str(
+                    TABLE_1_ID
+                ),
+                "table_ids": [
+                    str(TABLE_1_ID),
+                    str(TABLE_2_ID),
+                ],
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_modification_reoptimization_rejects_changed_table_assignments():
+    gate = build_gate(
+        build_suggestion(
+            modification=True,
+        ),
+    )
+
+    changed_table_id = uuid.uuid4()
+
+    with pytest.raises(
+        ValidationError,
+        match="original reservation state",
+    ):
+        await validate(
+            gate,
+            current_reservation_state={
+                "id": str(RESERVATION_ID),
+                "party_size": 6,
+                "reservation_time": (
+                    "2026-09-26T11:00:00+00:00"
+                ),
+                "duration_minutes": 90,
+                "status": "confirmed",
+                "primary_table_id": str(
+                    changed_table_id
+                ),
+                "table_ids": [
+                    str(changed_table_id),
+                ],
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_legacy_reoptimization_does_not_require_original_snapshot():
+    gate = build_gate(
+        build_suggestion(
+            modification=False,
+        ),
+    )
+
+    await validate(
+        gate,
+        current_reservation_state=None,
+    )

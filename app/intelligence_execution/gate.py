@@ -33,6 +33,7 @@ class IntelligenceExecutionGate:
         new_reservation_table_ids: list[UUID],
         new_reservation_primary_table_id: UUID,
         moves: list[dict],
+        current_reservation_state: dict | None = None,
     ) -> None:
         suggestion = await self.repository.get_by_id(
             suggestion_id=suggestion_id,
@@ -192,4 +193,206 @@ class IntelligenceExecutionGate:
             raise ValidationError(
                 "Move primary tables do not match "
                 "the AI suggestion."
+            )
+
+        requested_modification = (
+            payload.get("requested_modification")
+        )
+
+        # Legacy reoptimization suggestions do not represent a
+        # reservation modification. Preserve their existing execution
+        # contract unchanged.
+        if requested_modification is None:
+            return
+
+        original_reservation = (
+            payload.get("reservation")
+        )
+
+        if not isinstance(
+            original_reservation,
+            dict,
+        ):
+            raise ValidationError(
+                "Modification reoptimization does not contain "
+                "the original reservation state."
+            )
+
+        if not isinstance(
+            current_reservation_state,
+            dict,
+        ):
+            raise ValidationError(
+                "Modification reoptimization cannot verify "
+                "the original reservation state."
+            )
+
+        stored_reservation_id = (
+            original_reservation.get("id")
+        )
+
+        if (
+            stored_reservation_id is None
+            or str(stored_reservation_id)
+            != str(new_reservation_id)
+        ):
+            raise ValidationError(
+                "Modification reoptimization original reservation "
+                "state does not match the reservation."
+            )
+
+        current_reservation_id = (
+            current_reservation_state.get("id")
+        )
+
+        if (
+            current_reservation_id is None
+            or str(current_reservation_id)
+            != str(new_reservation_id)
+        ):
+            raise ValidationError(
+                "Modification reoptimization original reservation "
+                "state no longer matches the current reservation."
+            )
+
+        stored_party_size = (
+            original_reservation.get(
+                "party_size"
+            )
+        )
+
+        current_party_size = (
+            current_reservation_state.get(
+                "party_size"
+            )
+        )
+
+        if (
+            stored_party_size
+            != current_party_size
+        ):
+            raise ValidationError(
+                "Modification reoptimization original reservation "
+                "state is stale: party size changed."
+            )
+
+        stored_reservation_time = (
+            original_reservation.get(
+                "reservation_time"
+            )
+        )
+
+        current_reservation_time = (
+            current_reservation_state.get(
+                "reservation_time"
+            )
+        )
+
+        if (
+            stored_reservation_time
+            != current_reservation_time
+        ):
+            raise ValidationError(
+                "Modification reoptimization original reservation "
+                "state is stale: reservation time changed."
+            )
+
+        stored_duration_minutes = (
+            original_reservation.get(
+                "duration_minutes"
+            )
+        )
+
+        current_duration_minutes = (
+            current_reservation_state.get(
+                "duration_minutes"
+            )
+        )
+
+        if (
+            stored_duration_minutes
+            != current_duration_minutes
+        ):
+            raise ValidationError(
+                "Modification reoptimization original reservation "
+                "state is stale: duration changed."
+            )
+
+        stored_status = (
+            original_reservation.get(
+                "status"
+            )
+        )
+
+        current_status = (
+            current_reservation_state.get(
+                "status"
+            )
+        )
+
+        if (
+            stored_status
+            != current_status
+        ):
+            raise ValidationError(
+                "Modification reoptimization original reservation "
+                "state is stale: status changed."
+            )
+
+        stored_primary_table_id = (
+            original_reservation.get(
+                "primary_table_id"
+            )
+        )
+
+        current_primary_table_id = (
+            current_reservation_state.get(
+                "primary_table_id"
+            )
+        )
+
+        if (
+            (
+                str(stored_primary_table_id)
+                if stored_primary_table_id is not None
+                else None
+            )
+            != (
+                str(current_primary_table_id)
+                if current_primary_table_id is not None
+                else None
+            )
+        ):
+            raise ValidationError(
+                "Modification reoptimization original reservation "
+                "state is stale: primary table changed."
+            )
+
+        stored_original_table_ids = {
+            str(table_id)
+            for table_id in (
+                original_reservation.get(
+                    "table_ids"
+                )
+                or []
+            )
+        }
+
+        current_original_table_ids = {
+            str(table_id)
+            for table_id in (
+                current_reservation_state.get(
+                    "table_ids"
+                )
+                or []
+            )
+        }
+
+        if (
+            stored_original_table_ids
+            != current_original_table_ids
+        ):
+            raise ValidationError(
+                "Modification reoptimization original reservation "
+                "state is stale: table assignments changed."
             )

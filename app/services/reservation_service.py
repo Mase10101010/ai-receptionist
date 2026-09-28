@@ -744,6 +744,73 @@ class ReservationService:
             restaurant_id=restaurant_id,
         )
 
+    async def propose_reservation_modification_reoptimization(
+        self,
+        *,
+        reservation_id: uuid.UUID,
+        payload: ReservationUpdate,
+    ):
+        """
+        Build a reoptimization proposal for a reservation modification
+        without mutating the existing reservation.
+
+        The existing reservation remains authoritative until the proposal
+        is successfully executed.
+        """
+        reservation = await self.reservation_repo.get_by_id(
+            reservation_id
+        )
+
+        if reservation is None:
+            raise NotFoundError("Reservation not found.")
+
+        requested_party_size = (
+            payload.party_size
+            if payload.party_size is not None
+            else reservation.party_size
+        )
+
+        requested_reservation_time = (
+            payload.reservation_time
+            if payload.reservation_time is not None
+            else reservation.reservation_time
+        )
+
+        # M2 only applies to capacity-affecting modifications.
+        if (
+            requested_party_size == reservation.party_size
+            and requested_reservation_time
+            == reservation.reservation_time
+        ):
+            return None
+
+        if payload.reservation_time is not None:
+            await self._validate_reservation_time(
+                requested_reservation_time,
+                reservation.restaurant_id,
+            )
+
+        suggestion_repo = AISuggestionRepository(
+            self.reservation_repo.db
+        )
+
+        suggestion_service = AISuggestionService(
+            repository=suggestion_repo,
+            reservation_repository=self.reservation_repo,
+            intelligence_service=self.intelligence_service,
+        )
+
+        return await (
+            suggestion_service
+            .analyze_reservation_modification(
+                reservation,
+                requested_party_size=requested_party_size,
+                requested_reservation_time=(
+                    requested_reservation_time
+                ),
+            )
+        )
+
     async def update_reservation(
         self,
         reservation_id: uuid.UUID,
@@ -1394,6 +1461,125 @@ class ReservationService:
         )
 
         return cancelled
+
+    async def assess_modification_availability(
+        self,
+        *,
+        reservation_time: datetime,
+        party_size: int,
+        restaurant_id: uuid.UUID | None,
+        reservation_id: uuid.UUID,
+    ) -> BookingAvailabilityOutcome:
+        """
+        Classify availability for a capacity-affecting modification
+        without mutating the reservation or persisting an AI suggestion.
+
+        The existing reservation remains authoritative. Direct availability
+        and reoptimization are both assessed against the same reservation id.
+        """
+        try:
+            await self._validate_reservation_time(
+                reservation_time,
+                restaurant_id,
+            )
+        except ValidationError:
+            return BookingAvailabilityOutcome.UNAVAILABLE
+
+        if restaurant_id is None:
+            return BookingAvailabilityOutcome.UNAVAILABLE
+
+        reservation = await self.repository.get_by_id(
+            reservation_id=reservation_id,
+            restaurant_id=restaurant_id,
+        )
+
+        if reservation is None:
+            return BookingAvailabilityOutcome.UNAVAILABLE
+
+        duration_minutes = reservation.duration_minutes
+
+        try:
+            direct_result = await self.intelligence_service.optimize(
+                session=self.repository.db,
+                payload=IntelligenceOptimizeRequest(
+                    restaurant_id=restaurant_id,
+                    reservation_id=reservation_id,
+                    requested_start=reservation_time,
+                    party_size=party_size,
+                    duration_minutes=duration_minutes,
+                    buffer_before_minutes=0,
+                    buffer_after_minutes=0,
+                    preferred_service_area_id=None,
+                    max_alternatives=1,
+                ),
+            )
+
+            direct_recommendation = direct_result.recommended
+
+            if (
+                direct_result.available
+                and direct_recommendation is not None
+                and direct_recommendation.table_ids
+            ):
+                return BookingAvailabilityOutcome.DIRECT_AVAILABLE
+
+        except Exception:
+            logger.exception(
+                "AIE modification direct availability assessment failed: "
+                "restaurant_id=%s reservation_id=%s party=%d time=%s",
+                restaurant_id,
+                reservation_id,
+                party_size,
+                reservation_time.isoformat(),
+            )
+
+            # Preserve the existing technical-failure fallback semantics.
+            if await self.check_availability(
+                reservation_time=reservation_time,
+                party_size=party_size,
+                restaurant_id=restaurant_id,
+                reservation_id=reservation_id,
+            ):
+                return BookingAvailabilityOutcome.DIRECT_AVAILABLE
+
+        try:
+            reoptimization_result = await self.intelligence_service.reoptimize(
+                session=self.repository.db,
+                payload=IntelligenceReoptimizeRequest(
+                    restaurant_id=restaurant_id,
+                    reservation_id=reservation_id,
+                    requested_start=reservation_time,
+                    party_size=party_size,
+                    duration_minutes=duration_minutes,
+                    buffer_before_minutes=0,
+                    buffer_after_minutes=0,
+                    preferred_service_area_id=None,
+                    max_reservations_to_move=1,
+                    max_plans=5,
+                ),
+            )
+        except Exception:
+            logger.exception(
+                "AIE modification reoptimization assessment failed: "
+                "restaurant_id=%s reservation_id=%s party=%d time=%s",
+                restaurant_id,
+                reservation_id,
+                party_size,
+                reservation_time.isoformat(),
+            )
+            return BookingAvailabilityOutcome.UNAVAILABLE
+
+        recommendation = reoptimization_result.recommended
+
+        if (
+            reoptimization_result.available
+            and recommendation is not None
+            and recommendation.new_reservation_assignment.table_ids
+            and recommendation.moved_reservations_count >= 1
+        ):
+            return BookingAvailabilityOutcome.REOPTIMIZATION_AVAILABLE
+
+        return BookingAvailabilityOutcome.UNAVAILABLE
 
     async def assess_booking_availability(
         self,

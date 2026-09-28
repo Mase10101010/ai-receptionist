@@ -5,16 +5,19 @@ from uuid import uuid4
 
 import pytest
 
-from app.services.ai_service import AIService, _build_system_prompt
 from app.core.exceptions import ConflictError
+from app.services.ai_service import AIService, _build_system_prompt
+from app.services.reservation_service import BookingAvailabilityOutcome
 
 
 def _build_ai_service():
     reservation_service = SimpleNamespace(
         check_availability=AsyncMock(),
         assess_booking_availability=AsyncMock(),
+        assess_modification_availability=AsyncMock(),
         suggest_alternative_slots=AsyncMock(),
         update_reservation=AsyncMock(),
+        propose_reservation_modification_reoptimization=AsyncMock(),
         create_reservation=AsyncMock(),
     )
 
@@ -28,13 +31,11 @@ def _build_ai_service():
 
 
 @pytest.mark.asyncio
-async def test_modification_check_availability_passes_reservation_id():
+async def test_modification_check_availability_reports_direct_available():
     service, reservation_service = _build_ai_service()
 
     reservation_id = uuid4()
     restaurant_id = uuid4()
-
-    reservation_service.check_availability.return_value = True
 
     requested_time = datetime(
         2026,
@@ -43,6 +44,10 @@ async def test_modification_check_availability_passes_reservation_id():
         13,
         0,
         tzinfo=timezone.utc,
+    )
+
+    reservation_service.assess_modification_availability.return_value = (
+        BookingAvailabilityOutcome.DIRECT_AVAILABLE
     )
 
     result, returned_reservation_id = await service._execute_tool(
@@ -62,16 +67,123 @@ async def test_modification_check_availability_passes_reservation_id():
 
     assert result["available"] is True
     assert result["booking_outcome"] == "direct_available"
+    assert result["requires_restaurant_confirmation"] is False
     assert returned_reservation_id is None
 
-    reservation_service.check_availability.assert_awaited_once_with(
+    reservation_service.assess_modification_availability.assert_awaited_once_with(
         reservation_time=requested_time,
         party_size=6,
         restaurant_id=restaurant_id,
         reservation_id=reservation_id,
     )
 
+    reservation_service.check_availability.assert_not_awaited()
     reservation_service.assess_booking_availability.assert_not_awaited()
+    reservation_service.propose_reservation_modification_reoptimization.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_modification_check_availability_reports_reoptimization_available_without_persisting():
+    service, reservation_service = _build_ai_service()
+
+    reservation_id = uuid4()
+    restaurant_id = uuid4()
+
+    requested_time = datetime(
+        2026,
+        9,
+        26,
+        13,
+        0,
+        tzinfo=timezone.utc,
+    )
+
+    reservation_service.assess_modification_availability.return_value = (
+        BookingAvailabilityOutcome.REOPTIMIZATION_AVAILABLE
+    )
+
+    result, returned_reservation_id = await service._execute_tool(
+        name="check_availability",
+        raw_arguments=(
+            "{"
+            f'"reservation_time": "{requested_time.isoformat()}",'
+            '"party_size": 10,'
+            f'"reservation_id": "{reservation_id}",'
+            '"customer_provided_date": true,'
+            '"customer_provided_time": true,'
+            '"customer_provided_party_size": true'
+            "}"
+        ),
+        restaurant_id=restaurant_id,
+    )
+
+    assert result["available"] is True
+    assert result["booking_outcome"] == "reoptimization_available"
+    assert result["requires_restaurant_confirmation"] is True
+    assert returned_reservation_id is None
+
+    reservation_service.assess_modification_availability.assert_awaited_once_with(
+        reservation_time=requested_time,
+        party_size=10,
+        restaurant_id=restaurant_id,
+        reservation_id=reservation_id,
+    )
+
+    # Availability assessment must remain read-only.
+    reservation_service.update_reservation.assert_not_awaited()
+    reservation_service.propose_reservation_modification_reoptimization.assert_not_awaited()
+    reservation_service.create_reservation.assert_not_awaited()
+    reservation_service.suggest_alternative_slots.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_modification_check_availability_reports_unavailable():
+    service, reservation_service = _build_ai_service()
+
+    reservation_id = uuid4()
+    restaurant_id = uuid4()
+
+    requested_time = datetime(
+        2026,
+        9,
+        26,
+        13,
+        0,
+        tzinfo=timezone.utc,
+    )
+
+    reservation_service.assess_modification_availability.return_value = (
+        BookingAvailabilityOutcome.UNAVAILABLE
+    )
+
+    result, returned_reservation_id = await service._execute_tool(
+        name="check_availability",
+        raw_arguments=(
+            "{"
+            f'"reservation_time": "{requested_time.isoformat()}",'
+            '"party_size": 12,'
+            f'"reservation_id": "{reservation_id}",'
+            '"customer_provided_date": true,'
+            '"customer_provided_time": true,'
+            '"customer_provided_party_size": true'
+            "}"
+        ),
+        restaurant_id=restaurant_id,
+    )
+
+    assert result["available"] is False
+    assert result["booking_outcome"] == "unavailable"
+    assert result["requires_restaurant_confirmation"] is False
+    assert returned_reservation_id is None
+
+    reservation_service.assess_modification_availability.assert_awaited_once_with(
+        reservation_time=requested_time,
+        party_size=12,
+        restaurant_id=restaurant_id,
+        reservation_id=reservation_id,
+    )
+
+    reservation_service.propose_reservation_modification_reoptimization.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -188,10 +300,12 @@ async def test_accepted_modification_alternative_updates_same_reservation():
     assert call.kwargs["payload"].reservation_time == accepted_time
     assert call.kwargs["payload"].party_size == 6
 
+    reservation_service.propose_reservation_modification_reoptimization.assert_not_awaited()
     reservation_service.create_reservation.assert_not_awaited()
 
+
 @pytest.mark.asyncio
-async def test_unavailable_modification_returns_structured_result_for_alternatives():
+async def test_unavailable_modification_returns_structured_result_when_m2_unavailable():
     service, reservation_service = _build_ai_service()
 
     reservation_id = uuid4()
@@ -211,6 +325,10 @@ async def test_unavailable_modification_returns_structured_result_for_alternativ
         "for the requested reservation modification."
     )
 
+    reservation_service.propose_reservation_modification_reoptimization.return_value = (
+        None
+    )
+
     result, returned_reservation_id = await service._execute_tool(
         name="update_reservation",
         raw_arguments=(
@@ -228,19 +346,216 @@ async def test_unavailable_modification_returns_structured_result_for_alternativ
     assert result == {
         "success": False,
         "error": "modification_unavailable",
+        "booking_outcome": "unavailable",
         "reservation_id": str(reservation_id),
         "reservation_time": requested_time.isoformat(),
         "party_size": 12,
         "instruction": (
-            "The requested modification is not directly available. "
-            "Keep the existing reservation unchanged and call "
-            "suggest_alternative_slots with this reservation_id, "
-            "reservation_time, and party_size."
+            "The requested modification is not "
+            "directly available and no safe "
+            "reoptimization plan is available. "
+            "Keep the existing reservation "
+            "unchanged and call "
+            "suggest_alternative_slots with this "
+            "reservation_id, reservation_time, "
+            "and party_size."
         ),
     }
 
     reservation_service.update_reservation.assert_awaited_once()
+
+    reservation_service.propose_reservation_modification_reoptimization.assert_awaited_once()
+
+    proposal_call = (
+        reservation_service
+        .propose_reservation_modification_reoptimization
+        .await_args
+    )
+
+    assert (
+        proposal_call.kwargs["reservation_id"]
+        == reservation_id
+    )
+
+    assert (
+        proposal_call.kwargs["payload"].party_size
+        == 12
+    )
+
+    assert (
+        proposal_call.kwargs["payload"].reservation_time
+        == requested_time
+    )
+
     reservation_service.create_reservation.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_modification_reoptimization_available_returns_pending_request():
+    service, reservation_service = _build_ai_service()
+
+    reservation_id = uuid4()
+    restaurant_id = uuid4()
+    suggestion_id = uuid4()
+
+    requested_time = datetime(
+        2026,
+        9,
+        26,
+        12,
+        0,
+        tzinfo=timezone.utc,
+    )
+
+    reservation_service.update_reservation.side_effect = ConflictError(
+        "No direct table assignment is available "
+        "for the requested reservation modification."
+    )
+
+    reservation_service.propose_reservation_modification_reoptimization.return_value = (
+        SimpleNamespace(
+            id=suggestion_id,
+        )
+    )
+
+    result, returned_reservation_id = await service._execute_tool(
+        name="update_reservation",
+        raw_arguments=(
+            "{"
+            f'"reservation_id": "{reservation_id}",'
+            f'"reservation_time": "{requested_time.isoformat()}",'
+            '"party_size": 12'
+            "}"
+        ),
+        restaurant_id=restaurant_id,
+    )
+
+    assert returned_reservation_id == reservation_id
+
+    assert result["success"] is True
+    assert (
+        result["booking_outcome"]
+        == "reoptimization_available"
+    )
+    assert result["modification_status"] == "pending"
+    assert result["modification_applied"] is False
+    assert result["reservation_status"] == "confirmed"
+    assert (
+        result["requires_restaurant_confirmation"]
+        is True
+    )
+
+    assert result["reservation_id"] == str(
+        reservation_id
+    )
+
+    assert result["suggestion_id"] == str(
+        suggestion_id
+    )
+
+    assert (
+        result["requested_reservation_time"]
+        == requested_time.isoformat()
+    )
+
+    assert result["requested_party_size"] == 12
+
+    assert (
+        "not been applied yet"
+        in result["instruction"]
+    )
+
+    assert (
+        "Do not call suggest_alternative_slots"
+        in result["instruction"]
+    )
+
+    reservation_service.update_reservation.assert_awaited_once()
+
+    reservation_service.propose_reservation_modification_reoptimization.assert_awaited_once()
+
+    proposal_call = (
+        reservation_service
+        .propose_reservation_modification_reoptimization
+        .await_args
+    )
+
+    assert (
+        proposal_call.kwargs["reservation_id"]
+        == reservation_id
+    )
+
+    assert (
+        proposal_call.kwargs["payload"].party_size
+        == 12
+    )
+
+    assert (
+        proposal_call.kwargs["payload"].reservation_time
+        == requested_time
+    )
+
+    reservation_service.suggest_alternative_slots.assert_not_awaited()
+    reservation_service.create_reservation.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_modification_reoptimization_technical_failure_is_not_reported_as_unavailable():
+    service, reservation_service = _build_ai_service()
+
+    reservation_id = uuid4()
+    restaurant_id = uuid4()
+
+    requested_time = datetime(
+        2026,
+        9,
+        26,
+        12,
+        0,
+        tzinfo=timezone.utc,
+    )
+
+    reservation_service.update_reservation.side_effect = ConflictError(
+        "No direct table assignment is available "
+        "for the requested reservation modification."
+    )
+
+    reservation_service.propose_reservation_modification_reoptimization.side_effect = (
+        RuntimeError(
+            "reoptimization engine failure"
+        )
+    )
+
+    result, returned_reservation_id = await service._execute_tool(
+        name="update_reservation",
+        raw_arguments=(
+            "{"
+            f'"reservation_id": "{reservation_id}",'
+            f'"reservation_time": "{requested_time.isoformat()}",'
+            '"party_size": 12'
+            "}"
+        ),
+        restaurant_id=restaurant_id,
+    )
+
+    assert returned_reservation_id is None
+
+    assert result == {
+        "error": "reoptimization engine failure"
+    }
+
+    assert (
+        result.get("error")
+        != "modification_unavailable"
+    )
+
+    reservation_service.update_reservation.assert_awaited_once()
+
+    reservation_service.propose_reservation_modification_reoptimization.assert_awaited_once()
+
+    reservation_service.suggest_alternative_slots.assert_not_awaited()
+    reservation_service.create_reservation.assert_not_awaited()
+
 
 def test_system_prompt_requires_alternatives_after_unavailable_modification():
     prompt = _build_system_prompt(
@@ -251,12 +566,62 @@ def test_system_prompt_requires_alternatives_after_unavailable_modification():
     )
 
     assert "error=modification_unavailable" in prompt
+
     assert (
         "you MUST call suggest_alternative_slots"
         in prompt
     )
+
     assert (
         "Offer only the alternative times returned by "
         "suggest_alternative_slots"
         in prompt
+    )
+
+
+def test_system_prompt_distinguishes_pending_modification_reoptimization():
+    prompt = _build_system_prompt(
+        restaurant_name="Perugino",
+        timezone_name="Australia/Perth",
+        opening_hour=11,
+        closing_hour=23,
+    )
+
+    assert (
+        "booking_outcome=reoptimization_available"
+        in prompt
+    )
+
+    assert (
+        "modification_status=pending"
+        in prompt
+    )
+
+    assert (
+        "existing reservation remains confirmed "
+        "and unchanged"
+        in prompt
+    )
+
+    assert (
+        "do NOT call suggest_alternative_slots"
+        in prompt
+    )
+
+def test_prompt_requires_update_after_modification_reoptimization_precheck():
+    prompt = _build_system_prompt(
+        restaurant_name="Alias Lab",
+        timezone_name="Australia/Perth",
+        opening_hour=11,
+        closing_hour=23,
+    )
+
+    normalized = " ".join(prompt.lower().split())
+
+    assert "reoptimization_available" in normalized
+    assert "update_reservation" in normalized
+
+    assert (
+        "do not call suggest_alternative_slots"
+        in normalized
     )

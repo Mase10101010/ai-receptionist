@@ -39,6 +39,9 @@ from app.models.table_combination import (
     TableCombination as ORMTableCombination,
     TableCombinationMember,
 )
+from app.repositories.ai_suggestion_repository import (
+    AISuggestionRepository,
+)
 
 from .optimizer import ReservationOptimizer
 from .schemas import (
@@ -1427,6 +1430,58 @@ class IntelligenceOptimizationService:
                 "The new reservation cannot also appear in moves."
             )
 
+        requested_modification = None
+
+        if payload.suggestion_id is not None:
+            suggestion = await (
+                AISuggestionRepository(session)
+                .get_by_id(
+                    suggestion_id=payload.suggestion_id,
+                    restaurant_ids=allowed_restaurant_ids,
+                )
+            )
+
+            if suggestion is None:
+                raise NotFoundError(
+                    f"AI suggestion {payload.suggestion_id} not found"
+                )
+
+            if (
+                suggestion.reservation_id
+                != payload.new_reservation_id
+            ):
+                raise ValidationError(
+                    "AI suggestion does not belong to "
+                    "the target reservation."
+                )
+
+            suggestion_payload = (
+                suggestion.payload
+                if isinstance(
+                    suggestion.payload,
+                    dict,
+                )
+                else {}
+            )
+
+            requested_modification = (
+                suggestion_payload.get(
+                    "requested_modification"
+                )
+            )
+
+            if (
+                requested_modification is not None
+                and not isinstance(
+                    requested_modification,
+                    dict,
+                )
+            ):
+                raise ValidationError(
+                    "AI suggestion requested modification "
+                    "payload is invalid."
+                )
+
         new_reservation_result = await session.execute(
             select(Reservation)
             .options(
@@ -1466,6 +1521,84 @@ class IntelligenceOptimizationService:
                 "Completed, cancelled, or no-show reservations "
                 "cannot be reassigned."
             )
+
+        # Default / legacy execution state.
+        #
+        # For ordinary reoptimization there is no requested
+        # modification, so validation must continue to use the
+        # reservation's currently persisted state.
+        target_party_size = new_reservation.party_size
+        target_reservation_time = (
+            new_reservation.reservation_time
+        )
+
+        # M2 modification reoptimization.
+        #
+        # The persisted reservation still represents the customer's
+        # currently valid confirmed booking. The requested state lives
+        # in the authoritative AI suggestion until execution succeeds.
+        if requested_modification is not None:
+            requested_party_size = (
+                requested_modification.get(
+                    "party_size"
+                )
+            )
+            requested_reservation_time = (
+                requested_modification.get(
+                    "reservation_time"
+                )
+            )
+
+            if (
+                not isinstance(
+                    requested_party_size,
+                    int,
+                )
+                or isinstance(
+                    requested_party_size,
+                    bool,
+                )
+                or requested_party_size <= 0
+            ):
+                raise ValidationError(
+                    "AI suggestion requested party size "
+                    "is invalid."
+                )
+
+            if (
+                not isinstance(
+                    requested_reservation_time,
+                    str,
+                )
+                or not requested_reservation_time
+            ):
+                raise ValidationError(
+                    "AI suggestion requested reservation "
+                    "time is invalid."
+                )
+
+            try:
+                target_reservation_time = (
+                    datetime.fromisoformat(
+                        requested_reservation_time.replace(
+                            "Z",
+                            "+00:00",
+                        )
+                    )
+                )
+            except ValueError as exc:
+                raise ValidationError(
+                    "AI suggestion requested reservation "
+                    "time is invalid."
+                ) from exc
+
+            if target_reservation_time.tzinfo is None:
+                raise ValidationError(
+                    "AI suggestion requested reservation "
+                    "time must be timezone-aware."
+                )
+
+            target_party_size = requested_party_size
 
         moved_reservations: dict[UUID, Reservation] = {}
 
@@ -1577,7 +1710,7 @@ class IntelligenceOptimizationService:
             for table_id in new_table_ids
         )
 
-        if new_capacity < new_reservation.party_size:
+        if new_capacity < target_party_size:
             raise ValidationError(
                 "Selected tables do not have enough capacity "
                 "for the new reservation."
@@ -1625,7 +1758,7 @@ class IntelligenceOptimizationService:
 
         range_start = min(
             [
-                new_reservation.reservation_time,
+                target_reservation_time,
                 *[
                     reservation.reservation_time
                     for reservation
@@ -1637,7 +1770,7 @@ class IntelligenceOptimizationService:
         range_end = max(
             [
                 (
-                    new_reservation.reservation_time
+                    target_reservation_time
                     + timedelta(
                         minutes=(
                             new_reservation.duration_minutes
@@ -1715,7 +1848,10 @@ class IntelligenceOptimizationService:
             table_ids,
         ) in enumerate(proposed_assignments):
             requested_start = (
-                reservation.reservation_time
+                target_reservation_time
+                if reservation.id
+                == new_reservation.id
+                else reservation.reservation_time
             )
 
             requested_end = (
@@ -1778,7 +1914,10 @@ class IntelligenceOptimizationService:
                 index + 1:
             ]:
                 other_start = (
-                    other_reservation.reservation_time
+                    target_reservation_time
+                    if other_reservation.id
+                    == new_reservation.id
+                    else other_reservation.reservation_time
                 )
 
                 other_end = (
@@ -1826,6 +1965,15 @@ class IntelligenceOptimizationService:
                 )
             )
         )
+
+        if requested_modification is not None:
+            new_reservation.party_size = (
+                target_party_size
+            )
+
+            new_reservation.reservation_time = (
+                target_reservation_time
+            )
 
         new_reservation.table_id = (
             payload.new_reservation_primary_table_id

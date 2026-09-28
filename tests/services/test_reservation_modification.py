@@ -6,7 +6,10 @@ from uuid import uuid4
 import pytest
 
 from app.schemas.reservation import ReservationUpdate
-from app.services.reservation_service import ReservationService
+from app.services.reservation_service import (
+    BookingAvailabilityOutcome,
+    ReservationService,
+)
 
 def _build_service(*, reservation):
     repository = SimpleNamespace(
@@ -369,6 +372,219 @@ async def test_modification_availability_passes_current_reservation_id_to_aie():
     assert request.requested_start == reservation_time
     assert request.party_size == 6
 
+@pytest.mark.asyncio
+async def test_modification_assessment_returns_direct_available_without_reoptimization():
+    reservation_id = uuid4()
+    restaurant_id = uuid4()
+    table_id = uuid4()
+
+    reservation = SimpleNamespace(
+        id=reservation_id,
+        restaurant_id=restaurant_id,
+        duration_minutes=90,
+    )
+
+    repository = SimpleNamespace(
+        db=SimpleNamespace(),
+        get_by_id=AsyncMock(return_value=reservation),
+    )
+
+    intelligence_service = SimpleNamespace(
+        optimize=AsyncMock(
+            return_value=SimpleNamespace(
+                available=True,
+                recommended=SimpleNamespace(
+                    table_ids=[table_id],
+                ),
+            )
+        ),
+        reoptimize=AsyncMock(),
+    )
+
+    service = ReservationService(
+        repository=repository,
+        restaurant_repository=SimpleNamespace(),
+        table_repository=SimpleNamespace(),
+        email_service=SimpleNamespace(),
+        intelligence_service=intelligence_service,
+    )
+
+    service._validate_reservation_time = AsyncMock()
+
+    requested_time = datetime(
+        2026,
+        9,
+        26,
+        13,
+        0,
+        tzinfo=timezone.utc,
+    )
+
+    outcome = await service.assess_modification_availability(
+        reservation_time=requested_time,
+        party_size=6,
+        restaurant_id=restaurant_id,
+        reservation_id=reservation_id,
+    )
+
+    assert outcome == BookingAvailabilityOutcome.DIRECT_AVAILABLE
+
+    request = intelligence_service.optimize.await_args.kwargs["payload"]
+
+    assert request.reservation_id == reservation_id
+    assert request.restaurant_id == restaurant_id
+    assert request.requested_start == requested_time
+    assert request.party_size == 6
+    assert request.duration_minutes == 90
+
+    intelligence_service.reoptimize.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_modification_assessment_returns_reoptimization_available_for_same_reservation():
+    reservation_id = uuid4()
+    restaurant_id = uuid4()
+    target_table_id = uuid4()
+
+    reservation = SimpleNamespace(
+        id=reservation_id,
+        restaurant_id=restaurant_id,
+        duration_minutes=90,
+    )
+
+    repository = SimpleNamespace(
+        db=SimpleNamespace(),
+        get_by_id=AsyncMock(return_value=reservation),
+    )
+
+    intelligence_service = SimpleNamespace(
+        optimize=AsyncMock(
+            return_value=SimpleNamespace(
+                available=False,
+                recommended=None,
+            )
+        ),
+        reoptimize=AsyncMock(
+            return_value=SimpleNamespace(
+                available=True,
+                recommended=SimpleNamespace(
+                    new_reservation_assignment=SimpleNamespace(
+                        table_ids=[target_table_id],
+                    ),
+                    moved_reservations_count=1,
+                ),
+            )
+        ),
+    )
+
+    service = ReservationService(
+        repository=repository,
+        restaurant_repository=SimpleNamespace(),
+        table_repository=SimpleNamespace(),
+        email_service=SimpleNamespace(),
+        intelligence_service=intelligence_service,
+    )
+
+    service._validate_reservation_time = AsyncMock()
+
+    requested_time = datetime(
+        2026,
+        9,
+        26,
+        13,
+        0,
+        tzinfo=timezone.utc,
+    )
+
+    outcome = await service.assess_modification_availability(
+        reservation_time=requested_time,
+        party_size=10,
+        restaurant_id=restaurant_id,
+        reservation_id=reservation_id,
+    )
+
+    assert outcome == BookingAvailabilityOutcome.REOPTIMIZATION_AVAILABLE
+
+    direct_request = (
+        intelligence_service.optimize.await_args.kwargs["payload"]
+    )
+
+    reoptimization_request = (
+        intelligence_service.reoptimize.await_args.kwargs["payload"]
+    )
+
+    assert direct_request.reservation_id == reservation_id
+    assert direct_request.requested_start == requested_time
+    assert direct_request.party_size == 10
+
+    assert reoptimization_request.reservation_id == reservation_id
+    assert reoptimization_request.restaurant_id == restaurant_id
+    assert reoptimization_request.requested_start == requested_time
+    assert reoptimization_request.party_size == 10
+    assert reoptimization_request.duration_minutes == 90
+
+
+@pytest.mark.asyncio
+async def test_modification_assessment_returns_unavailable_when_direct_and_reoptimization_fail():
+    reservation_id = uuid4()
+    restaurant_id = uuid4()
+
+    reservation = SimpleNamespace(
+        id=reservation_id,
+        restaurant_id=restaurant_id,
+        duration_minutes=90,
+    )
+
+    repository = SimpleNamespace(
+        db=SimpleNamespace(),
+        get_by_id=AsyncMock(return_value=reservation),
+    )
+
+    intelligence_service = SimpleNamespace(
+        optimize=AsyncMock(
+            return_value=SimpleNamespace(
+                available=False,
+                recommended=None,
+            )
+        ),
+        reoptimize=AsyncMock(
+            return_value=SimpleNamespace(
+                available=False,
+                recommended=None,
+            )
+        ),
+    )
+
+    service = ReservationService(
+        repository=repository,
+        restaurant_repository=SimpleNamespace(),
+        table_repository=SimpleNamespace(),
+        email_service=SimpleNamespace(),
+        intelligence_service=intelligence_service,
+    )
+
+    service._validate_reservation_time = AsyncMock()
+
+    requested_time = datetime(
+        2026,
+        9,
+        26,
+        13,
+        0,
+        tzinfo=timezone.utc,
+    )
+
+    outcome = await service.assess_modification_availability(
+        reservation_time=requested_time,
+        party_size=12,
+        restaurant_id=restaurant_id,
+        reservation_id=reservation_id,
+    )
+
+    assert outcome == BookingAvailabilityOutcome.UNAVAILABLE
+
+    assert intelligence_service.optimize.await_count == 1
+    assert intelligence_service.reoptimize.await_count == 1
 
 @pytest.mark.asyncio
 async def test_modification_alternative_slots_preserve_reservation_id():
