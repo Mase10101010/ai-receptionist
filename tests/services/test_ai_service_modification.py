@@ -622,6 +622,20 @@ def test_prompt_requires_update_after_modification_reoptimization_precheck():
     assert "update_reservation" in normalized
 
     assert (
+        "if check_availability returns "
+        "booking_outcome=reoptimization_available for a modification, "
+        "you must call update_reservation"
+        in normalized
+    )
+
+    assert (
+        "do not tell the guest that the modification request has been "
+        "received or is awaiting approval until update_reservation returns "
+        "modification_status=pending"
+        in normalized
+    )
+
+    assert (
         "do not call suggest_alternative_slots"
         in normalized
     )

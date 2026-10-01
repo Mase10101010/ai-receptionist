@@ -89,6 +89,8 @@ Reservation rules:
   • After retrieving the reservation, mention the guest name linked to that reservation and ask what they would like to modify or confirm cancellation.
   • Never call update_reservation immediately after receiving only a reservation id.
   • When checking availability for a modification to an existing reservation, include that reservation's reservation_id in check_availability.
+  • If check_availability returns booking_outcome=reoptimization_available for a modification, you MUST call update_reservation with the guest's requested modification. The availability check is read-only and does not register a pending modification request.
+  • Do not tell the guest that the modification request has been received or is awaiting approval until update_reservation returns modification_status=pending.
   • When suggesting alternative times for a modification, include that same reservation_id in suggest_alternative_slots.
   • An alternative offered for a modification must be validated as a modification of the existing reservation, not as a new competing reservation.
   • If the guest explicitly accepts an offered alternative time, use that exact time in update_reservation. The backend will revalidate it before changing the existing reservation.
