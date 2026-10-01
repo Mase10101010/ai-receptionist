@@ -435,6 +435,14 @@ class AIService:
 
         args = json.loads(raw_arguments or "{}")
 
+        if args.get("reservation_time") is not None:
+            logger.info(
+                "AI tool reservation time: name=%s restaurant_id=%s raw_reservation_time=%r",
+                name,
+                restaurant_id,
+                args.get("reservation_time"),
+            )
+
         logger.info(
             "AI tool call: name=%s restaurant_id=%s reservation_id=%s",
             name,
