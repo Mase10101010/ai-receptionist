@@ -757,7 +757,7 @@ class ReservationService:
         The existing reservation remains authoritative until the proposal
         is successfully executed.
         """
-        reservation = await self.reservation_repo.get_by_id(
+        reservation = await self.repository.get_by_id(
             reservation_id
         )
 
@@ -791,12 +791,12 @@ class ReservationService:
             )
 
         suggestion_repo = AISuggestionRepository(
-            self.reservation_repo.db
+            self.repository.db
         )
 
         suggestion_service = AISuggestionService(
             repository=suggestion_repo,
-            reservation_repository=self.reservation_repo,
+            reservation_repository=self.repository,
             intelligence_service=self.intelligence_service,
         )
 
@@ -2175,4 +2175,5 @@ class ReservationService:
                 "Sorry, we don't have availability for that time. "
                 "Please try a different time slot."
             )
+
 

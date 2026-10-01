@@ -1,7 +1,9 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
+
+from app.models.reservation import ReservationStatus
 
 import pytest
 
@@ -836,3 +838,71 @@ async def test_accepted_alternative_is_revalidated_and_lost_slot_leaves_original
     assert reservation.reservation_time == original_time
     assert reservation.party_size == 6
     assert reservation.table_id == old_table_id
+
+@pytest.mark.asyncio
+async def test_modification_reoptimization_proposal_uses_service_repository():
+    reservation_id = uuid4()
+    restaurant_id = uuid4()
+
+    reservation = SimpleNamespace(
+        id=reservation_id,
+        restaurant_id=restaurant_id,
+        reservation_time=datetime(
+            2026,
+            10,
+            6,
+            4,
+            0,
+            tzinfo=timezone.utc,
+        ),
+        party_size=6,
+        duration_minutes=90,
+        status=ReservationStatus.CONFIRMED,
+    )
+
+    service, repository = _build_service(
+        reservation=reservation,
+    )
+
+    expected_suggestion = SimpleNamespace(
+        id=uuid4(),
+    )
+
+    analyze = AsyncMock(
+        return_value=expected_suggestion,
+    )
+
+    with patch(
+        "app.services.reservation_service.AISuggestionService"
+    ) as suggestion_service_class:
+        suggestion_service_class.return_value.analyze_reservation_modification = (
+            analyze
+        )
+
+        result = await service.propose_reservation_modification_reoptimization(
+            reservation_id=reservation_id,
+            payload=ReservationUpdate(
+                party_size=8,
+            ),
+        )
+
+    repository.get_by_id.assert_awaited_once_with(
+        reservation_id
+    )
+
+    suggestion_service_class.assert_called_once()
+
+    constructor_call = suggestion_service_class.call_args
+
+    assert (
+        constructor_call.kwargs["reservation_repository"]
+        is repository
+    )
+
+    analyze.assert_awaited_once_with(
+        reservation,
+        requested_party_size=8,
+        requested_reservation_time=reservation.reservation_time,
+    )
+
+    assert result is expected_suggestion
