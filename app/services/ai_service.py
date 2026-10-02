@@ -450,11 +450,16 @@ class AIService:
 
             msg = response.choices[0].message
             logger.info(
-                "AI completion round: round=%d has_tool_calls=%s tools=%s content=%r",
+                "AI completion round: round=%d has_tool_calls=%s tools=%s arguments=%s content=%r",
                 completion_round + 1,
                 bool(msg.tool_calls),
                 (
                     [tc.function.name for tc in msg.tool_calls]
+                    if msg.tool_calls
+                    else []
+                ),
+                (
+                    [tc.function.arguments for tc in msg.tool_calls]
                     if msg.tool_calls
                     else []
                 ),
