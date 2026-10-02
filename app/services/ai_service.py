@@ -1070,4 +1070,10 @@ class AIService:
             return {"error": "unknown tool"}, None
 
         except Exception as e:
+            logger.exception(
+                "AI tool execution failed: name=%s restaurant_id=%s reservation_id=%s",
+                name,
+                restaurant_id,
+                args.get("reservation_id"),
+            )
             return {"error": str(e)}, None
