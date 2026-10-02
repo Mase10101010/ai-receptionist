@@ -738,6 +738,17 @@ class AIService:
                         restaurant_id=restaurant_id,
                     )
 
+                logger.info(
+                    (
+                        "AI availability result: reservation_id=%s "
+                        "outcome=%s requested_time=%s party_size=%s"
+                    ),
+                    existing_reservation_id,
+                    outcome.value,
+                    requested_time.isoformat(),
+                    requested_party_size,
+                )
+
                 return {
                     "available": (
                         outcome != BookingAvailabilityOutcome.UNAVAILABLE
