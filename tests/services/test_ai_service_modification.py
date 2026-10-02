@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
+import json
 
 import pytest
 
@@ -639,3 +640,818 @@ def test_prompt_requires_update_after_modification_reoptimization_precheck():
         "do not call suggest_alternative_slots"
         in normalized
     )
+
+@pytest.mark.asyncio
+async def test_direct_guest_modification_preserves_local_wall_clock_time():
+    service, reservation_service = _build_ai_service()
+
+    reservation_id = uuid4()
+    restaurant_id = uuid4()
+
+    updated_reservation = SimpleNamespace(
+        id=reservation_id,
+        reservation_time=datetime.fromisoformat(
+            "2026-10-07T19:45:00+08:00"
+        ),
+        party_size=6,
+        status=SimpleNamespace(value="confirmed"),
+    )
+
+    reservation_service.update_reservation.return_value = updated_reservation
+
+    result, returned_reservation_id = await service._execute_tool(
+        name="update_reservation",
+        raw_arguments=(
+            "{"
+            f'"reservation_id": "{reservation_id}",'
+            '"reservation_time": "2026-10-07T11:45:00+08:00",'
+            '"reservation_local_datetime": "2026-10-07T19:45:00",'
+            '"reservation_time_source": "guest_local",'
+            '"party_size": 6'
+            "}"
+        ),
+        restaurant_id=restaurant_id,
+        timezone_name="Australia/Perth",
+    )
+
+    assert result["success"] is True
+    assert returned_reservation_id == reservation_id
+
+    reservation_service.update_reservation.assert_awaited_once()
+
+    call = reservation_service.update_reservation.await_args
+    payload = call.kwargs["payload"]
+
+    assert payload.reservation_time.isoformat() == (
+        "2026-10-07T19:45:00+08:00"
+    )
+
+@pytest.mark.asyncio
+async def test_guest_local_modification_without_local_datetime_fails_closed():
+    service, reservation_service = _build_ai_service()
+
+    reservation_id = uuid4()
+    restaurant_id = uuid4()
+
+    result, returned_reservation_id = await service._execute_tool(
+        name="update_reservation",
+        raw_arguments=(
+            "{"
+            f'"reservation_id": "{reservation_id}",'
+            '"reservation_time": "2026-10-07T11:45:00+08:00",'
+            '"reservation_time_source": "guest_local",'
+            '"party_size": 6'
+            "}"
+        ),
+        restaurant_id=restaurant_id,
+        timezone_name="Australia/Perth",
+    )
+
+    assert returned_reservation_id is None
+    assert "error" in result
+
+    reservation_service.update_reservation.assert_not_awaited()
+    reservation_service.propose_reservation_modification_reoptimization.assert_not_awaited()
+
+@pytest.mark.asyncio
+async def test_guest_local_modification_with_timezone_offset_fails_closed():
+    service, reservation_service = _build_ai_service()
+
+    reservation_id = uuid4()
+    restaurant_id = uuid4()
+
+    result, returned_reservation_id = await service._execute_tool(
+        name="update_reservation",
+        raw_arguments=(
+            "{"
+            f'"reservation_id": "{reservation_id}",'
+            '"reservation_time": "2026-10-07T11:45:00+08:00",'
+            '"reservation_local_datetime": "2026-10-07T19:45:00+08:00",'
+            '"reservation_time_source": "guest_local",'
+            '"party_size": 6'
+            "}"
+        ),
+        restaurant_id=restaurant_id,
+        timezone_name="Australia/Perth",
+    )
+
+    assert returned_reservation_id is None
+    assert "error" in result
+
+    reservation_service.update_reservation.assert_not_awaited()
+    reservation_service.propose_reservation_modification_reoptimization.assert_not_awaited()
+
+@pytest.mark.asyncio
+async def test_guest_local_modification_precheck_preserves_local_wall_clock_time():
+    service, reservation_service = _build_ai_service()
+
+    reservation_id = uuid4()
+    restaurant_id = uuid4()
+
+    reservation_service.assess_modification_availability.return_value = (
+        BookingAvailabilityOutcome.DIRECT_AVAILABLE
+    )
+
+    await service._execute_tool(
+        name="check_availability",
+        raw_arguments=(
+            "{"
+            f'"reservation_id": "{reservation_id}",'
+            '"reservation_time": "2026-10-07T11:45:00+08:00",'
+            '"reservation_local_datetime": "2026-10-07T19:45:00",'
+            '"party_size": 6,'
+            '"customer_provided_date": true,'
+            '"customer_provided_time": true,'
+            '"customer_provided_party_size": true'
+            "}"
+        ),
+        restaurant_id=restaurant_id,
+        timezone_name="Australia/Perth",
+    )
+
+    call = reservation_service.assess_modification_availability.await_args
+
+    assert call.kwargs["reservation_time"].isoformat() == (
+        "2026-10-07T19:45:00+08:00"
+    )
+
+@pytest.mark.asyncio
+async def test_completion_loop_rejects_guest_local_update_time_different_from_validated_check():
+    service, reservation_service = _build_ai_service()
+
+    reservation_id = uuid4()
+    restaurant_id = uuid4()
+
+    reservation_service.assess_modification_availability.return_value = (
+        BookingAvailabilityOutcome.DIRECT_AVAILABLE
+    )
+
+    fake_updated_reservation = MagicMock()
+    fake_updated_reservation.id = reservation_id
+    fake_updated_reservation.status.value = "confirmed"
+    fake_updated_reservation.customer_name = "Luca Test"
+    fake_updated_reservation.customer_email = "luca@example.com"
+    fake_updated_reservation.customer_phone = "3333333333"
+    fake_updated_reservation.party_size = 6
+    fake_updated_reservation.reservation_time = __import__(
+        "datetime"
+    ).datetime.fromisoformat("2026-10-07T11:45:00+08:00")
+    fake_updated_reservation.special_requests = ""
+
+    reservation_service.update_reservation.return_value = fake_updated_reservation
+
+    check_tool_call = MagicMock()
+    check_tool_call.id = "call_lab009_mod_check"
+    check_tool_call.function.name = "check_availability"
+    check_tool_call.function.arguments = json.dumps(
+        {
+            "reservation_id": str(reservation_id),
+            "reservation_time": "2026-10-07T11:45:00+08:00",
+            "reservation_local_datetime": "2026-10-07T19:45:00",
+            "party_size": 6,
+            "customer_provided_date": True,
+            "customer_provided_time": True,
+            "customer_provided_party_size": True,
+        }
+    )
+
+    check_message = MagicMock()
+    check_message.content = None
+    check_message.tool_calls = [check_tool_call]
+
+    check_response = MagicMock()
+    check_response.choices = [MagicMock(message=check_message)]
+
+    update_tool_call = MagicMock()
+    update_tool_call.id = "call_lab009_mod_update"
+    update_tool_call.function.name = "update_reservation"
+    update_tool_call.function.arguments = json.dumps(
+        {
+            "reservation_id": str(reservation_id),
+            "reservation_time": "2026-10-07T11:45:00+08:00",
+            "reservation_local_datetime": "2026-10-07T20:00:00",
+            "reservation_time_source": "guest_local",
+            "party_size": 6,
+        }
+    )
+
+    update_message = MagicMock()
+    update_message.content = None
+    update_message.tool_calls = [update_tool_call]
+
+    update_response = MagicMock()
+    update_response.choices = [MagicMock(message=update_message)]
+
+    final_message = MagicMock()
+    final_message.content = "Non posso applicare questa modifica."
+    final_message.tool_calls = None
+
+    final_response = MagicMock()
+    final_response.choices = [MagicMock(message=final_message)]
+
+    service.client.chat.completions.create = AsyncMock(
+        side_effect=[
+            check_response,
+            update_response,
+            final_response,
+        ]
+    )
+
+    messages = [
+        {
+            "role": "system",
+            "content": "Test system prompt",
+        },
+        {
+            "role": "user",
+            "content": (
+                "Vorrei modificare la prenotazione alle 19:45."
+            ),
+        },
+    ]
+
+    await service._run_completion_loop(
+        messages=messages,
+        restaurant_id=restaurant_id,
+        session_id="lab-009-check-update-consistency",
+        timezone_name="Australia/Perth",
+    )
+
+    reservation_service.assess_modification_availability.assert_awaited_once()
+    reservation_service.update_reservation.assert_not_awaited()
+
+@pytest.mark.asyncio
+async def test_completion_loop_allows_guest_local_update_matching_validated_check():
+    service, reservation_service = _build_ai_service()
+
+    reservation_id = uuid4()
+    restaurant_id = uuid4()
+
+    reservation_service.assess_modification_availability.return_value = (
+        BookingAvailabilityOutcome.DIRECT_AVAILABLE
+    )
+
+    fake_updated_reservation = MagicMock()
+    fake_updated_reservation.id = reservation_id
+    fake_updated_reservation.status.value = "confirmed"
+    fake_updated_reservation.customer_name = "Luca Test"
+    fake_updated_reservation.customer_email = "luca@example.com"
+    fake_updated_reservation.customer_phone = "3333333333"
+    fake_updated_reservation.party_size = 6
+    fake_updated_reservation.reservation_time = __import__(
+        "datetime"
+    ).datetime.fromisoformat("2026-10-07T19:45:00+08:00")
+    fake_updated_reservation.special_requests = ""
+
+    reservation_service.update_reservation.return_value = fake_updated_reservation
+
+    check_tool_call = MagicMock()
+    check_tool_call.id = "call_lab009_mod_check_matching"
+    check_tool_call.function.name = "check_availability"
+    check_tool_call.function.arguments = json.dumps(
+        {
+            "reservation_id": str(reservation_id),
+            "reservation_time": "2026-10-07T11:45:00+08:00",
+            "reservation_local_datetime": "2026-10-07T19:45:00",
+            "party_size": 6,
+            "customer_provided_date": True,
+            "customer_provided_time": True,
+            "customer_provided_party_size": True,
+        }
+    )
+
+    check_message = MagicMock()
+    check_message.content = None
+    check_message.tool_calls = [check_tool_call]
+
+    check_response = MagicMock()
+    check_response.choices = [MagicMock(message=check_message)]
+
+    update_tool_call = MagicMock()
+    update_tool_call.id = "call_lab009_mod_update_matching"
+    update_tool_call.function.name = "update_reservation"
+    update_tool_call.function.arguments = json.dumps(
+        {
+            "reservation_id": str(reservation_id),
+            "reservation_time": "2026-10-07T11:45:00+08:00",
+            "reservation_local_datetime": "2026-10-07T19:45:00",
+            "reservation_time_source": "guest_local",
+            "party_size": 6,
+        }
+    )
+
+    update_message = MagicMock()
+    update_message.content = None
+    update_message.tool_calls = [update_tool_call]
+
+    update_response = MagicMock()
+    update_response.choices = [MagicMock(message=update_message)]
+
+    final_message = MagicMock()
+    final_message.content = "Modifica confermata."
+    final_message.tool_calls = None
+
+    final_response = MagicMock()
+    final_response.choices = [MagicMock(message=final_message)]
+
+    service.client.chat.completions.create = AsyncMock(
+        side_effect=[
+            check_response,
+            update_response,
+            final_response,
+        ]
+    )
+
+    messages = [
+        {
+            "role": "system",
+            "content": "Test system prompt",
+        },
+        {
+            "role": "user",
+            "content": "Vorrei modificare la prenotazione alle 19:45.",
+        },
+    ]
+
+    await service._run_completion_loop(
+        messages=messages,
+        restaurant_id=restaurant_id,
+        session_id="lab-009-check-update-matching",
+        timezone_name="Australia/Perth",
+    )
+
+    reservation_service.assess_modification_availability.assert_awaited_once()
+    reservation_service.update_reservation.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_completion_loop_uses_validated_check_time_for_alternative_search():
+    service, reservation_service = _build_ai_service()
+
+    reservation_id = uuid4()
+    different_reservation_id = uuid4()
+    restaurant_id = uuid4()
+
+    reservation_service.assess_modification_availability.return_value = (
+        BookingAvailabilityOutcome.UNAVAILABLE
+    )
+
+    alternative_time = datetime.fromisoformat(
+        "2026-10-07T20:00:00+08:00"
+    )
+
+    reservation_service.suggest_alternative_slots.return_value = [
+        alternative_time
+    ]
+
+    check_tool_call = MagicMock()
+    check_tool_call.id = "call_lab009_alt_check"
+    check_tool_call.function.name = "check_availability"
+    check_tool_call.function.arguments = json.dumps(
+        {
+            "reservation_id": str(reservation_id),
+            "reservation_time": "2026-10-07T11:45:00+08:00",
+            "reservation_local_datetime": "2026-10-07T19:45:00",
+            "party_size": 6,
+            "customer_provided_date": True,
+            "customer_provided_time": True,
+            "customer_provided_party_size": True,
+        }
+    )
+
+    check_message = MagicMock()
+    check_message.content = None
+    check_message.tool_calls = [check_tool_call]
+
+    check_response = MagicMock()
+    check_response.choices = [MagicMock(message=check_message)]
+
+    alternatives_tool_call = MagicMock()
+    alternatives_tool_call.id = "call_lab009_alt_search"
+    alternatives_tool_call.function.name = "suggest_alternative_slots"
+    alternatives_tool_call.function.arguments = json.dumps(
+        {
+            "reservation_id": str(different_reservation_id),
+
+            # Simulates semantic drift after CHECK:
+            # validated 19:45 local, but alternatives are requested
+            # around 11:45 local instead.
+            "reservation_time": "2026-10-07T11:45:00+08:00",
+
+            "party_size": 8,
+        }
+    )
+
+    alternatives_message = MagicMock()
+    alternatives_message.content = None
+    alternatives_message.tool_calls = [alternatives_tool_call]
+
+    alternatives_response = MagicMock()
+    alternatives_response.choices = [
+        MagicMock(message=alternatives_message)
+    ]
+
+    final_message = MagicMock()
+    final_message.content = "Non posso proporre alternative."
+    final_message.tool_calls = None
+
+    final_response = MagicMock()
+    final_response.choices = [MagicMock(message=final_message)]
+
+    service.client.chat.completions.create = AsyncMock(
+        side_effect=[
+            check_response,
+            alternatives_response,
+            final_response,
+        ]
+    )
+
+    messages = [
+        {
+            "role": "system",
+            "content": "Test system prompt",
+        },
+        {
+            "role": "user",
+            "content": (
+                "Vorrei modificare la prenotazione alle 19:45."
+            ),
+        },
+    ]
+
+    await service._run_completion_loop(
+        messages=messages,
+        restaurant_id=restaurant_id,
+        session_id="lab-009-check-alternatives-consistency",
+        timezone_name="Australia/Perth",
+    )
+
+    reservation_service.assess_modification_availability.assert_awaited_once()
+
+    reservation_service.suggest_alternative_slots.assert_awaited_once()
+
+    call = reservation_service.suggest_alternative_slots.await_args
+
+    assert call.kwargs["reservation_time"].isoformat() == (
+        "2026-10-07T19:45:00+08:00"
+    )
+    assert call.kwargs["party_size"] == 6
+    assert call.kwargs["reservation_id"] == reservation_id
+
+@pytest.mark.asyncio
+async def test_completion_loop_rejects_update_for_different_reservation_than_validated_check():
+    service, reservation_service = _build_ai_service()
+
+    reservation_id = uuid4()
+    different_reservation_id = uuid4()
+    restaurant_id = uuid4()
+
+    reservation_service.assess_modification_availability.return_value = (
+        BookingAvailabilityOutcome.DIRECT_AVAILABLE
+    )
+
+    fake_updated_reservation = MagicMock()
+    fake_updated_reservation.id = different_reservation_id
+    fake_updated_reservation.status.value = "confirmed"
+    fake_updated_reservation.customer_name = "Luca Test"
+    fake_updated_reservation.customer_email = "luca@example.com"
+    fake_updated_reservation.customer_phone = "3333333333"
+    fake_updated_reservation.party_size = 6
+    fake_updated_reservation.reservation_time = __import__(
+        "datetime"
+    ).datetime.fromisoformat("2026-10-07T19:45:00+08:00")
+    fake_updated_reservation.special_requests = ""
+
+    reservation_service.update_reservation.return_value = (
+        fake_updated_reservation
+    )
+
+    # CHECK reservation A at 19:45 local.
+    check_tool_call = MagicMock()
+    check_tool_call.id = "call_lab009_identity_check"
+    check_tool_call.function.name = "check_availability"
+    check_tool_call.function.arguments = json.dumps(
+        {
+            "reservation_id": str(reservation_id),
+            "reservation_time": "2026-10-07T11:45:00+08:00",
+            "reservation_local_datetime": "2026-10-07T19:45:00",
+            "party_size": 6,
+            "customer_provided_date": True,
+            "customer_provided_time": True,
+            "customer_provided_party_size": True,
+        }
+    )
+
+    check_message = MagicMock()
+    check_message.content = None
+    check_message.tool_calls = [check_tool_call]
+
+    check_response = MagicMock()
+    check_response.choices = [
+        MagicMock(message=check_message)
+    ]
+
+    # UPDATE keeps exactly the same validated time and party size,
+    # but tries to modify a DIFFERENT reservation.
+    update_tool_call = MagicMock()
+    update_tool_call.id = "call_lab009_identity_update"
+    update_tool_call.function.name = "update_reservation"
+    update_tool_call.function.arguments = json.dumps(
+        {
+            "reservation_id": str(different_reservation_id),
+            "reservation_time": "2026-10-07T11:45:00+08:00",
+            "reservation_local_datetime": "2026-10-07T19:45:00",
+            "reservation_time_source": "guest_local",
+            "party_size": 6,
+        }
+    )
+
+    update_message = MagicMock()
+    update_message.content = None
+    update_message.tool_calls = [update_tool_call]
+
+    update_response = MagicMock()
+    update_response.choices = [
+        MagicMock(message=update_message)
+    ]
+
+    final_message = MagicMock()
+    final_message.content = "Non posso applicare questa modifica."
+    final_message.tool_calls = None
+
+    final_response = MagicMock()
+    final_response.choices = [
+        MagicMock(message=final_message)
+    ]
+
+    service.client.chat.completions.create = AsyncMock(
+        side_effect=[
+            check_response,
+            update_response,
+            final_response,
+        ]
+    )
+
+    messages = [
+        {
+            "role": "system",
+            "content": "Test system prompt",
+        },
+        {
+            "role": "user",
+            "content": (
+                "Vorrei modificare la prenotazione alle 19:45."
+            ),
+        },
+    ]
+
+    await service._run_completion_loop(
+        messages=messages,
+        restaurant_id=restaurant_id,
+        session_id="lab-009-check-update-identity",
+        timezone_name="Australia/Perth",
+    )
+
+    reservation_service.assess_modification_availability.assert_awaited_once()
+
+    reservation_service.update_reservation.assert_not_awaited()
+
+@pytest.mark.asyncio
+async def test_completion_loop_rejects_update_party_size_different_from_validated_check():
+    service, reservation_service = _build_ai_service()
+
+    reservation_id = uuid4()
+    restaurant_id = uuid4()
+
+    reservation_service.assess_modification_availability.return_value = (
+        BookingAvailabilityOutcome.DIRECT_AVAILABLE
+    )
+
+    fake_updated_reservation = MagicMock()
+    fake_updated_reservation.id = reservation_id
+    fake_updated_reservation.status.value = "confirmed"
+    fake_updated_reservation.customer_name = "Luca Test"
+    fake_updated_reservation.customer_email = "luca@example.com"
+    fake_updated_reservation.customer_phone = "3333333333"
+    fake_updated_reservation.party_size = 8
+    fake_updated_reservation.reservation_time = __import__(
+        "datetime"
+    ).datetime.fromisoformat("2026-10-07T19:45:00+08:00")
+    fake_updated_reservation.special_requests = ""
+
+    reservation_service.update_reservation.return_value = (
+        fake_updated_reservation
+    )
+
+    # CHECK reservation A at 19:45 local for 6 guests.
+    check_tool_call = MagicMock()
+    check_tool_call.id = "call_lab009_party_check"
+    check_tool_call.function.name = "check_availability"
+    check_tool_call.function.arguments = json.dumps(
+        {
+            "reservation_id": str(reservation_id),
+            "reservation_time": "2026-10-07T11:45:00+08:00",
+            "reservation_local_datetime": "2026-10-07T19:45:00",
+            "party_size": 6,
+            "customer_provided_date": True,
+            "customer_provided_time": True,
+            "customer_provided_party_size": True,
+        }
+    )
+
+    check_message = MagicMock()
+    check_message.content = None
+    check_message.tool_calls = [check_tool_call]
+
+    check_response = MagicMock()
+    check_response.choices = [
+        MagicMock(message=check_message)
+    ]
+
+    # UPDATE keeps the same reservation and validated time,
+    # but changes party size from 6 to 8.
+    update_tool_call = MagicMock()
+    update_tool_call.id = "call_lab009_party_update"
+    update_tool_call.function.name = "update_reservation"
+    update_tool_call.function.arguments = json.dumps(
+        {
+            "reservation_id": str(reservation_id),
+            "reservation_time": "2026-10-07T11:45:00+08:00",
+            "reservation_local_datetime": "2026-10-07T19:45:00",
+            "reservation_time_source": "guest_local",
+            "party_size": 8,
+        }
+    )
+
+    update_message = MagicMock()
+    update_message.content = None
+    update_message.tool_calls = [update_tool_call]
+
+    update_response = MagicMock()
+    update_response.choices = [
+        MagicMock(message=update_message)
+    ]
+
+    final_message = MagicMock()
+    final_message.content = "Non posso applicare questa modifica."
+    final_message.tool_calls = None
+
+    final_response = MagicMock()
+    final_response.choices = [
+        MagicMock(message=final_message)
+    ]
+
+    service.client.chat.completions.create = AsyncMock(
+        side_effect=[
+            check_response,
+            update_response,
+            final_response,
+        ]
+    )
+
+    messages = [
+        {
+            "role": "system",
+            "content": "Test system prompt",
+        },
+        {
+            "role": "user",
+            "content": (
+                "Vorrei modificare la prenotazione alle 19:45 "
+                "per 6 persone."
+            ),
+        },
+    ]
+
+    await service._run_completion_loop(
+        messages=messages,
+        restaurant_id=restaurant_id,
+        session_id="lab-009-check-update-party-size",
+        timezone_name="Australia/Perth",
+    )
+
+    reservation_service.assess_modification_availability.assert_awaited_once()
+
+    reservation_service.update_reservation.assert_not_awaited()
+
+@pytest.mark.asyncio
+async def test_completion_loop_allows_backend_alternative_after_validated_check():
+    service, reservation_service = _build_ai_service()
+
+    reservation_id = uuid4()
+    restaurant_id = uuid4()
+
+    reservation_service.assess_modification_availability.return_value = (
+        BookingAvailabilityOutcome.UNAVAILABLE
+    )
+
+    accepted_alternative_time = datetime.fromisoformat(
+        "2026-10-07T20:00:00+08:00"
+    )
+
+    fake_updated_reservation = MagicMock()
+    fake_updated_reservation.id = reservation_id
+    fake_updated_reservation.status.value = "confirmed"
+    fake_updated_reservation.customer_name = "Luca Test"
+    fake_updated_reservation.customer_email = "luca@example.com"
+    fake_updated_reservation.customer_phone = "3333333333"
+    fake_updated_reservation.party_size = 6
+    fake_updated_reservation.reservation_time = accepted_alternative_time
+    fake_updated_reservation.special_requests = ""
+
+    reservation_service.update_reservation.return_value = (
+        fake_updated_reservation
+    )
+
+    # Original guest request validated at 19:45 local.
+    check_tool_call = MagicMock()
+    check_tool_call.id = "call_lab008_backend_alt_check"
+    check_tool_call.function.name = "check_availability"
+    check_tool_call.function.arguments = json.dumps(
+        {
+            "reservation_id": str(reservation_id),
+            "reservation_time": "2026-10-07T11:45:00+08:00",
+            "reservation_local_datetime": "2026-10-07T19:45:00",
+            "party_size": 6,
+            "customer_provided_date": True,
+            "customer_provided_time": True,
+            "customer_provided_party_size": True,
+        }
+    )
+
+    check_message = MagicMock()
+    check_message.content = None
+    check_message.tool_calls = [check_tool_call]
+
+    check_response = MagicMock()
+    check_response.choices = [
+        MagicMock(message=check_message)
+    ]
+
+    # Guest accepts an exact time previously produced by the backend.
+    # It must remain canonical and must NOT be reinterpreted as guest-local.
+    update_tool_call = MagicMock()
+    update_tool_call.id = "call_lab008_backend_alt_update"
+    update_tool_call.function.name = "update_reservation"
+    update_tool_call.function.arguments = json.dumps(
+        {
+            "reservation_id": str(reservation_id),
+            "reservation_time": accepted_alternative_time.isoformat(),
+            "reservation_time_source": "backend_alternative",
+            "party_size": 6,
+        }
+    )
+
+    update_message = MagicMock()
+    update_message.content = None
+    update_message.tool_calls = [update_tool_call]
+
+    update_response = MagicMock()
+    update_response.choices = [
+        MagicMock(message=update_message)
+    ]
+
+    final_message = MagicMock()
+    final_message.content = "Modifica confermata."
+    final_message.tool_calls = None
+
+    final_response = MagicMock()
+    final_response.choices = [
+        MagicMock(message=final_message)
+    ]
+
+    service.client.chat.completions.create = AsyncMock(
+        side_effect=[
+            check_response,
+            update_response,
+            final_response,
+        ]
+    )
+
+    messages = [
+        {
+            "role": "system",
+            "content": "Test system prompt",
+        },
+        {
+            "role": "user",
+            "content": "Accetto l'alternativa delle 20:00.",
+        },
+    ]
+
+    await service._run_completion_loop(
+        messages=messages,
+        restaurant_id=restaurant_id,
+        session_id="lab-008-backend-alternative-regression",
+        timezone_name="Australia/Perth",
+    )
+
+    reservation_service.assess_modification_availability.assert_awaited_once()
+
+    reservation_service.update_reservation.assert_awaited_once()
+
+    call = reservation_service.update_reservation.await_args
+    payload = call.kwargs["payload"]
+
+    assert call.kwargs["reservation_id"] == reservation_id
+    assert payload.reservation_time == accepted_alternative_time
+    assert payload.party_size == 6
