@@ -13,6 +13,7 @@ from app.services.reservation_service import BookingAvailabilityOutcome
 
 def _build_ai_service():
     reservation_service = SimpleNamespace(
+        get_reservation=AsyncMock(),
         check_availability=AsyncMock(),
         assess_booking_availability=AsyncMock(),
         assess_modification_availability=AsyncMock(),
@@ -1455,3 +1456,144 @@ async def test_completion_loop_allows_backend_alternative_after_validated_check(
     assert call.kwargs["reservation_id"] == reservation_id
     assert payload.reservation_time == accepted_alternative_time
     assert payload.party_size == 6
+
+@pytest.mark.asyncio
+async def test_completion_loop_returns_final_reply_after_production_like_modification_flow():
+    service, reservation_service = _build_ai_service()
+
+    reservation_id = uuid4()
+    restaurant_id = uuid4()
+
+    existing_reservation = MagicMock()
+    existing_reservation.id = reservation_id
+    existing_reservation.customer_name = "Mario Sinesi"
+    existing_reservation.customer_email = "mario@example.com"
+    existing_reservation.customer_phone = "3333333333"
+    existing_reservation.party_size = 2
+    existing_reservation.reservation_time = datetime.fromisoformat(
+        "2026-10-07T19:15:00+08:00"
+    )
+    existing_reservation.special_requests = ""
+    existing_reservation.status.value = "confirmed"
+
+    reservation_service.get_reservation.return_value = existing_reservation
+
+    reservation_service.assess_modification_availability.return_value = (
+        BookingAvailabilityOutcome.DIRECT_AVAILABLE
+    )
+    reservation_service.assess_booking_availability.return_value = (
+        BookingAvailabilityOutcome.DIRECT_AVAILABLE
+    )
+
+    updated_reservation = MagicMock()
+    updated_reservation.id = reservation_id
+    updated_reservation.customer_name = "Mario Sinesi"
+    updated_reservation.customer_email = "mario@example.com"
+    updated_reservation.customer_phone = "3333333333"
+    updated_reservation.party_size = 2
+    updated_reservation.reservation_time = datetime.fromisoformat(
+        "2026-10-07T19:30:00+08:00"
+    )
+    updated_reservation.special_requests = ""
+    updated_reservation.status.value = "confirmed"
+
+    reservation_service.update_reservation.return_value = updated_reservation
+
+    def tool_response(call_id, name, arguments):
+        tool_call = MagicMock()
+        tool_call.id = call_id
+        tool_call.function.name = name
+        tool_call.function.arguments = json.dumps(arguments)
+
+        message = MagicMock()
+        message.content = None
+        message.tool_calls = [tool_call]
+
+        response = MagicMock()
+        response.choices = [MagicMock(message=message)]
+        return response
+
+    get_response = tool_response(
+        "call_get",
+        "get_reservation",
+        {"reservation_id": str(reservation_id)},
+    )
+
+    modification_check_response = tool_response(
+        "call_mod_check",
+        "check_availability",
+        {
+            "reservation_id": str(reservation_id),
+            "reservation_time": "2026-10-07T11:30:00+08:00",
+            "reservation_local_datetime": "2026-10-07T19:30:00",
+            "party_size": 2,
+            "customer_provided_date": True,
+            "customer_provided_time": True,
+            "customer_provided_party_size": True,
+        },
+    )
+
+    redundant_booking_check_response = tool_response(
+        "call_redundant_check",
+        "check_availability",
+        {
+            "reservation_time": "2026-10-07T11:30:00+08:00",
+            "reservation_local_datetime": "2026-10-07T19:30:00",
+            "party_size": 2,
+            "customer_provided_date": True,
+            "customer_provided_time": True,
+            "customer_provided_party_size": True,
+        },
+    )
+
+    update_response = tool_response(
+        "call_update",
+        "update_reservation",
+        {
+            "reservation_id": str(reservation_id),
+            "reservation_time": "2026-10-07T11:30:00+08:00",
+            "reservation_local_datetime": "2026-10-07T19:30:00",
+            "reservation_time_source": "guest_local",
+            "party_size": 2,
+        },
+    )
+
+    final_message = MagicMock()
+    final_message.content = "La prenotazione è stata modificata alle 19:30."
+    final_message.tool_calls = None
+
+    final_response = MagicMock()
+    final_response.choices = [MagicMock(message=final_message)]
+
+    service.client.chat.completions.create = AsyncMock(
+        side_effect=[
+            get_response,
+            modification_check_response,
+            redundant_booking_check_response,
+            update_response,
+            final_response,
+        ]
+    )
+
+    reply, returned_reservation_id, reservation_status = (
+        await service._run_completion_loop(
+            messages=[
+                {"role": "system", "content": "Test system prompt"},
+                {
+                    "role": "user",
+                    "content": (
+                        "Vorrei modificare la prenotazione dalle 19:15 "
+                        "alle 19:30."
+                    ),
+                },
+            ],
+            restaurant_id=restaurant_id,
+            session_id="production-like-modification-flow",
+            timezone_name="Australia/Perth",
+        )
+    )
+
+    assert reply == "La prenotazione è stata modificata alle 19:30."
+    assert returned_reservation_id == reservation_id
+    assert reservation_status == "confirmed"
+    reservation_service.update_reservation.assert_awaited_once()

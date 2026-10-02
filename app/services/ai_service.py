@@ -435,7 +435,7 @@ class AIService:
         validated_reservation_id: str | None = None
         validated_party_size: int | None = None
 
-        for _ in range(5):
+        for completion_round in range(5):
 
             try:
                 response = await self.client.chat.completions.create(
@@ -449,6 +449,17 @@ class AIService:
                 raise AIServiceError(str(e))
 
             msg = response.choices[0].message
+            logger.info(
+                "AI completion round: round=%d has_tool_calls=%s tools=%s content=%r",
+                completion_round + 1,
+                bool(msg.tool_calls),
+                (
+                    [tc.function.name for tc in msg.tool_calls]
+                    if msg.tool_calls
+                    else []
+                ),
+                msg.content,
+            )
 
             if not msg.tool_calls:
                 return msg.content or "", reservation_id, reservation_status
