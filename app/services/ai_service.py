@@ -574,6 +574,7 @@ class AIService:
 
                     if (
                         validated_party_size is not None
+                        and update_args.get("party_size") is not None
                         and update_args.get("party_size") != validated_party_size
                     ):
                         result = {

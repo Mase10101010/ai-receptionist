@@ -26,7 +26,9 @@ def _build_ai_service():
     service = AIService(
         conversation_repo=SimpleNamespace(),
         reservation_service=reservation_service,
-        restaurant_repo=SimpleNamespace(),
+        restaurant_repo=SimpleNamespace(
+            get_by_id=AsyncMock(return_value=None),
+        ),
     )
 
     return service, reservation_service
@@ -1554,7 +1556,6 @@ async def test_completion_loop_returns_final_reply_after_production_like_modific
             "reservation_time": "2026-10-07T11:30:00+08:00",
             "reservation_local_datetime": "2026-10-07T19:30:00",
             "reservation_time_source": "guest_local",
-            "party_size": 2,
         },
     )
 
