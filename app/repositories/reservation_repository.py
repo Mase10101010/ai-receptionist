@@ -4,7 +4,7 @@ Reservation repository.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import and_, delete, func, select
+from sqlalchemy import and_, or_, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -264,6 +264,43 @@ class ReservationRepository:
         return list(
             result.scalars().unique().all()
         )
+
+    async def find_seated_on_table_ids(
+        self,
+        table_ids: list[uuid.UUID],
+        *,
+        exclude_reservation_id: uuid.UUID | None = None,
+    ) -> Reservation | None:
+        if not table_ids:
+            return None
+
+        stmt = (
+            select(Reservation)
+            .outerjoin(
+                ReservationTableAssignment,
+                ReservationTableAssignment.reservation_id
+                == Reservation.id,
+            )
+            .where(
+                Reservation.status == ReservationStatus.SEATED,
+                or_(
+                    ReservationTableAssignment.table_id.in_(table_ids),
+                    Reservation.table_id.in_(table_ids),
+                ),
+            )
+            .options(
+                *RESERVATION_LOAD_OPTIONS,
+            )
+            .limit(1)
+        )
+
+        if exclude_reservation_id is not None:
+            stmt = stmt.where(
+                Reservation.id != exclude_reservation_id,
+            )
+
+        result = await self.db.execute(stmt)
+        return result.scalars().unique().first()
 
     async def update(
         self,

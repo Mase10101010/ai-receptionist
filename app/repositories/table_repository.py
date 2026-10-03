@@ -30,6 +30,27 @@ class TableRepository:
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def lock_by_ids(
+        self,
+        table_ids: list[uuid.UUID],
+    ) -> list[Table]:
+        if not table_ids:
+            return []
+
+        ordered_table_ids = sorted(
+            set(table_ids),
+            key=str,
+        )
+
+        result = await self.db.execute(
+            select(Table)
+            .where(Table.id.in_(ordered_table_ids))
+            .order_by(Table.id)
+            .with_for_update()
+        )
+
+        return list(result.scalars().all())
+
     async def get_by_number(
         self,
         restaurant_id: uuid.UUID,

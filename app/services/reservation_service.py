@@ -1039,6 +1039,30 @@ class ReservationService:
                 exclude_id=reservation.id,
             )
 
+        if (
+            previous_status != ReservationStatus.SEATED
+            and updates.get("status") == ReservationStatus.SEATED
+        ):
+            table_ids = [
+                assignment.table_id
+                for assignment in reservation.table_assignments
+            ]
+
+            if not table_ids and reservation.table_id is not None:
+                table_ids = [reservation.table_id]
+
+            await self.table_repository.lock_by_ids(table_ids)
+
+            seated_reservation = await self.repository.find_seated_on_table_ids(
+                table_ids,
+                exclude_reservation_id=reservation.id,
+            )
+
+            if seated_reservation is not None:
+                raise ConflictError(
+                    "One or more assigned tables are still occupied by a seated reservation."
+                )
+
         updated = await self.repository.update(
             reservation,
             updates,
@@ -1144,6 +1168,21 @@ class ReservationService:
             duration_minutes=reservation.duration_minutes,
             exclude_id=reservation.id,
         )
+
+        if reservation.status == ReservationStatus.SEATED:
+            await self.table_repository.lock_by_ids(
+                [validated_table_id]
+            )
+
+            seated_reservation = await self.repository.find_seated_on_table_ids(
+                [validated_table_id],
+                exclude_reservation_id=reservation.id,
+            )
+
+            if seated_reservation is not None:
+                raise ConflictError(
+                    "The target table is still occupied by a seated reservation."
+                )
 
         moved = await self.repository.replace_table_assignments(
             reservation=reservation,

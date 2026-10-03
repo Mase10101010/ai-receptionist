@@ -1,6 +1,15 @@
 """End-to-end tests for the reservations API."""
 from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import select
+
+from app.models.table import Table
+
+import uuid
+import pytest
+
+from app.repositories.reservation_repository import ReservationRepository
+
 
 def _future_time(hours: int = 24) -> str:
     """Return an ISO datetime safely inside opening hours."""
@@ -246,3 +255,483 @@ async def test_mark_reservation_no_show_records_no_show_at_once(client):
     repeated = repeated_response.json()
     assert repeated["status"] == "no_show"
     assert repeated["no_show_at"] == first_no_show_at
+
+@pytest.mark.parametrize(
+    "next_turn_offset_minutes",
+    [90, 120],
+)
+
+
+async def test_cannot_seat_next_turn_while_same_physical_table_is_still_seated(
+    client,
+    db_session,
+    next_turn_offset_minutes,
+):
+    table_result = await db_session.execute(
+        select(Table).where(Table.table_number == "1")
+    )
+    table = table_result.scalar_one()
+
+    first_time = datetime.now(timezone.utc) + timedelta(days=10)
+    first_time = first_time.replace(
+        hour=19,
+        minute=0,
+        second=0,
+        microsecond=0,
+        tzinfo=None,
+    )
+    second_time = first_time + timedelta(
+        minutes=next_turn_offset_minutes
+    )
+
+    first_payload = {
+        "customer_name": "LAB010 First Guest",
+        "customer_phone": "+15551234567",
+        "party_size": 2,
+        "reservation_time": first_time.isoformat(),
+        "duration_minutes": 90,
+        "table_id": str(table.id),
+    }
+
+    second_payload = {
+        "customer_name": "LAB010 Next Turn",
+        "customer_phone": "+15557654321",
+        "party_size": 2,
+        "reservation_time": second_time.isoformat(),
+        "duration_minutes": 90,
+        "table_id": str(table.id),
+    }
+
+    first_response = await client.post(
+        "/api/v1/reservations",
+        json=first_payload,
+    )
+    assert first_response.status_code == 201, first_response.text
+
+    second_response = await client.post(
+        "/api/v1/reservations",
+        json=second_payload,
+    )
+    assert second_response.status_code == 201, second_response.text
+
+    first = first_response.json()
+    second = second_response.json()
+
+    assert first["table_id"] == str(table.id)
+    assert second["table_id"] == str(table.id)
+
+    seat_first_response = await client.patch(
+        f"/api/v1/reservations/{first['id']}",
+        json={"status": "seated"},
+    )
+    assert seat_first_response.status_code == 200, seat_first_response.text
+    assert seat_first_response.json()["status"] == "seated"
+
+    seat_second_response = await client.patch(
+        f"/api/v1/reservations/{second['id']}",
+        json={"status": "seated"},
+    )
+
+    assert seat_second_response.status_code == 409, seat_second_response.text
+
+    second_after_conflict = await client.get(
+        f"/api/v1/reservations/{second['id']}"
+    )
+    assert second_after_conflict.status_code == 200
+    assert second_after_conflict.json()["status"] == "confirmed"
+
+    assert second_after_conflict.json()["seated_at"] is None
+
+async def test_completed_reservation_releases_table_for_next_turn(
+    client,
+    db_session,
+):
+    table_result = await db_session.execute(
+        select(Table).where(Table.table_number == "1")
+    )
+    table = table_result.scalar_one()
+
+    first_time = datetime.now(timezone.utc) + timedelta(days=10)
+    first_time = first_time.replace(
+        hour=19,
+        minute=0,
+        second=0,
+        microsecond=0,
+        tzinfo=None,
+    )
+    second_time = first_time + timedelta(minutes=90)
+
+    first_response = await client.post(
+        "/api/v1/reservations",
+        json={
+            "customer_name": "LAB010 Completed Guest",
+            "customer_phone": "+15551234567",
+            "party_size": 2,
+            "reservation_time": first_time.isoformat(),
+            "duration_minutes": 90,
+            "table_id": str(table.id),
+        },
+    )
+    assert first_response.status_code == 201, first_response.text
+
+    second_response = await client.post(
+        "/api/v1/reservations",
+        json={
+            "customer_name": "LAB010 Next Guest",
+            "customer_phone": "+15557654321",
+            "party_size": 2,
+            "reservation_time": second_time.isoformat(),
+            "duration_minutes": 90,
+            "table_id": str(table.id),
+        },
+    )
+    assert second_response.status_code == 201, second_response.text
+
+    first = first_response.json()
+    second = second_response.json()
+
+    seat_first_response = await client.patch(
+        f"/api/v1/reservations/{first['id']}",
+        json={"status": "seated"},
+    )
+    assert seat_first_response.status_code == 200, seat_first_response.text
+
+    complete_first_response = await client.patch(
+        f"/api/v1/reservations/{first['id']}",
+        json={"status": "completed"},
+    )
+    assert complete_first_response.status_code == 200, complete_first_response.text
+    assert complete_first_response.json()["status"] == "completed"
+
+    seat_second_response = await client.patch(
+        f"/api/v1/reservations/{second['id']}",
+        json={"status": "seated"},
+    )
+
+    assert seat_second_response.status_code == 200, seat_second_response.text
+    assert seat_second_response.json()["status"] == "seated"
+    assert seat_second_response.json()["seated_at"] is not None
+
+async def test_no_show_reservation_releases_table_for_next_turn(
+    client,
+    db_session,
+):
+    table_result = await db_session.execute(
+        select(Table).where(Table.table_number == "1")
+    )
+    table = table_result.scalar_one()
+
+    first_time = datetime.now(timezone.utc) + timedelta(days=10)
+    first_time = first_time.replace(
+        hour=19,
+        minute=0,
+        second=0,
+        microsecond=0,
+        tzinfo=None,
+    )
+    second_time = first_time + timedelta(minutes=90)
+
+    first_response = await client.post(
+        "/api/v1/reservations",
+        json={
+            "customer_name": "LAB010 No Show Guest",
+            "customer_phone": "+15551234567",
+            "party_size": 2,
+            "reservation_time": first_time.isoformat(),
+            "duration_minutes": 90,
+            "table_id": str(table.id),
+        },
+    )
+    assert first_response.status_code == 201, first_response.text
+
+    second_response = await client.post(
+        "/api/v1/reservations",
+        json={
+            "customer_name": "LAB010 Next Guest",
+            "customer_phone": "+15557654321",
+            "party_size": 2,
+            "reservation_time": second_time.isoformat(),
+            "duration_minutes": 90,
+            "table_id": str(table.id),
+        },
+    )
+    assert second_response.status_code == 201, second_response.text
+
+    first = first_response.json()
+    second = second_response.json()
+
+    seat_first_response = await client.patch(
+        f"/api/v1/reservations/{first['id']}",
+        json={"status": "seated"},
+    )
+    assert seat_first_response.status_code == 200, seat_first_response.text
+
+    no_show_first_response = await client.patch(
+        f"/api/v1/reservations/{first['id']}",
+        json={"status": "no_show"},
+    )
+    assert no_show_first_response.status_code == 200, no_show_first_response.text
+    assert no_show_first_response.json()["status"] == "no_show"
+
+    seat_second_response = await client.patch(
+        f"/api/v1/reservations/{second['id']}",
+        json={"status": "seated"},
+    )
+
+    assert seat_second_response.status_code == 200, seat_second_response.text
+    assert seat_second_response.json()["status"] == "seated"
+    assert seat_second_response.json()["seated_at"] is not None
+
+async def test_cannot_seat_reservation_when_secondary_physical_table_is_still_occupied(
+    client,
+    db_session,
+):
+    tables_result = await db_session.execute(
+        select(Table)
+        .where(Table.table_number.in_(["1", "2"]))
+        .order_by(Table.table_number)
+    )
+    tables = list(tables_result.scalars().all())
+
+    assert len(tables) == 2
+
+    first_table = tables[0]
+    second_table = tables[1]
+
+    first_time = datetime.now(timezone.utc) + timedelta(days=10)
+    first_time = first_time.replace(
+        hour=19,
+        minute=0,
+        second=0,
+        microsecond=0,
+        tzinfo=None,
+    )
+    second_time = first_time + timedelta(minutes=90)
+
+    first_response = await client.post(
+        "/api/v1/reservations",
+        json={
+            "customer_name": "LAB010 Combined Guest",
+            "customer_phone": "+15551234567",
+            "party_size": 2,
+            "reservation_time": first_time.isoformat(),
+            "duration_minutes": 90,
+            "table_id": str(first_table.id),
+        },
+    )
+    assert first_response.status_code == 201, first_response.text
+
+    second_response = await client.post(
+        "/api/v1/reservations",
+        json={
+            "customer_name": "LAB010 Secondary Table Guest",
+            "customer_phone": "+15557654321",
+            "party_size": 2,
+            "reservation_time": second_time.isoformat(),
+            "duration_minutes": 90,
+            "table_id": str(second_table.id),
+        },
+    )
+    assert second_response.status_code == 201, second_response.text
+
+    first = first_response.json()
+    second = second_response.json()
+
+    repository = ReservationRepository(db_session)
+
+    first_reservation = await repository.get_by_id(
+        uuid.UUID(first["id"]),
+    )
+    assert first_reservation is not None
+
+    await repository.replace_table_assignments(
+        reservation=first_reservation,
+        table_ids=[
+            first_table.id,
+            second_table.id,
+        ],
+        primary_table_id=first_table.id,
+    )
+
+    seat_first_response = await client.patch(
+        f"/api/v1/reservations/{first['id']}",
+        json={"status": "seated"},
+    )
+    assert seat_first_response.status_code == 200, seat_first_response.text
+
+    seat_second_response = await client.patch(
+        f"/api/v1/reservations/{second['id']}",
+        json={"status": "seated"},
+    )
+
+    assert seat_second_response.status_code == 409, seat_second_response.text
+
+    second_after_conflict = await client.get(
+        f"/api/v1/reservations/{second['id']}"
+    )
+    assert second_after_conflict.status_code == 200
+    assert second_after_conflict.json()["status"] == "confirmed"
+    assert second_after_conflict.json()["seated_at"] is None
+
+async def test_cannot_move_seated_reservation_to_physically_occupied_table(
+    client,
+    db_session,
+):
+    tables_result = await db_session.execute(
+        select(Table)
+        .where(Table.table_number.in_(["1", "2"]))
+        .order_by(Table.table_number)
+    )
+    tables = list(tables_result.scalars().all())
+
+    assert len(tables) == 2
+
+    first_table = tables[0]
+    second_table = tables[1]
+
+    reservation_time = datetime.now(timezone.utc) + timedelta(days=10)
+    reservation_time = reservation_time.replace(
+        hour=19,
+        minute=0,
+        second=0,
+        microsecond=0,
+        tzinfo=None,
+    )
+
+    first_response = await client.post(
+        "/api/v1/reservations",
+        json={
+            "customer_name": "LAB010 Moving Seated Guest",
+            "customer_phone": "+15551234567",
+            "party_size": 2,
+            "reservation_time": reservation_time.isoformat(),
+            "duration_minutes": 90,
+            "table_id": str(first_table.id),
+        },
+    )
+    assert first_response.status_code == 201, first_response.text
+
+    # Use a later planned time so normal temporal planning allows T2.
+    second_response = await client.post(
+        "/api/v1/reservations",
+        json={
+            "customer_name": "LAB010 Occupying Guest",
+            "customer_phone": "+15557654321",
+            "party_size": 2,
+            "reservation_time": (
+                reservation_time + timedelta(minutes=90)
+            ).isoformat(),
+            "duration_minutes": 90,
+            "table_id": str(second_table.id),
+        },
+    )
+    assert second_response.status_code == 201, second_response.text
+
+    first = first_response.json()
+    second = second_response.json()
+
+    seat_first_response = await client.patch(
+        f"/api/v1/reservations/{first['id']}",
+        json={"status": "seated"},
+    )
+    assert seat_first_response.status_code == 200, seat_first_response.text
+
+    seat_second_response = await client.patch(
+        f"/api/v1/reservations/{second['id']}",
+        json={"status": "seated"},
+    )
+    assert seat_second_response.status_code == 200, seat_second_response.text
+
+    move_response = await client.post(
+        f"/api/v1/reservations/{first['id']}/move",
+        json={"table_id": str(second_table.id)},
+    )
+
+    assert move_response.status_code == 409, move_response.text
+
+    first_after_conflict = await client.get(
+        f"/api/v1/reservations/{first['id']}"
+    )
+    assert first_after_conflict.status_code == 200
+    assert first_after_conflict.json()["status"] == "seated"
+    assert first_after_conflict.json()["table_id"] == str(first_table.id)
+
+async def test_cannot_seat_when_legacy_seated_reservation_occupies_table(
+    client,
+    db_session,
+):
+    table_result = await db_session.execute(
+        select(Table).where(Table.table_number == "1")
+    )
+    table = table_result.scalar_one()
+
+    first_time = datetime.now(timezone.utc) + timedelta(days=10)
+    first_time = first_time.replace(
+        hour=19,
+        minute=0,
+        second=0,
+        microsecond=0,
+        tzinfo=None,
+    )
+
+    first_response = await client.post(
+        "/api/v1/reservations",
+        json={
+            "customer_name": "LAB010 Legacy Seated Guest",
+            "customer_phone": "+15551234567",
+            "party_size": 2,
+            "reservation_time": first_time.isoformat(),
+            "duration_minutes": 90,
+            "table_id": str(table.id),
+        },
+    )
+    assert first_response.status_code == 201, first_response.text
+
+    second_response = await client.post(
+        "/api/v1/reservations",
+        json={
+            "customer_name": "LAB010 Next Guest",
+            "customer_phone": "+15557654321",
+            "party_size": 2,
+            "reservation_time": (
+                first_time + timedelta(minutes=90)
+            ).isoformat(),
+            "duration_minutes": 90,
+            "table_id": str(table.id),
+        },
+    )
+    assert second_response.status_code == 201, second_response.text
+
+    first = first_response.json()
+    second = second_response.json()
+
+    repository = ReservationRepository(db_session)
+
+    first_reservation = await repository.get_by_id(
+        uuid.UUID(first["id"]),
+    )
+    assert first_reservation is not None
+
+    # Simulate a legacy reservation that only has Reservation.table_id
+    # and no reservation_table_assignments rows.
+    await repository.replace_table_assignments(
+        reservation=first_reservation,
+        table_ids=[],
+        primary_table_id=None,
+    )
+
+    first_reservation.table_id = table.id
+    await db_session.flush()
+
+    seat_first_response = await client.patch(
+        f"/api/v1/reservations/{first['id']}",
+        json={"status": "seated"},
+    )
+    assert seat_first_response.status_code == 200, seat_first_response.text
+
+    seat_second_response = await client.patch(
+        f"/api/v1/reservations/{second['id']}",
+        json={"status": "seated"},
+    )
+
+    assert seat_second_response.status_code == 409, seat_second_response.text
