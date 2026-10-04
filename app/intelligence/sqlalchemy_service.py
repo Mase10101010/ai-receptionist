@@ -26,6 +26,13 @@ from app.intelligence_calibration.repository import (
     IntelligenceCalibrationRepository,
 )
 
+from app.repositories.reservation_repository import (
+    ReservationRepository,
+)
+from app.repositories.table_repository import (
+    TableRepository,
+)
+
 from app.intelligence.temporal_autopilot_safety_mapper import (
     IntelligenceTemporalAutopilotSafetyMapper,
 )
@@ -1522,6 +1529,12 @@ class IntelligenceOptimizationService:
                 "cannot be reassigned."
             )
 
+        if new_reservation.status == ReservationStatus.SEATED:
+            raise ValidationError(
+                "A seated reservation cannot be reassigned "
+                "by reoptimization."
+            )
+
         # Default / legacy execution state.
         #
         # For ordinary reoptimization there is no requested
@@ -1646,6 +1659,11 @@ class IntelligenceOptimizationService:
                 raise ValidationError(
                     "Completed, cancelled, or no-show reservations "
                     "cannot be moved."
+                )
+            if reservation.status == ReservationStatus.SEATED:
+                raise ValidationError(
+                    "A seated reservation cannot be moved "
+                    "by reoptimization."
                 )
 
         all_selected_table_ids = set(new_table_ids)
@@ -1841,6 +1859,38 @@ class IntelligenceOptimizationService:
                     ],
                     table_ids,
                 )
+            )
+
+        # LAB-011: serialize physical destination ownership checks.
+        #
+        # Reoptimization generation and Apply happen at different moments.
+        # Lock every physical destination table before revalidating live
+        # occupancy so the plan cannot be applied against stale table state.
+        destination_table_ids = sorted(
+            {
+                table_id
+                for _, table_ids in proposed_assignments
+                for table_id in table_ids
+            },
+            key=str,
+        )
+
+        await TableRepository(
+            session,
+        ).lock_by_ids(
+            destination_table_ids,
+        )
+
+        live_seated_reservation = await ReservationRepository(
+            session,
+        ).find_seated_on_table_ids(
+            destination_table_ids,
+        )
+
+        if live_seated_reservation is not None:
+            raise ValidationError(
+                "One or more selected tables are still occupied "
+                "by a seated reservation."
             )
 
         for index, (

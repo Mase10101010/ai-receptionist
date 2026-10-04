@@ -29,12 +29,20 @@ def reservation_blocks_tables(
     candidate_table_ids: set[str],
     candidate_start: datetime,
     candidate_end: datetime,
+    *,
+    respect_live_occupancy: bool = False,
 ) -> bool:
     if reservation.status.lower() not in ACTIVE_RESERVATION_STATUSES:
         return False
 
     if not candidate_table_ids.intersection(reservation.table_ids):
         return False
+
+    if (
+        respect_live_occupancy
+        and reservation.status.lower() == "seated"
+    ):
+        return True
 
     return intervals_overlap(
         reservation.start_at,
@@ -52,6 +60,8 @@ def is_assignment_available(
     buffer_before_minutes: int = 0,
     buffer_after_minutes: int = 0,
     setup_minutes: int = 0,
+    *,
+    respect_live_occupancy: bool = False,
 ) -> bool:
     blocked_start = start_at - timedelta(
         minutes=buffer_before_minutes + setup_minutes,
@@ -65,6 +75,7 @@ def is_assignment_available(
             candidate_table_ids=candidate_table_ids,
             candidate_start=blocked_start,
             candidate_end=blocked_end,
+            respect_live_occupancy=respect_live_occupancy,
         )
         for reservation in reservations
     )

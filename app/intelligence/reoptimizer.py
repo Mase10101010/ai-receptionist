@@ -6,6 +6,7 @@ from .candidate_generator import generate_candidates
 from .interval_engine import (
     calculate_fragmentation_minutes,
     is_assignment_available,
+    reservation_blocks_tables,
 )
 from .scoring import score_candidate
 from .types import (
@@ -155,6 +156,7 @@ class ReservationReoptimizer:
                     buffer_before_minutes=request.buffer_before_minutes,
                     buffer_after_minutes=request.buffer_after_minutes,
                     setup_minutes=move_candidate.setup_minutes,
+                    respect_live_occupancy=True,
                 )
 
                 if not move_available:
@@ -182,6 +184,7 @@ class ReservationReoptimizer:
                     buffer_before_minutes=request.buffer_before_minutes,
                     buffer_after_minutes=request.buffer_after_minutes,
                     setup_minutes=incoming_candidate.setup_minutes,
+                    respect_live_occupancy=True,
                 )
 
                 if not incoming_available:
@@ -338,6 +341,7 @@ class ReservationReoptimizer:
                 buffer_before_minutes=request.buffer_before_minutes,
                 buffer_after_minutes=request.buffer_after_minutes,
                 setup_minutes=candidate.setup_minutes,
+                respect_live_occupancy=True,
             )
 
             if not available:
@@ -386,23 +390,17 @@ class ReservationReoptimizer:
     ) -> list[ExistingReservation]:
         candidate_table_ids = set(candidate.table_ids)
 
-        blocking: list[ExistingReservation] = []
-
-        for reservation in reservations:
-            overlaps = (
-                reservation.start_at < candidate.end_at
-                and reservation.end_at > candidate.start_at
+        return [
+            reservation
+            for reservation in reservations
+            if reservation_blocks_tables(
+                reservation=reservation,
+                candidate_table_ids=candidate_table_ids,
+                candidate_start=candidate.start_at,
+                candidate_end=candidate.end_at,
+                respect_live_occupancy=True,
             )
-
-            if not overlaps:
-                continue
-
-            if candidate_table_ids.intersection(
-                reservation.table_ids,
-            ):
-                blocking.append(reservation)
-
-        return blocking
+        ]
 
     def _to_optimization_request(
         self,

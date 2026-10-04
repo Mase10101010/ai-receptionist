@@ -77,6 +77,9 @@ class FakeScalarCollection:
     def all(self):
         return list(self.items)
 
+    def first(self):
+        return self.items[0] if self.items else None
+
 
 class FakeResult:
     def __init__(self, *, scalar=None, items=None):
@@ -97,6 +100,8 @@ class FakeApplySession:
         self,
         *,
         reservation,
+        live_seated_reservation=None,
+        moved_reservations=None,
         tables,
         suggestion=None,
         conflicting_reservations=None,
@@ -104,6 +109,10 @@ class FakeApplySession:
         self.reservation = reservation
         self.tables = tables
         self.suggestion = suggestion
+        self.live_seated_reservation = live_seated_reservation
+        self.moved_reservations = list(
+            moved_reservations or []
+        )
         self.conflicting_reservations = (
             []
             if conflicting_reservations is None
@@ -131,6 +140,37 @@ class FakeApplySession:
         statement,
     ):
         statement_text = str(statement)
+
+        if (
+            "FROM tables" in statement_text
+            and "FOR UPDATE" in statement_text
+        ):
+            return FakeResult(
+                items=self.tables,
+            )
+
+        if (
+            "FROM reservations" in statement_text
+            and "reservation_table_assignments" in statement_text
+            and "seated" in statement_text.lower()
+        ):
+            return FakeResult(
+                items=(
+                    [self.live_seated_reservation]
+                    if self.live_seated_reservation is not None
+                    else []
+                ),
+            )
+
+        if (
+            self.moved_reservations
+            and "FROM reservations" in statement_text
+            and "reservations.id IN" in statement_text
+            and "reservations.restaurant_id" in statement_text
+        ):
+            return FakeResult(
+                items=self.moved_reservations,
+            )
 
         if (
             self.suggestion is not None
@@ -885,3 +925,203 @@ async def test_apply_modification_reoptimization_validates_collision_at_requeste
     # Physical mutation must not have started.
     assert session.added == []
     session.flush.assert_not_awaited()
+
+@pytest.mark.asyncio
+async def test_apply_reoptimization_rejects_live_seated_occupancy_after_expected_end():
+    restaurant_id = uuid4()
+    target_reservation_id = uuid4()
+    seated_reservation_id = uuid4()
+    table_id = uuid4()
+    service_area_id = uuid4()
+
+    seated_start = _future_reservation_time()
+    target_start = seated_start + timedelta(minutes=90)
+
+    target_reservation = SimpleNamespace(
+        id=target_reservation_id,
+        restaurant_id=restaurant_id,
+        status=ReservationStatus.CONFIRMED,
+        party_size=2,
+        reservation_time=target_start,
+        duration_minutes=90,
+        table_id=table_id,
+    )
+
+    seated_reservation = SimpleNamespace(
+        id=seated_reservation_id,
+        restaurant_id=restaurant_id,
+        status=ReservationStatus.SEATED,
+        party_size=2,
+        reservation_time=seated_start,
+        duration_minutes=90,
+        table_id=table_id,
+        assigned_table_ids=[table_id],
+    )
+
+    table = SimpleNamespace(
+        id=table_id,
+        restaurant_id=restaurant_id,
+        service_area_id=service_area_id,
+        seats=2,
+        table_number="43",
+        is_active=True,
+    )
+
+    session = FakeApplySession(
+        reservation=target_reservation,
+        tables=[table],
+        live_seated_reservation=seated_reservation,
+    )
+
+    service = IntelligenceOptimizationService()
+
+    with pytest.raises(
+        ValidationError,
+        match="occupied",
+    ):
+        await service.apply_reoptimization(
+            session=session,
+            payload=IntelligenceApplyReoptimizationRequest(
+                new_reservation_id=target_reservation_id,
+                new_reservation_table_ids=[table_id],
+                new_reservation_primary_table_id=table_id,
+                moves=[],
+            ),
+            allowed_restaurant_ids=[restaurant_id],
+        )
+
+    assert target_reservation.status == ReservationStatus.CONFIRMED
+    assert target_reservation.table_id == table_id
+    session.flush.assert_not_awaited()
+
+@pytest.mark.asyncio
+async def test_apply_reoptimization_rejects_target_that_became_seated():
+    restaurant_id = uuid4()
+    reservation_id = uuid4()
+    table_id = uuid4()
+    service_area_id = uuid4()
+
+    reservation = SimpleNamespace(
+        id=reservation_id,
+        restaurant_id=restaurant_id,
+        status=ReservationStatus.SEATED,
+        party_size=2,
+        reservation_time=_future_reservation_time(),
+        duration_minutes=90,
+        table_id=table_id,
+    )
+
+    table = SimpleNamespace(
+        id=table_id,
+        restaurant_id=restaurant_id,
+        service_area_id=service_area_id,
+        seats=2,
+        table_number="43",
+        is_active=True,
+    )
+
+    session = FakeApplySession(
+        reservation=reservation,
+        tables=[table],
+    )
+
+    service = IntelligenceOptimizationService()
+
+    with pytest.raises(
+        ValidationError,
+        match="seated",
+    ):
+        await service.apply_reoptimization(
+            session=session,
+            payload=IntelligenceApplyReoptimizationRequest(
+                new_reservation_id=reservation_id,
+                new_reservation_table_ids=[table_id],
+                new_reservation_primary_table_id=table_id,
+                moves=[],
+            ),
+            allowed_restaurant_ids=[restaurant_id],
+        )
+
+    assert reservation.status == ReservationStatus.SEATED
+    assert reservation.table_id == table_id
+    session.flush.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_apply_reoptimization_rejects_move_of_seated_reservation():
+    restaurant_id = uuid4()
+    target_reservation_id = uuid4()
+    moved_reservation_id = uuid4()
+    target_table_id = uuid4()
+    moved_table_id = uuid4()
+    service_area_id = uuid4()
+
+    target_reservation = SimpleNamespace(
+        id=target_reservation_id,
+        restaurant_id=restaurant_id,
+        status=ReservationStatus.CONFIRMED,
+        party_size=2,
+        reservation_time=_future_reservation_time(),
+        duration_minutes=90,
+        table_id=target_table_id,
+    )
+
+    target_table = SimpleNamespace(
+        id=target_table_id,
+        restaurant_id=restaurant_id,
+        service_area_id=service_area_id,
+        seats=2,
+        table_number="43",
+        is_active=True,
+    )
+
+    moved_table = SimpleNamespace(
+        id=moved_table_id,
+        restaurant_id=restaurant_id,
+        service_area_id=service_area_id,
+        seats=2,
+        table_number="44",
+        is_active=True,
+    )
+
+    session = FakeApplySession(
+        reservation=target_reservation,
+        tables=[
+            target_table,
+            moved_table,
+        ],
+        moved_reservations=[
+            SimpleNamespace(
+                id=moved_reservation_id,
+                restaurant_id=restaurant_id,
+                status=ReservationStatus.SEATED,
+                party_size=2,
+                reservation_time=_future_reservation_time(),
+                duration_minutes=90,
+                table_id=moved_table_id,
+            ),
+        ],
+    )
+
+    service = IntelligenceOptimizationService()
+
+    with pytest.raises(
+        ValidationError,
+        match="seated",
+    ):
+        await service.apply_reoptimization(
+            session=session,
+            payload=IntelligenceApplyReoptimizationRequest(
+                new_reservation_id=target_reservation_id,
+                new_reservation_table_ids=[target_table_id],
+                new_reservation_primary_table_id=target_table_id,
+                moves=[
+                    {
+                        "reservation_id": moved_reservation_id,
+                        "to_table_ids": [moved_table_id],
+                        "primary_table_id": moved_table_id,
+                    }
+                ],
+            ),
+            allowed_restaurant_ids=[restaurant_id],
+        )

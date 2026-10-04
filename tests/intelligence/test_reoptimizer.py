@@ -188,3 +188,208 @@ def test_rejects_when_two_reservations_block_combination():
 
     assert result.available is False
     assert result.recommended is None
+
+def test_live_locked_reservation_blocks_table_after_expected_end():
+    engine = ReservationReoptimizer()
+
+    seated = ExistingReservation(
+        id="reservation-seated",
+        start_at=NOW,
+        end_at=NOW + timedelta(minutes=90),
+        party_size=2,
+        table_ids=("table-1",),
+        status="seated",
+        locked=True,
+    )
+
+    result = engine.reoptimize(
+        request=ReoptimizationRequest(
+            requested_start=NOW + timedelta(minutes=90),
+            party_size=2,
+            duration_minutes=90,
+        ),
+        tables=build_tables(),
+        reservations=[seated],
+        combinations=[],
+    )
+
+    assert result.available is True
+    assert result.recommended is not None
+    assert (
+        "table-1"
+        not in result.recommended
+        .new_reservation_assignment
+        .candidate
+        .table_ids
+    )
+
+
+def test_confirmed_expected_turn_allows_normal_back_to_back_planning():
+    engine = ReservationReoptimizer()
+
+    confirmed = ExistingReservation(
+        id="reservation-confirmed",
+        start_at=NOW,
+        end_at=NOW + timedelta(minutes=90),
+        party_size=2,
+        table_ids=("table-1",),
+        status="confirmed",
+        locked=False,
+    )
+
+    result = engine.reoptimize(
+        request=ReoptimizationRequest(
+            requested_start=NOW + timedelta(minutes=90),
+            party_size=2,
+            duration_minutes=90,
+        ),
+        tables=build_tables(),
+        reservations=[confirmed],
+        combinations=[],
+    )
+
+    assert result.available is True
+    assert result.recommended is not None
+    assert (
+        result.recommended
+        .new_reservation_assignment
+        .candidate
+        .table_ids
+        == ("table-1",)
+    )
+
+def test_live_seated_multi_table_blocks_any_candidate_using_occupied_table():
+    engine = ReservationReoptimizer()
+
+    seated = ExistingReservation(
+        id="reservation-seated-combination",
+        start_at=NOW,
+        end_at=NOW + timedelta(minutes=90),
+        party_size=6,
+        table_ids=("table-1", "table-2"),
+        status="seated",
+        locked=True,
+    )
+
+    result = engine.reoptimize(
+        request=ReoptimizationRequest(
+            requested_start=NOW + timedelta(minutes=90),
+            party_size=2,
+            duration_minutes=90,
+        ),
+        tables=build_tables(),
+        reservations=[seated],
+        combinations=build_combinations(),
+    )
+
+    assert result.available is True
+    assert result.recommended is not None
+
+    assigned_table_ids = set(
+        result.recommended
+        .new_reservation_assignment
+        .candidate
+        .table_ids
+    )
+
+    assert assigned_table_ids == {"table-3"}
+    assert assigned_table_ids.isdisjoint(
+        {"table-1", "table-2"},
+    )
+
+def test_live_seated_occupancy_returns_no_safe_plan_when_no_alternative_exists():
+    engine = ReservationReoptimizer()
+
+    seated = ExistingReservation(
+        id="reservation-seated",
+        start_at=NOW,
+        end_at=NOW + timedelta(minutes=90),
+        party_size=2,
+        table_ids=("table-1",),
+        status="seated",
+        locked=True,
+    )
+
+    result = engine.reoptimize(
+        request=ReoptimizationRequest(
+            requested_start=NOW + timedelta(minutes=90),
+            party_size=2,
+            duration_minutes=90,
+        ),
+        tables=[build_tables()[0]],
+        reservations=[seated],
+        combinations=[],
+    )
+
+    assert result.available is False
+    assert result.recommended is None
+    assert result.alternatives == ()
+
+def test_completed_reservation_releases_table_for_live_reoptimization():
+    engine = ReservationReoptimizer()
+
+    completed = ExistingReservation(
+        id="reservation-completed",
+        start_at=NOW,
+        end_at=NOW + timedelta(minutes=90),
+        party_size=2,
+        table_ids=("table-1",),
+        status="completed",
+        locked=False,
+    )
+
+    result = engine.reoptimize(
+        request=ReoptimizationRequest(
+            requested_start=NOW + timedelta(minutes=90),
+            party_size=2,
+            duration_minutes=90,
+        ),
+        tables=build_tables(),
+        reservations=[completed],
+        combinations=[],
+    )
+
+    assert result.available is True
+    assert result.recommended is not None
+    assert (
+        result.recommended
+        .new_reservation_assignment
+        .candidate
+        .table_ids
+        == ("table-1",)
+    )
+
+
+def test_no_show_reservation_releases_table_for_live_reoptimization():
+    engine = ReservationReoptimizer()
+
+    no_show = ExistingReservation(
+        id="reservation-no-show",
+        start_at=NOW,
+        end_at=NOW + timedelta(minutes=90),
+        party_size=2,
+        table_ids=("table-1",),
+        status="no_show",
+        locked=False,
+    )
+
+    result = engine.reoptimize(
+        request=ReoptimizationRequest(
+            requested_start=NOW + timedelta(minutes=90),
+            party_size=2,
+            duration_minutes=90,
+        ),
+        tables=build_tables(),
+        reservations=[no_show],
+        combinations=[],
+    )
+
+    assert result.available is True
+    assert result.recommended is not None
+    assert (
+        result.recommended
+        .new_reservation_assignment
+        .candidate
+        .table_ids
+        == ("table-1",)
+    )
