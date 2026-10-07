@@ -532,6 +532,70 @@ async def test_seated_modification_requiring_physical_move_uses_live_lane_not_m2
 
 
 @pytest.mark.asyncio
+async def test_seated_party_size_change_with_same_explicit_time_uses_live_lane():
+    service, reservation_service = _build_ai_service()
+
+    reservation_id = uuid4()
+    restaurant_id = uuid4()
+    suggestion_id = uuid4()
+
+    current_time = datetime(
+        2026,
+        10,
+        7,
+        20,
+        30,
+        tzinfo=timezone.utc,
+    )
+
+    seated_reservation = SimpleNamespace(
+        id=reservation_id,
+        status=SimpleNamespace(value="seated"),
+        party_size=2,
+        reservation_time=current_time,
+    )
+
+    reservation_service.update_reservation.side_effect = ConflictError(
+        "The seated reservation cannot change party size "
+        "without an explicit live-service reassignment."
+    )
+    reservation_service.get_reservation.return_value = seated_reservation
+    reservation_service.propose_live_seated_modification.return_value = (
+        SimpleNamespace(id=suggestion_id)
+    )
+
+    result, returned_reservation_id = await service._execute_tool(
+        name="update_reservation",
+        raw_arguments=(
+            "{"
+            f'"reservation_id": "{reservation_id}",'
+            f'"reservation_time": "{current_time.isoformat()}",'
+            '"party_size": 4'
+            "}"
+        ),
+        restaurant_id=restaurant_id,
+    )
+
+    assert returned_reservation_id == reservation_id
+    assert result["success"] is True
+    assert result["booking_outcome"] == "live_service_approval_required"
+    assert result["modification_status"] == "pending"
+    assert result["modification_applied"] is False
+    assert result["reservation_status"] == "seated"
+    assert result["requires_restaurant_confirmation"] is True
+    assert result["reservation_id"] == str(reservation_id)
+    assert result["suggestion_id"] == str(suggestion_id)
+    assert result["requested_party_size"] == 4
+
+    reservation_service.propose_live_seated_modification.assert_awaited_once_with(
+        reservation_id=reservation_id,
+        requested_party_size=4,
+    )
+    reservation_service.propose_reservation_modification_reoptimization.assert_not_awaited()
+    reservation_service.suggest_alternative_slots.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_seated_time_change_is_unavailable_without_live_or_generic_reoptimization():
     service, reservation_service = _build_ai_service()
 
@@ -553,6 +617,7 @@ async def test_seated_time_change_is_unavailable_without_live_or_generic_reoptim
     reservation_service.get_reservation.return_value = SimpleNamespace(
         id=reservation_id,
         status=SimpleNamespace(value="seated"),
+        reservation_time=requested_time.replace(hour=19),
     )
 
     result, returned_reservation_id = await service._execute_tool(

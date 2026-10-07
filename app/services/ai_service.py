@@ -1011,6 +1011,19 @@ class AIService:
                     if (
                         authoritative_reservation.status.value == "seated"
                         and requested_time is not None
+                        and requested_time.tzinfo is not None
+                        and authoritative_reservation.reservation_time.tzinfo is not None
+                        and requested_time
+                        == authoritative_reservation.reservation_time
+                    ):
+                        # An explicitly repeated time is not a time change.
+                        # Preserve the existing SEATED live-service lane.
+                        requested_time = None
+                        update_data.pop("reservation_time", None)
+
+                    if (
+                        authoritative_reservation.status.value == "seated"
+                        and requested_time is not None
                     ):
                         logger.info(
                             (
