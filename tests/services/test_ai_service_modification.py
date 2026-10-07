@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+﻿from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -19,6 +19,7 @@ def _build_ai_service():
         assess_modification_availability=AsyncMock(),
         suggest_alternative_slots=AsyncMock(),
         update_reservation=AsyncMock(),
+        propose_live_seated_modification=AsyncMock(),
         propose_reservation_modification_reoptimization=AsyncMock(),
         create_reservation=AsyncMock(),
     )
@@ -139,6 +140,68 @@ async def test_modification_check_availability_reports_reoptimization_available_
     reservation_service.create_reservation.assert_not_awaited()
     reservation_service.suggest_alternative_slots.assert_not_awaited()
 
+
+@pytest.mark.asyncio
+async def test_modification_check_availability_reports_live_service_approval_required():
+    service, reservation_service = _build_ai_service()
+
+    reservation_id = uuid4()
+    restaurant_id = uuid4()
+
+    requested_time = datetime(
+        2026,
+        10,
+        17,
+        11,
+        30,
+        tzinfo=timezone.utc,
+    )
+
+    reservation_service.assess_modification_availability.return_value = (
+        BookingAvailabilityOutcome.LIVE_SERVICE_APPROVAL_REQUIRED
+    )
+
+    result, returned_reservation_id = await service._execute_tool(
+        name="check_availability",
+        raw_arguments=(
+            "{"
+            f'"reservation_time": "{requested_time.isoformat()}",'
+            '"party_size": 4,'
+            f'"reservation_id": "{reservation_id}",'
+            '"customer_provided_date": true,'
+            '"customer_provided_time": true,'
+            '"customer_provided_party_size": true'
+            "}"
+        ),
+        restaurant_id=restaurant_id,
+    )
+
+    assert result["available"] is True
+    assert (
+        result["booking_outcome"]
+        == "live_service_approval_required"
+    )
+    assert result["requires_restaurant_confirmation"] is True
+    assert (
+        result["validated_reservation_time"]
+        == requested_time.isoformat()
+    )
+    assert returned_reservation_id is None
+
+    reservation_service.assess_modification_availability.assert_awaited_once_with(
+        reservation_time=requested_time,
+        party_size=4,
+        restaurant_id=restaurant_id,
+        reservation_id=reservation_id,
+    )
+
+    # Availability assessment is read-only: it must not register the
+    # live-service proposal or mutate the reservation.
+    reservation_service.update_reservation.assert_not_awaited()
+    reservation_service.propose_live_seated_modification.assert_not_awaited()
+    reservation_service.propose_reservation_modification_reoptimization.assert_not_awaited()
+    reservation_service.create_reservation.assert_not_awaited()
+    reservation_service.suggest_alternative_slots.assert_not_awaited()
 
 @pytest.mark.asyncio
 async def test_modification_check_availability_reports_unavailable():
@@ -395,6 +458,134 @@ async def test_unavailable_modification_returns_structured_result_when_m2_unavai
 
 
 @pytest.mark.asyncio
+async def test_seated_modification_requiring_physical_move_uses_live_lane_not_m2():
+    service, reservation_service = _build_ai_service()
+
+    reservation_id = uuid4()
+    restaurant_id = uuid4()
+    suggestion_id = uuid4()
+
+    requested_time = datetime(
+        2026,
+        10,
+        17,
+        11,
+        30,
+        tzinfo=timezone.utc,
+    )
+
+    seated_reservation = SimpleNamespace(
+        id=reservation_id,
+        status=SimpleNamespace(value="seated"),
+        party_size=2,
+        reservation_time=requested_time,
+    )
+
+    reservation_service.update_reservation.side_effect = ConflictError(
+        "The seated reservation cannot change party size "
+        "without an explicit live-service reassignment."
+    )
+
+    reservation_service.get_reservation.return_value = (
+        seated_reservation
+    )
+
+    reservation_service.propose_live_seated_modification.return_value = (
+        SimpleNamespace(id=suggestion_id)
+    )
+
+    result, returned_reservation_id = await service._execute_tool(
+        name="update_reservation",
+        raw_arguments=(
+            "{"
+            f'"reservation_id": "{reservation_id}",'
+            '"party_size": 4'
+            "}"
+        ),
+        restaurant_id=restaurant_id,
+    )
+
+    assert returned_reservation_id == reservation_id
+
+    assert result["success"] is True
+    assert result["booking_outcome"] == "live_service_approval_required"
+    assert result["modification_status"] == "pending"
+    assert result["modification_applied"] is False
+    assert result["reservation_status"] == "seated"
+    assert result["requires_restaurant_confirmation"] is True
+    assert result["reservation_id"] == str(reservation_id)
+    assert result["suggestion_id"] == str(suggestion_id)
+    assert result["requested_party_size"] == 4
+
+    reservation_service.get_reservation.assert_awaited_once_with(
+        reservation_id=reservation_id,
+        restaurant_id=restaurant_id,
+    )
+
+    reservation_service.propose_live_seated_modification.assert_awaited_once_with(
+        reservation_id=reservation_id,
+        requested_party_size=4,
+    )
+
+    reservation_service.propose_reservation_modification_reoptimization.assert_not_awaited()
+    reservation_service.create_reservation.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_seated_time_change_is_unavailable_without_live_or_generic_reoptimization():
+    service, reservation_service = _build_ai_service()
+
+    reservation_id = uuid4()
+    restaurant_id = uuid4()
+
+    requested_time = datetime(
+        2026,
+        10,
+        17,
+        20,
+        0,
+        tzinfo=timezone.utc,
+    )
+
+    reservation_service.update_reservation.side_effect = ConflictError(
+        "A seated reservation cannot change reservation time."
+    )
+    reservation_service.get_reservation.return_value = SimpleNamespace(
+        id=reservation_id,
+        status=SimpleNamespace(value="seated"),
+    )
+
+    result, returned_reservation_id = await service._execute_tool(
+        name="update_reservation",
+        raw_arguments=(
+            "{"
+            f'"reservation_id": "{reservation_id}",'
+            f'"reservation_time": "{requested_time.isoformat()}"'
+            "}"
+        ),
+        restaurant_id=restaurant_id,
+    )
+
+    assert returned_reservation_id is None
+    assert result["success"] is False
+    assert result["error"] == "live_seated_time_change_unavailable"
+    assert result["booking_outcome"] == "unavailable"
+    assert result["reservation_id"] == str(reservation_id)
+    assert result["reservation_status"] == "seated"
+    assert (
+        result["requested_reservation_time"]
+        == requested_time.isoformat()
+    )
+
+    reservation_service.get_reservation.assert_awaited_once_with(
+        reservation_id=reservation_id,
+        restaurant_id=restaurant_id,
+    )
+    reservation_service.propose_live_seated_modification.assert_not_awaited()
+    reservation_service.propose_reservation_modification_reoptimization.assert_not_awaited()
+    reservation_service.create_reservation.assert_not_awaited()
+
+@pytest.mark.asyncio
 async def test_modification_reoptimization_available_returns_pending_request():
     service, reservation_service = _build_ai_service()
 
@@ -610,6 +801,44 @@ def test_system_prompt_distinguishes_pending_modification_reoptimization():
     assert (
         "do NOT call suggest_alternative_slots"
         in prompt
+    )
+
+def test_system_prompt_distinguishes_pending_live_seated_modification():
+    prompt = _build_system_prompt(
+        restaurant_name="Perugino",
+        timezone_name="Australia/Perth",
+        opening_hour=11,
+        closing_hour=23,
+    )
+
+    normalized = " ".join(prompt.lower().split())
+
+    assert "booking_outcome=live_service_approval_required" in normalized
+
+    assert (
+        "if check_availability returns "
+        "booking_outcome=live_service_approval_required for a modification, "
+        "you must call update_reservation"
+        in normalized
+    )
+
+    assert (
+        "do not tell the guest that the live-service modification request "
+        "has been received or is awaiting approval until update_reservation "
+        "returns modification_status=pending"
+        in normalized
+    )
+
+    assert (
+        "the reservation remains seated on its current physical table "
+        "assignment until explicit manager approval"
+        in normalized
+    )
+
+    assert (
+        "do not tell the guest that the physical table move has already "
+        "happened"
+        in normalized
     )
 
 def test_prompt_requires_update_after_modification_reoptimization_precheck():
@@ -1576,7 +1805,7 @@ async def test_completion_loop_returns_final_reply_after_production_like_modific
         ]
     )
 
-    reply, returned_reservation_id, reservation_status = (
+    reply, returned_reservation_id, reservation_status, modification_status = (
         await service._run_completion_loop(
             messages=[
                 {"role": "system", "content": "Test system prompt"},
@@ -1597,4 +1826,87 @@ async def test_completion_loop_returns_final_reply_after_production_like_modific
     assert reply == "La prenotazione è stata modificata alle 19:30."
     assert returned_reservation_id == reservation_id
     assert reservation_status == "confirmed"
+    assert modification_status is None
     reservation_service.update_reservation.assert_awaited_once()
+
+
+
+
+
+@pytest.mark.asyncio
+async def test_completion_loop_surfaces_pending_live_modification_separately_from_seated_status():
+    service, _ = _build_ai_service()
+
+    reservation_id = uuid4()
+    restaurant_id = uuid4()
+
+    update_tool_call = MagicMock()
+    update_tool_call.id = "call_lab012b_live_update"
+    update_tool_call.function.name = "update_reservation"
+    update_tool_call.function.arguments = json.dumps(
+        {
+            "reservation_id": str(reservation_id),
+            "party_size": 4,
+        }
+    )
+
+    update_message = MagicMock()
+    update_message.content = None
+    update_message.tool_calls = [update_tool_call]
+
+    update_response = MagicMock()
+    update_response.choices = [MagicMock(message=update_message)]
+
+    final_message = MagicMock()
+    final_message.content = (
+        "La richiesta di modifica è in attesa di approvazione del ristorante."
+    )
+    final_message.tool_calls = None
+
+    final_response = MagicMock()
+    final_response.choices = [MagicMock(message=final_message)]
+
+    service.client.chat.completions.create = AsyncMock(
+        side_effect=[update_response, final_response]
+    )
+
+    service._execute_tool = AsyncMock(
+        return_value=(
+            {
+                "success": True,
+                "booking_outcome": "live_service_approval_required",
+                "modification_status": "pending",
+                "modification_applied": False,
+                "reservation_status": "seated",
+                "requires_restaurant_confirmation": True,
+                "reservation_id": str(reservation_id),
+            },
+            reservation_id,
+        )
+    )
+
+    (
+        reply,
+        returned_reservation_id,
+        reservation_status,
+        modification_status,
+    ) = await service._run_completion_loop(
+        messages=[
+            {"role": "system", "content": "Test system prompt"},
+            {
+                "role": "user",
+                "content": "Vorrei aumentare la prenotazione da 2 a 4 persone.",
+            },
+        ],
+        restaurant_id=restaurant_id,
+        session_id="lab-012b-live-pending-contract",
+        timezone_name="Australia/Perth",
+    )
+
+    assert (
+        reply
+        == "La richiesta di modifica è in attesa di approvazione del ristorante."
+    )
+    assert returned_reservation_id == reservation_id
+    assert reservation_status == "seated"
+    assert modification_status == "pending"

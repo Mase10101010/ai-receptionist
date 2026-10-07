@@ -1,9 +1,11 @@
-from datetime import datetime, timezone
+﻿from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 from app.models.reservation import ReservationStatus
+
+from app.core.exceptions import ConflictError
 
 import pytest
 
@@ -96,6 +98,124 @@ async def test_capacity_affecting_modification_uses_aie_and_reassigns_tables():
         primary_table_id=new_table_id,
     )
 
+@pytest.mark.asyncio
+async def test_seated_party_size_modification_requiring_move_leaves_live_state_unchanged():
+    reservation_id = uuid4()
+    restaurant_id = uuid4()
+    occupied_table_id = uuid4()
+    alternative_table_id = uuid4()
+
+    occupied_table = SimpleNamespace(
+        id=occupied_table_id,
+        seats=2,
+        is_active=True,
+    )
+
+    reservation = SimpleNamespace(
+        id=reservation_id,
+        restaurant_id=restaurant_id,
+        reservation_time=datetime(
+            2026,
+            10,
+            17,
+            11,
+            30,
+            tzinfo=timezone.utc,
+        ),
+        party_size=2,
+        duration_minutes=90,
+        table_id=occupied_table_id,
+        table=occupied_table,
+        table_assignments=[],
+        status=ReservationStatus.SEATED,
+    )
+
+    service, repository = _build_service(
+        reservation=reservation,
+    )
+
+    service._assign_tables_with_aie = AsyncMock(
+        return_value=(
+            alternative_table_id,
+            [alternative_table_id],
+        ),
+    )
+
+    with pytest.raises(ConflictError):
+        await service.update_reservation(
+            reservation_id=reservation_id,
+            payload=ReservationUpdate(
+                party_size=4,
+            ),
+        )
+
+    service._assign_tables_with_aie.assert_not_awaited()
+    repository.update.assert_not_awaited()
+    repository.replace_table_assignments.assert_not_awaited()
+
+    assert reservation.party_size == 2
+    assert reservation.table_id == occupied_table_id
+    assert reservation.status == ReservationStatus.SEATED
+
+@pytest.mark.asyncio
+async def test_seated_party_size_modification_that_fits_current_table_preserves_assignment():
+    reservation_id = uuid4()
+    restaurant_id = uuid4()
+    occupied_table_id = uuid4()
+
+    occupied_table = SimpleNamespace(
+        id=occupied_table_id,
+        seats=4,
+        is_active=True,
+    )
+
+    reservation = SimpleNamespace(
+        id=reservation_id,
+        restaurant_id=restaurant_id,
+        reservation_time=datetime(
+            2026,
+            10,
+            17,
+            11,
+            30,
+            tzinfo=timezone.utc,
+        ),
+        party_size=2,
+        duration_minutes=90,
+        table_id=occupied_table_id,
+        table=occupied_table,
+        table_assignments=[],
+        status=ReservationStatus.SEATED,
+    )
+
+    service, repository = _build_service(
+        reservation=reservation,
+    )
+
+    service._assign_tables_with_aie = AsyncMock(
+        return_value=(
+            occupied_table_id,
+            [occupied_table_id],
+        ),
+    )
+
+    await service.update_reservation(
+        reservation_id=reservation_id,
+        payload=ReservationUpdate(
+            party_size=3,
+        ),
+    )
+
+    service._assign_tables_with_aie.assert_not_awaited()
+    repository.replace_table_assignments.assert_not_awaited()
+
+    repository.update.assert_awaited_once()
+
+    update_args = repository.update.await_args.args[1]
+
+    assert update_args["party_size"] == 3
+    assert reservation.table_id == occupied_table_id
+    assert reservation.status == ReservationStatus.SEATED
 
 @pytest.mark.asyncio
 async def test_metadata_only_modification_does_not_run_aie():
@@ -383,6 +503,7 @@ async def test_modification_assessment_returns_direct_available_without_reoptimi
     reservation = SimpleNamespace(
         id=reservation_id,
         restaurant_id=restaurant_id,
+        status=ReservationStatus.CONFIRMED,
         duration_minutes=90,
     )
 
@@ -451,6 +572,7 @@ async def test_modification_assessment_returns_reoptimization_available_for_same
     reservation = SimpleNamespace(
         id=reservation_id,
         restaurant_id=restaurant_id,
+        status=ReservationStatus.CONFIRMED,
         duration_minutes=90,
     )
 
@@ -534,6 +656,7 @@ async def test_modification_assessment_returns_unavailable_when_direct_and_reopt
     reservation = SimpleNamespace(
         id=reservation_id,
         restaurant_id=restaurant_id,
+        status=ReservationStatus.CONFIRMED,
         duration_minutes=90,
     )
 
@@ -906,3 +1029,274 @@ async def test_modification_reoptimization_proposal_uses_service_repository():
     )
 
     assert result is expected_suggestion
+
+@pytest.mark.asyncio
+async def test_seated_party_size_modification_that_fits_current_combination_preserves_assignment():
+    reservation_id = uuid4()
+    restaurant_id = uuid4()
+    table_a = uuid4()
+    table_b = uuid4()
+
+    reservation = SimpleNamespace(
+        id=reservation_id,
+        restaurant_id=restaurant_id,
+        reservation_time=datetime(
+            2026,
+            10,
+            17,
+            11,
+            30,
+            tzinfo=timezone.utc,
+        ),
+        party_size=4,
+        duration_minutes=90,
+        table_id=table_a,
+        table=None,
+        table_assignments=[
+            SimpleNamespace(table_id=table_a),
+            SimpleNamespace(table_id=table_b),
+        ],
+        status=ReservationStatus.SEATED,
+    )
+
+    service, repository = _build_service(
+        reservation=reservation,
+    )
+
+    service._current_seated_assignment_supports_party_size = AsyncMock(
+        return_value=True,
+    )
+    service._assign_tables_with_aie = AsyncMock()
+
+    await service.update_reservation(
+        reservation_id=reservation_id,
+        payload=ReservationUpdate(
+            party_size=5,
+        ),
+    )
+
+    service._current_seated_assignment_supports_party_size.assert_awaited_once_with(
+        reservation=reservation,
+        party_size=5,
+    )
+    service._assign_tables_with_aie.assert_not_awaited()
+    repository.replace_table_assignments.assert_not_awaited()
+
+    update_args = repository.update.await_args.args[1]
+
+    assert update_args["party_size"] == 5
+    assert reservation.table_id == table_a
+    assert reservation.status == ReservationStatus.SEATED
+
+@pytest.mark.asyncio
+async def test_seated_party_size_modification_requiring_move_is_not_direct_available():
+    reservation_id = uuid4()
+    restaurant_id = uuid4()
+    occupied_table_id = uuid4()
+
+    occupied_table = SimpleNamespace(
+        id=occupied_table_id,
+        seats=2,
+        is_active=True,
+    )
+
+    reservation = SimpleNamespace(
+        id=reservation_id,
+        restaurant_id=restaurant_id,
+        reservation_time=datetime(
+            2026,
+            10,
+            17,
+            11,
+            30,
+            tzinfo=timezone.utc,
+        ),
+        party_size=2,
+        duration_minutes=90,
+        table_id=occupied_table_id,
+        table=occupied_table,
+        table_assignments=[],
+        status=ReservationStatus.SEATED,
+    )
+
+    service, repository = _build_service(
+        reservation=reservation,
+    )
+
+    service._validate_reservation_time = AsyncMock()
+    service._current_seated_assignment_supports_party_size = AsyncMock(
+        return_value=False,
+    )
+    service.intelligence_service.optimize = AsyncMock()
+
+    target_table_id = uuid4()
+
+    service.intelligence_service.reoptimize = AsyncMock(
+        return_value=SimpleNamespace(
+            available=True,
+            recommended=SimpleNamespace(
+                new_reservation_assignment=SimpleNamespace(
+                    table_ids=[target_table_id],
+                ),
+                moved_reservations_count=0,
+            ),
+        ),
+    )
+
+    outcome = await service.assess_modification_availability(
+        reservation_time=reservation.reservation_time,
+        party_size=4,
+        restaurant_id=restaurant_id,
+        reservation_id=reservation_id,
+    )
+
+    assert outcome == BookingAvailabilityOutcome.LIVE_SERVICE_APPROVAL_REQUIRED
+
+    service._current_seated_assignment_supports_party_size.assert_awaited_once_with(
+        reservation=reservation,
+        party_size=4,
+    )
+
+    service.intelligence_service.optimize.assert_not_awaited()
+
+    service.intelligence_service.reoptimize.assert_awaited_once()
+    live_request = (
+        service.intelligence_service.reoptimize.await_args.kwargs["payload"]
+    )
+
+    assert live_request.reservation_id == reservation_id
+    assert live_request.restaurant_id == restaurant_id
+    assert live_request.requested_start == reservation.reservation_time
+    assert live_request.party_size == 4
+    assert live_request.duration_minutes == 90
+
+@pytest.mark.asyncio
+async def test_seated_party_size_modification_fitting_current_assignment_is_direct_available():
+    reservation_id = uuid4()
+    restaurant_id = uuid4()
+    occupied_table_id = uuid4()
+
+    occupied_table = SimpleNamespace(
+        id=occupied_table_id,
+        seats=4,
+        is_active=True,
+    )
+
+    reservation = SimpleNamespace(
+        id=reservation_id,
+        restaurant_id=restaurant_id,
+        reservation_time=datetime(
+            2026,
+            10,
+            17,
+            11,
+            30,
+            tzinfo=timezone.utc,
+        ),
+        party_size=2,
+        duration_minutes=90,
+        table_id=occupied_table_id,
+        table=occupied_table,
+        table_assignments=[],
+        status=ReservationStatus.SEATED,
+    )
+
+    service, repository = _build_service(
+        reservation=reservation,
+    )
+
+    service._validate_reservation_time = AsyncMock()
+    service._current_seated_assignment_supports_party_size = AsyncMock(
+        return_value=True,
+    )
+    service.intelligence_service.optimize = AsyncMock()
+
+    outcome = await service.assess_modification_availability(
+        reservation_time=reservation.reservation_time,
+        party_size=3,
+        restaurant_id=restaurant_id,
+        reservation_id=reservation_id,
+    )
+
+    assert outcome == BookingAvailabilityOutcome.DIRECT_AVAILABLE
+
+    service._current_seated_assignment_supports_party_size.assert_awaited_once_with(
+        reservation=reservation,
+        party_size=3,
+    )
+
+    service.intelligence_service.optimize.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_seated_party_size_live_precheck_rejects_plan_that_moves_other_reservations():
+    reservation_id = uuid4()
+    restaurant_id = uuid4()
+    occupied_table_id = uuid4()
+    target_table_id = uuid4()
+
+    reservation = SimpleNamespace(
+        id=reservation_id,
+        restaurant_id=restaurant_id,
+        reservation_time=datetime(
+            2026,
+            10,
+            17,
+            11,
+            30,
+            tzinfo=timezone.utc,
+        ),
+        party_size=2,
+        duration_minutes=90,
+        table_id=occupied_table_id,
+        table=SimpleNamespace(
+            id=occupied_table_id,
+            seats=2,
+            is_active=True,
+        ),
+        table_assignments=[],
+        status=ReservationStatus.SEATED,
+    )
+
+    service, repository = _build_service(
+        reservation=reservation,
+    )
+
+    service._validate_reservation_time = AsyncMock()
+    service._current_seated_assignment_supports_party_size = AsyncMock(
+        return_value=False,
+    )
+    service.intelligence_service.optimize = AsyncMock()
+    service.intelligence_service.reoptimize = AsyncMock(
+        return_value=SimpleNamespace(
+            available=True,
+            recommended=SimpleNamespace(
+                new_reservation_assignment=SimpleNamespace(
+                    table_ids=[target_table_id],
+                ),
+                moved_reservations_count=1,
+            ),
+        ),
+    )
+
+    outcome = await service.assess_modification_availability(
+        reservation_time=reservation.reservation_time,
+        party_size=4,
+        restaurant_id=restaurant_id,
+        reservation_id=reservation_id,
+    )
+
+    assert outcome == BookingAvailabilityOutcome.UNAVAILABLE
+
+    service.intelligence_service.optimize.assert_not_awaited()
+    service.intelligence_service.reoptimize.assert_awaited_once()
+
+    live_request = (
+        service.intelligence_service.reoptimize.await_args.kwargs["payload"]
+    )
+
+    assert live_request.reservation_id == reservation_id
+    assert live_request.restaurant_id == restaurant_id
+    assert reservation.party_size == 2
+    assert reservation.table_id == occupied_table_id
+    assert reservation.status == ReservationStatus.SEATED

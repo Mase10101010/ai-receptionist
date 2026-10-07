@@ -1,4 +1,4 @@
-"""
+﻿"""
 Reservation service.
 """
 import uuid
@@ -21,6 +21,10 @@ from app.models.reservation import Reservation, ReservationStatus
 from app.repositories.reservation_repository import ReservationRepository
 from app.repositories.ai_suggestion_repository import (
     AISuggestionRepository,
+)
+
+from app.repositories.table_combination_repository import (
+    TableCombinationRepository,
 )
 from app.repositories.restaurant_repository import RestaurantRepository
 from app.repositories.table_repository import TableRepository
@@ -88,6 +92,7 @@ def _format_reservation_time_for_language(
 class BookingAvailabilityOutcome(str, Enum):
     DIRECT_AVAILABLE = "direct_available"
     REOPTIMIZATION_AVAILABLE = "reoptimization_available"
+    LIVE_SERVICE_APPROVAL_REQUIRED = "live_service_approval_required"
     UNAVAILABLE = "unavailable"
 
 
@@ -811,6 +816,334 @@ class ReservationService:
             )
         )
 
+    async def propose_live_seated_modification(
+        self,
+        *,
+        reservation_id: uuid.UUID,
+        requested_party_size: int,
+    ):
+        """
+        Build a manager-facing live-service proposal for a SEATED
+        reservation without mutating its authoritative reservation
+        or physical table assignment.
+        """
+        reservation = await self.repository.get_by_id(
+            reservation_id
+        )
+
+        if reservation is None:
+            raise NotFoundError("Reservation not found.")
+
+        if reservation.status != ReservationStatus.SEATED:
+            return None
+
+        if requested_party_size == reservation.party_size:
+            return None
+
+        suggestion_service = AISuggestionService(
+            repository=AISuggestionRepository(
+                self.repository.db
+            ),
+            reservation_repository=self.repository,
+            intelligence_service=self.intelligence_service,
+        )
+
+        return await (
+            suggestion_service
+            .analyze_live_seated_modification(
+                reservation,
+                requested_party_size=requested_party_size,
+            )
+        )
+
+    async def _current_seated_assignment_supports_party_size(
+        self,
+        *,
+        reservation: Reservation,
+        party_size: int,
+    ) -> bool:
+        """
+        Return whether the reservation's current physical SEATED assignment
+        can accommodate the requested party size without moving the guests.
+
+        A single-table assignment uses that table's physical capacity.
+        A multi-table assignment is valid only through an exact active
+        TableCombination matching the current physical tables.
+        """
+        table_assignments = (
+            getattr(reservation, "table_assignments", None) or []
+        )
+
+        canonical_table_ids = list(
+            dict.fromkeys(
+                assignment.table_id
+                for assignment in table_assignments
+            )
+        )
+
+        # Canonical assignments are authoritative when present.
+        # Otherwise fall back to the legacy primary table_id.
+        assigned_table_ids = (
+            canonical_table_ids
+            if canonical_table_ids
+            else (
+                [reservation.table_id]
+                if reservation.table_id is not None
+                else []
+            )
+        )
+
+        if not assigned_table_ids:
+            return False
+
+        if len(assigned_table_ids) == 1:
+            assigned_table_id = assigned_table_ids[0]
+
+            table = getattr(reservation, "table", None)
+
+            if (
+                table is None
+                or table.id != assigned_table_id
+            ):
+                table = next(
+                    (
+                        getattr(assignment, "table", None)
+                        for assignment in table_assignments
+                        if (
+                            assignment.table_id == assigned_table_id
+                            and getattr(assignment, "table", None)
+                            is not None
+                        )
+                    ),
+                    None,
+                )
+
+            if table is None:
+                return False
+
+            return bool(
+                table.is_active
+                and 1 <= party_size <= table.seats
+            )
+
+        if reservation.restaurant_id is None:
+            return False
+
+        combination_repository = TableCombinationRepository(
+            self.repository.db
+        )
+
+        combinations = await combination_repository.list_by_restaurant(
+            restaurant_id=reservation.restaurant_id,
+        )
+
+        current_table_ids = set(assigned_table_ids)
+
+        for combination in combinations:
+            combination_table_ids = {
+                member.table_id
+                for member in combination.members
+            }
+
+            if combination_table_ids != current_table_ids:
+                continue
+
+            return bool(
+                combination.is_active
+                and combination.min_capacity <= party_size
+                <= combination.max_capacity
+            )
+
+        return False
+
+    async def apply_live_seated_modification_for_restaurants(
+        self,
+        *,
+        reservation_id: uuid.UUID,
+        restaurant_ids: list[uuid.UUID],
+        requested_party_size: int,
+        destination_table_ids: list[uuid.UUID],
+        destination_primary_table_id: uuid.UUID,
+    ) -> Reservation:
+        """
+        Apply an explicitly manager-approved physical move for a
+        currently SEATED reservation.
+
+        The reservation identity and SEATED lifecycle are preserved.
+        Party size and physical assignment are mutated inside the same
+        surrounding transaction.
+        """
+        if (
+            isinstance(requested_party_size, bool)
+            or not isinstance(requested_party_size, int)
+            or requested_party_size < 1
+        ):
+            raise ValidationError(
+                "Requested party size must be a positive integer."
+            )
+
+        destination_table_ids = list(
+            dict.fromkeys(destination_table_ids)
+        )
+
+        if not destination_table_ids:
+            raise ValidationError(
+                "At least one destination table is required."
+            )
+
+        if (
+            destination_primary_table_id
+            not in destination_table_ids
+        ):
+            raise ValidationError(
+                "Destination primary table must be included "
+                "in destination tables."
+            )
+
+        reservation = await (
+            self.repository
+            .get_by_id_for_restaurants_for_update(
+                reservation_id,
+                restaurant_ids,
+            )
+        )
+
+        if reservation is None:
+            raise NotFoundError(
+                "Reservation not found."
+            )
+
+        if reservation.restaurant_id is None:
+            raise ValidationError(
+                "Reservation is not attached to a restaurant."
+            )
+
+        if reservation.status != ReservationStatus.SEATED:
+            raise ValidationError(
+                "Live seated modification requires "
+                "a SEATED reservation."
+            )
+
+        locked_tables = await self.table_repository.lock_by_ids(
+            destination_table_ids
+        )
+
+        locked_by_id = {
+            table.id: table
+            for table in locked_tables
+        }
+
+        if set(locked_by_id) != set(destination_table_ids):
+            raise ValidationError(
+                "One or more destination tables could not be resolved."
+            )
+
+        for table in locked_tables:
+            if table.restaurant_id != reservation.restaurant_id:
+                raise ValidationError(
+                    "Destination table does not belong "
+                    "to the reservation restaurant."
+                )
+
+            if not table.is_active:
+                raise ValidationError(
+                    "Destination table is inactive."
+                )
+
+        if len(destination_table_ids) == 1:
+            destination_table = locked_by_id[
+                destination_table_ids[0]
+            ]
+
+            if requested_party_size > destination_table.seats:
+                raise ValidationError(
+                    "Destination table cannot accommodate "
+                    "the requested party size."
+                )
+        else:
+            combination_repository = TableCombinationRepository(
+                self.repository.db
+            )
+
+            combinations = (
+                await combination_repository.list_by_restaurant(
+                    restaurant_id=reservation.restaurant_id,
+                )
+            )
+
+            destination_set = set(
+                destination_table_ids
+            )
+            matching_combination = None
+
+            for combination in combinations:
+                combination_table_ids = {
+                    member.table_id
+                    for member in combination.members
+                }
+
+                if combination_table_ids == destination_set:
+                    matching_combination = combination
+                    break
+
+            if (
+                matching_combination is None
+                or not matching_combination.is_active
+                or not (
+                    matching_combination.min_capacity
+                    <= requested_party_size
+                    <= matching_combination.max_capacity
+                )
+            ):
+                raise ValidationError(
+                    "Destination tables are not a valid active "
+                    "combination for the requested party size."
+                )
+
+        live_blocker = (
+            await self.repository.find_seated_on_table_ids(
+                destination_table_ids,
+                exclude_reservation_id=reservation.id,
+            )
+        )
+
+        if live_blocker is not None:
+            raise ConflictError(
+                "One or more destination tables are currently occupied."
+            )
+
+        original_status = reservation.status
+        original_seated_at = reservation.seated_at
+
+        await self.repository.update(
+            reservation,
+            {
+                "party_size": requested_party_size,
+            },
+        )
+
+        reservation = (
+            await self.repository.replace_table_assignments(
+                reservation,
+                destination_table_ids,
+                primary_table_id=(
+                    destination_primary_table_id
+                ),
+            )
+        )
+
+        # LIVE apply must never alter lifecycle state.
+        if (
+            reservation.status != original_status
+            or reservation.seated_at != original_seated_at
+        ):
+            raise ValidationError(
+                "Live seated modification altered "
+                "the reservation lifecycle."
+            )
+
+        return reservation
+
     async def update_reservation(
         self,
         reservation_id: uuid.UUID,
@@ -847,30 +1180,60 @@ class ReservationService:
 
         primary_table_id: uuid.UUID | None = None
         assigned_table_ids: list[uuid.UUID] = []
+        preserve_seated_assignment = False
 
         if capacity_affecting_update:
-            (
-                primary_table_id,
-                assigned_table_ids,
-            ) = await self._assign_tables_with_aie(
-                reservation_time=new_time,
-                party_size=new_party,
-                restaurant_id=reservation.restaurant_id,
-                reservation_id=reservation.id,
-            )
+            if reservation.status == ReservationStatus.SEATED:
+                # A seated assignment is an authoritative physical location.
+                # A generic reservation modification may update party size only
+                # when the guests can remain exactly where they are.
+                #
+                # Changing reservation time while already seated is not treated
+                # as an ordinary capacity modification.
+                if "reservation_time" in updates:
+                    raise ConflictError(
+                        "A seated reservation cannot change its reservation time "
+                        "through the standard modification flow."
+                    )
 
-            if not assigned_table_ids:
-                raise ConflictError(
-                    "No direct table assignment is available "
-                    "for the requested reservation modification."
+                current_assignment_supports_party = (
+                    await self._current_seated_assignment_supports_party_size(
+                        reservation=reservation,
+                        party_size=new_party,
+                    )
                 )
+
+                if not current_assignment_supports_party:
+                    raise ConflictError(
+                        "The seated party cannot be accommodated by its current "
+                        "physical table assignment."
+                    )
+
+                preserve_seated_assignment = True
+
+            else:
+                (
+                    primary_table_id,
+                    assigned_table_ids,
+                ) = await self._assign_tables_with_aie(
+                    reservation_time=new_time,
+                    party_size=new_party,
+                    restaurant_id=reservation.restaurant_id,
+                    reservation_id=reservation.id,
+                )
+
+                if not assigned_table_ids:
+                    raise ConflictError(
+                        "No direct table assignment is available "
+                        "for the requested reservation modification."
+                    )
 
         updated = await self.repository.update(
             reservation,
             updates,
         )
 
-        if capacity_affecting_update:
+        if capacity_affecting_update and not preserve_seated_assignment:
             updated = await self.repository.replace_table_assignments(
                 updated,
                 assigned_table_ids,
@@ -1533,6 +1896,73 @@ class ReservationService:
         )
 
         if reservation is None:
+            return BookingAvailabilityOutcome.UNAVAILABLE
+
+        # LAB-012:
+        # Once guests are SEATED, their current table assignment represents
+        # their real physical location. Another available table must not be
+        # treated as a direct reservation modification.
+        if reservation.status == ReservationStatus.SEATED:
+            if reservation_time != reservation.reservation_time:
+                return BookingAvailabilityOutcome.UNAVAILABLE
+
+            current_assignment_supports_party = (
+                await self._current_seated_assignment_supports_party_size(
+                    reservation=reservation,
+                    party_size=party_size,
+                )
+            )
+
+            if current_assignment_supports_party:
+                return BookingAvailabilityOutcome.DIRECT_AVAILABLE
+
+            # LAB-012:
+            # The current physical assignment cannot support the requested
+            # party size. This is not direct availability. Assess, read-only,
+            # whether AIE can move only this seated reservation to a valid
+            # destination. Persisting the proposal happens later through the
+            # dedicated LIVE authority lane.
+            try:
+                live_result = await self.intelligence_service.reoptimize(
+                    session=self.repository.db,
+                    payload=IntelligenceReoptimizeRequest(
+                        restaurant_id=restaurant_id,
+                        reservation_id=reservation_id,
+                        requested_start=reservation.reservation_time,
+                        party_size=party_size,
+                        duration_minutes=reservation.duration_minutes,
+                        buffer_before_minutes=0,
+                        buffer_after_minutes=0,
+                        preferred_service_area_id=None,
+                        max_reservations_to_move=1,
+                        max_plans=5,
+                    ),
+                )
+
+                live_recommendation = live_result.recommended
+
+                if (
+                    live_result.available
+                    and live_recommendation is not None
+                    and live_recommendation.new_reservation_assignment.table_ids
+                    and live_recommendation.moved_reservations_count == 0
+                ):
+                    return (
+                        BookingAvailabilityOutcome
+                        .LIVE_SERVICE_APPROVAL_REQUIRED
+                    )
+
+            except Exception:
+                logger.exception(
+                    "AIE live seated modification availability assessment "
+                    "failed: restaurant_id=%s reservation_id=%s "
+                    "party=%d time=%s",
+                    restaurant_id,
+                    reservation_id,
+                    party_size,
+                    reservation.reservation_time.isoformat(),
+                )
+
             return BookingAvailabilityOutcome.UNAVAILABLE
 
         duration_minutes = reservation.duration_minutes
@@ -2214,5 +2644,7 @@ class ReservationService:
                 "Sorry, we don't have availability for that time. "
                 "Please try a different time slot."
             )
+
+
 
 

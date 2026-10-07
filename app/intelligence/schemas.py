@@ -251,6 +251,32 @@ class IntelligenceApplyReoptimizationRequest(BaseModel):
     )
 
 
+class IntelligenceApplyLiveSeatedModificationRequest(BaseModel):
+    suggestion_id: UUID
+    reservation_id: UUID
+
+    destination_table_ids: list[UUID] = Field(
+        min_length=1,
+        max_length=20,
+    )
+
+    destination_primary_table_id: UUID
+
+
+class IntelligenceApplyLiveSeatedModificationResponse(BaseModel):
+    reservation_id: UUID
+    restaurant_id: UUID
+
+    party_size: int
+    primary_table_id: UUID
+    table_ids: list[UUID]
+    table_numbers: list[str]
+
+    status: str
+    mode: str = "assisted_live_service"
+    applied: bool = True
+
+
 class IntelligenceAppliedMoveResponse(BaseModel):
     reservation_id: UUID
     primary_table_id: UUID

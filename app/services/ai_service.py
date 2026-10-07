@@ -1,4 +1,4 @@
-"""
+﻿"""
 AI service â€” OpenAI integration with conversation memory and function calling.
 """
 
@@ -74,9 +74,10 @@ Reservation rules:
   â€¢ Email is required because guests receive their reservation confirmation by email.
   â€¢ Interpret all guest-provided dates and times in the restaurant timezone.
   â€¢ Before confirming a slot, call check_availability.
-  â€¢ check_availability may return booking_outcome=direct_available, reoptimization_available, or unavailable.
+  â€¢ check_availability may return booking_outcome=direct_available, reoptimization_available, live_service_approval_required, or unavailable.
   â€¢ direct_available means the booking can be confirmed immediately.
   â€¢ reoptimization_available means Alias found a safe way to accommodate the request by reorganizing the room, but the request still requires the restaurant's approval unless Alias is authorized to execute it automatically. Never describe this state as confirmed.
+  • live_service_approval_required means an already seated reservation requires an explicit live-service operation before its physical table assignment may change. Never describe the requested physical move as already applied.
   â€¢ If booking_outcome is unavailable, call suggest_alternative_slots and offer nearby directly bookable times.
   â€¢ After create_reservation, inspect the returned status. If status is pending, tell the guest that the request was received and is awaiting final confirmation from the restaurant. If status is confirmed, share the reservation id and recap it as confirmed.
   â€¢ Guests may update existing reservations by providing their reservation id.
@@ -90,6 +91,10 @@ Reservation rules:
   â€¢ Never call update_reservation immediately after receiving only a reservation id.
   â€¢ When checking availability for a modification to an existing reservation, include that reservation's reservation_id in check_availability.
   â€¢ If check_availability returns booking_outcome=reoptimization_available for a modification, you MUST call update_reservation with the guest's requested modification. The availability check is read-only and does not register a pending modification request.
+  • If check_availability returns booking_outcome=live_service_approval_required for a modification, you MUST call update_reservation with the guest's requested modification. The availability check is read-only and does not register a pending live-service modification request.
+  • Do not tell the guest that the live-service modification request has been received or is awaiting approval until update_reservation returns modification_status=pending.
+  • If update_reservation returns booking_outcome=live_service_approval_required and modification_status=pending, the requested physical change has NOT been applied yet. The reservation remains seated on its current physical table assignment until explicit manager approval.
+  • Do not tell the guest that the physical table move has already happened.
   â€¢ Do not tell the guest that the modification request has been received or is awaiting approval until update_reservation returns modification_status=pending.
   â€¢ When suggesting alternative times for a modification, include that same reservation_id in suggest_alternative_slots.
   â€¢ An alternative offered for a modification must be validated as a modification of the existing reservation, not as a new competing reservation.
@@ -355,7 +360,7 @@ class AIService:
         session_id: str | None, 
         user_message: str,
         restaurant_id: uuid.UUID | None = None,
-    ) -> tuple[str, str, uuid.UUID | None, str | None]:
+    ) -> tuple[str, str, uuid.UUID | None, str | None, str | None]:
 
         if session_id is None:
             session_id = uuid.uuid4().hex
@@ -406,7 +411,7 @@ class AIService:
                 {"role": msg.role, "content": msg.content}
             )
 
-        reply, reservation_id, reservation_status = await self._run_completion_loop(
+        reply, reservation_id, reservation_status, modification_status = await self._run_completion_loop(
             messages,
             restaurant_id,
             session_id,
@@ -419,7 +424,7 @@ class AIService:
             reply
         )
 
-        return session_id, reply, reservation_id, reservation_status
+        return session_id, reply, reservation_id, reservation_status, modification_status
 
     async def _run_completion_loop(
         self,
@@ -427,10 +432,11 @@ class AIService:
         restaurant_id: uuid.UUID | None = None,
         session_id: str | None = None,
         timezone_name: str | None = None,
-    ) -> tuple[str, uuid.UUID | None, str | None]:
+    ) -> tuple[str, uuid.UUID | None, str | None, str | None]:
 
         reservation_id: uuid.UUID | None = None
         reservation_status: str | None = None
+        modification_status: str | None = None
         validated_booking_time: str | None = None
         validated_reservation_id: str | None = None
         validated_party_size: int | None = None
@@ -467,7 +473,12 @@ class AIService:
             )
 
             if not msg.tool_calls:
-                return msg.content or "", reservation_id, reservation_status
+                return (
+                    msg.content or "",
+                    reservation_id,
+                    reservation_status,
+                    modification_status,
+                )
 
             messages.append(
                 {
@@ -663,10 +674,18 @@ class AIService:
 
                 if rid:
                     reservation_id = rid
-                    status_value = result.get("status")
 
+                    status_value = result.get("status")
                     if isinstance(status_value, str):
                         reservation_status = status_value
+
+                    reservation_status_value = result.get("reservation_status")
+                    if isinstance(reservation_status_value, str):
+                        reservation_status = reservation_status_value
+
+                    modification_status_value = result.get("modification_status")
+                    if isinstance(modification_status_value, str):
+                        modification_status = modification_status_value
 
                 messages.append(
                     {
@@ -681,6 +700,7 @@ class AIService:
             "Puoi provare un altro orario oppure contattare direttamente il ristorante.",
             reservation_id,
             reservation_status,
+            modification_status,
         )
 
     async def _execute_tool(
@@ -773,7 +793,10 @@ class AIService:
                     "booking_outcome": outcome.value,
                     "requires_restaurant_confirmation": (
                         outcome
-                        == BookingAvailabilityOutcome.REOPTIMIZATION_AVAILABLE
+                        in {
+                            BookingAvailabilityOutcome.REOPTIMIZATION_AVAILABLE,
+                            BookingAvailabilityOutcome.LIVE_SERVICE_APPROVAL_REQUIRED,
+                        }
                     ),
                     "validated_reservation_time": requested_time.isoformat(),
                 }, None
@@ -978,6 +1001,127 @@ class AIService:
                         requested_party_size,
                     )
 
+                    authoritative_reservation = await (
+                        self.reservation_service.get_reservation(
+                            reservation_id=requested_reservation_id,
+                            restaurant_id=restaurant_id,
+                        )
+                    )
+
+                    if (
+                        authoritative_reservation.status.value == "seated"
+                        and requested_time is not None
+                    ):
+                        logger.info(
+                            (
+                                "AI seated reservation time change rejected: "
+                                "restaurant_id=%s reservation_id=%s "
+                                "requested_time=%s"
+                            ),
+                            restaurant_id,
+                            requested_reservation_id,
+                            requested_time.isoformat(),
+                        )
+
+                        return {
+                            "success": False,
+                            "error": "live_seated_time_change_unavailable",
+                            "booking_outcome": "unavailable",
+                            "reservation_id": str(
+                                requested_reservation_id
+                            ),
+                            "reservation_status": "seated",
+                            "requested_reservation_time": (
+                                requested_time.isoformat()
+                            ),
+                            "requested_party_size": (
+                                requested_party_size
+                            ),
+                            "instruction": (
+                                "The reservation is already seated. "
+                                "Its reservation time cannot be changed "
+                                "through reservation reoptimization. "
+                                "Keep the current seated reservation and "
+                                "physical table assignment unchanged."
+                            ),
+                        }, None
+                    if (
+                        authoritative_reservation.status.value == "seated"
+                        and requested_party_size is not None
+                        and requested_time is None
+                    ):
+                        live_suggestion = await (
+                            self.reservation_service
+                            .propose_live_seated_modification(
+                                reservation_id=requested_reservation_id,
+                                requested_party_size=requested_party_size,
+                            )
+                        )
+
+                        if live_suggestion is not None:
+                            logger.info(
+                                (
+                                    "AI live seated modification "
+                                    "requires approval: "
+                                    "restaurant_id=%s reservation_id=%s "
+                                    "suggestion_id=%s"
+                                ),
+                                restaurant_id,
+                                requested_reservation_id,
+                                live_suggestion.id,
+                            )
+
+                            return {
+                                "success": True,
+                                "booking_outcome": (
+                                    "live_service_approval_required"
+                                ),
+                                "modification_status": "pending",
+                                "modification_applied": False,
+                                "reservation_status": "seated",
+                                "requires_restaurant_confirmation": True,
+                                "reservation_id": str(
+                                    requested_reservation_id
+                                ),
+                                "suggestion_id": str(
+                                    live_suggestion.id
+                                ),
+                                "requested_reservation_time": None,
+                                "requested_party_size": (
+                                    requested_party_size
+                                ),
+                                "instruction": (
+                                    "The requested party-size change "
+                                    "has not been applied yet. The "
+                                    "party is currently seated and the "
+                                    "change requires an explicit "
+                                    "live-service reassignment approved "
+                                    "by the restaurant. Keep the current "
+                                    "physical table assignment unchanged "
+                                    "until that action succeeds. Do not "
+                                    "describe the modification as already "
+                                    "applied or confirmed."
+                                ),
+                            }, requested_reservation_id
+
+                        return {
+                            "success": False,
+                            "error": "live_seated_modification_unavailable",
+                            "booking_outcome": "unavailable",
+                            "reservation_id": str(
+                                requested_reservation_id
+                            ),
+                            "reservation_time": None,
+                            "party_size": requested_party_size,
+                            "reservation_status": "seated",
+                            "instruction": (
+                                "The seated party cannot be safely "
+                                "reassigned for the requested party-size "
+                                "change. Keep the reservation and current "
+                                "physical table assignment unchanged."
+                            ),
+                        }, None
+
                     suggestion = await (
                         self.reservation_service
                         .propose_reservation_modification_reoptimization(
@@ -1105,3 +1249,6 @@ class AIService:
                 args.get("reservation_id"),
             )
             return {"error": str(e)}, None
+
+
+

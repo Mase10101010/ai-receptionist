@@ -83,6 +83,48 @@ class ReservationRepository:
 
         return result.scalar_one_or_none()
 
+    async def get_by_id_for_restaurants_for_update(
+        self,
+        reservation_id: uuid.UUID,
+        restaurant_ids: list[uuid.UUID],
+    ) -> Reservation | None:
+        """
+        Load one tenant-scoped reservation while locking its
+        authoritative Reservation row for the current transaction.
+
+        Relationship data is loaded only after the row lock has been
+        acquired so the SELECT ... FOR UPDATE statement remains focused
+        on the reservation row itself.
+        """
+        if not restaurant_ids:
+            return None
+
+        result = await self.db.execute(
+            select(Reservation)
+            .where(
+                Reservation.id == reservation_id,
+                Reservation.restaurant_id.in_(
+                    restaurant_ids,
+                ),
+            )
+            .with_for_update()
+        )
+
+        reservation = result.scalar_one_or_none()
+
+        if reservation is None:
+            return None
+
+        await self.db.refresh(
+            reservation,
+            attribute_names=[
+                "table",
+                "table_assignments",
+            ],
+        )
+
+        return reservation
+
     async def list_all(
         self,
         skip: int = 0,

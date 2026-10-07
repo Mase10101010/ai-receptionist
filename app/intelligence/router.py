@@ -66,6 +66,8 @@ from .schemas import (
     IntelligenceReoptimizeResponse,
     IntelligenceApplyReoptimizationRequest,
     IntelligenceApplyReoptimizationResponse,
+    IntelligenceApplyLiveSeatedModificationRequest,
+    IntelligenceApplyLiveSeatedModificationResponse,
 )
 from .sqlalchemy_service import (
     IntelligenceOptimizationService,
@@ -341,6 +343,52 @@ async def apply_reoptimization(
                 "reservation_id=%s",
                 payload.new_reservation_id,
             )
+
+    return result
+
+
+@router.post(
+    "/apply-live-seated-modification",
+    response_model=IntelligenceApplyLiveSeatedModificationResponse,
+)
+async def apply_live_seated_modification(
+    payload: IntelligenceApplyLiveSeatedModificationRequest,
+    current_user: CurrentUserDep,
+    session: AsyncSession = Depends(get_db),
+) -> IntelligenceApplyLiveSeatedModificationResponse:
+    restaurant_repository = RestaurantRepository(
+        session,
+    )
+
+    restaurants = await restaurant_repository.list_by_owner(
+        current_user.id,
+    )
+
+    allowed_restaurant_ids = [
+        restaurant.id
+        for restaurant in restaurants
+        if restaurant.subscription_status
+        in {
+            "active",
+            "trialing",
+            "lifetime",
+        }
+    ]
+
+    result = await IntelligenceExecutionOrchestrator(
+        intelligence_service=service,
+    ).apply_live_seated_modification(
+        session=session,
+        payload=payload,
+        allowed_restaurant_ids=allowed_restaurant_ids,
+        source=IntelligenceEventSource.MANAGER,
+        actor_user_id=current_user.id,
+    )
+
+    # LIVE service truth must become durable only after
+    # gate -> physical mutation -> suggestion acceptance -> audit
+    # have all completed successfully.
+    await session.commit()
 
     return result
 

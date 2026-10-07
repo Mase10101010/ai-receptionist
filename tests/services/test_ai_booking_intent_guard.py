@@ -310,7 +310,7 @@ async def test_completion_loop_recovers_from_invented_time_and_asks_guest():
         },
     ]
 
-    reply, reservation_id, reservation_status = await service._run_completion_loop(
+    reply, reservation_id, reservation_status, modification_status = await service._run_completion_loop(
         messages=messages,
         restaurant_id=None,
         session_id="lab-005-test",
@@ -319,6 +319,7 @@ async def test_completion_loop_recovers_from_invented_time_and_asks_guest():
     assert reply == "Che orario preferisci?"
     assert reservation_id is None
     assert reservation_status is None
+    assert modification_status is None
 
     reservation_service.assess_booking_availability.assert_not_awaited()
     reservation_service.create_reservation.assert_not_awaited()
@@ -413,7 +414,7 @@ async def test_completion_loop_propagates_pending_reservation_status():
         },
     ]
 
-    reply, returned_reservation_id, reservation_status = (
+    reply, returned_reservation_id, reservation_status, modification_status = (
         await service._run_completion_loop(
             messages=messages,
             restaurant_id=None,
@@ -423,6 +424,7 @@ async def test_completion_loop_propagates_pending_reservation_status():
 
     assert returned_reservation_id == reservation_id
     assert reservation_status == "pending"
+    assert modification_status is None
     assert "attesa di conferma" in reply
 
     reservation_service.create_reservation.assert_awaited_once()
@@ -517,7 +519,7 @@ async def test_completion_loop_preserves_guest_local_wall_clock_time():
         },
     ]
 
-    reply, reservation_id, reservation_status = (
+    reply, reservation_id, reservation_status, modification_status = (
         await service._run_completion_loop(
             messages=messages,
             restaurant_id=None,
@@ -529,6 +531,7 @@ async def test_completion_loop_preserves_guest_local_wall_clock_time():
     assert reply == "Le 19:15 sono disponibili."
     assert reservation_id is None
     assert reservation_status is None
+    assert modification_status is None
 
     reservation_service.assess_booking_availability.assert_awaited_once()
 

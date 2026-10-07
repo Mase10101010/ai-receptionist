@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.ai_suggestion import (
     AISuggestion,
     AISuggestionStatus,
+    AISuggestionType,
 )
 
 
@@ -78,15 +79,22 @@ class AISuggestionRepository:
     async def find_pending_for_reservation(
         self,
         reservation_id: uuid.UUID,
+        *,
+        suggestion_type: AISuggestionType | None = None,
     ) -> AISuggestion | None:
+        conditions = [
+            AISuggestion.reservation_id == reservation_id,
+            AISuggestion.status == AISuggestionStatus.PENDING,
+        ]
+
+        if suggestion_type is not None:
+            conditions.append(
+                AISuggestion.suggestion_type == suggestion_type
+            )
+
         result = await self.db.execute(
             select(AISuggestion)
-            .where(
-                AISuggestion.reservation_id
-                == reservation_id,
-                AISuggestion.status
-                == AISuggestionStatus.PENDING,
-            )
+            .where(*conditions)
             .order_by(
                 AISuggestion.created_at.desc(),
             )
@@ -127,15 +135,25 @@ class AISuggestionRepository:
     async def expire_pending_for_reservation(
         self,
         reservation_id: uuid.UUID,
+        *,
+        suggestion_type: AISuggestionType | None = None,
     ) -> list[AISuggestion]:
+        conditions = [
+            AISuggestion.reservation_id
+            == reservation_id,
+            AISuggestion.status
+            == AISuggestionStatus.PENDING,
+        ]
+
+        if suggestion_type is not None:
+            conditions.append(
+                AISuggestion.suggestion_type
+                == suggestion_type
+            )
+
         result = await self.db.execute(
             select(AISuggestion)
-            .where(
-                AISuggestion.reservation_id
-                == reservation_id,
-                AISuggestion.status
-                == AISuggestionStatus.PENDING,
-            )
+            .where(*conditions)
             .order_by(
                 AISuggestion.created_at.asc(),
             )

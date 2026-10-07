@@ -22,6 +22,7 @@ from app.models.reservation import ReservationStatus
 from app.intelligence.schemas import (
     IntelligenceApplyReoptimizationRequest,
     IntelligenceApplyReoptimizationResponse,
+    IntelligenceApplyLiveSeatedModificationRequest,
 )
 
 import app.intelligence_execution.orchestrator as execution_orchestrator
@@ -669,5 +670,579 @@ async def test_stale_modification_gate_failure_stops_before_physical_apply(
         FakeIntelligenceEventService.record_calls
         == []
     )
+
+    session.commit.assert_not_awaited()
+class FakeLiveExecutionGate:
+    calls = []
+
+    def __init__(self, *, repository):
+        self.repository = repository
+
+    async def validate_live_seated_modification(
+        self,
+        **kwargs,
+    ):
+        self.__class__.calls.append(kwargs)
+
+
+class FakeLiveReservationService:
+    apply_calls = []
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def apply_live_seated_modification_for_restaurants(
+        self,
+        **kwargs,
+    ):
+        self.__class__.apply_calls.append(kwargs)
+
+        return SimpleNamespace(
+            id=RESERVATION_ID,
+            restaurant_id=RESTAURANT_ID,
+            party_size=4,
+            reservation_time=datetime.fromisoformat(
+                "2026-10-17T11:30:00+00:00"
+            ),
+            duration_minutes=90,
+            status=ReservationStatus.SEATED,
+            table_id=TABLE_ID,
+            assigned_table_ids=[TABLE_ID],
+            table_assignments=[],
+        )
+
+
+@pytest.mark.asyncio
+async def test_apply_live_seated_modification_gates_mutates_accepts_and_audits(
+    monkeypatch,
+):
+    original_table_id = uuid4()
+
+    seated_reservation = SimpleNamespace(
+        id=RESERVATION_ID,
+        restaurant_id=RESTAURANT_ID,
+        party_size=2,
+        reservation_time=datetime.fromisoformat(
+            "2026-10-17T11:30:00+00:00"
+        ),
+        duration_minutes=90,
+        status=ReservationStatus.SEATED,
+        table_id=original_table_id,
+        assigned_table_ids=[original_table_id],
+        table_assignments=[],
+    )
+
+    FakeReservationRepository.current_reservation = (
+        seated_reservation
+    )
+    FakeSuggestionRepository.current_suggestion = SimpleNamespace(
+        id=SUGGESTION_ID,
+        restaurant_id=RESTAURANT_ID,
+        reservation_id=RESERVATION_ID,
+        payload={
+            "requested_modification": {
+                "party_size": 4,
+                "reservation_time": (
+                    "2026-10-17T11:30:00+00:00"
+                ),
+            },
+        },
+    )
+
+    FakeLiveExecutionGate.calls = []
+    FakeLiveReservationService.apply_calls = []
+    FakeAISuggestionService.accept_calls = []
+    FakeIntelligenceEventService.record_calls = []
+
+    monkeypatch.setattr(
+        execution_orchestrator,
+        "ReservationRepository",
+        FakeReservationRepository,
+    )
+    monkeypatch.setattr(
+        execution_orchestrator,
+        "AISuggestionRepository",
+        FakeSuggestionRepository,
+    )
+    monkeypatch.setattr(
+        execution_orchestrator,
+        "IntelligenceExecutionGate",
+        FakeLiveExecutionGate,
+    )
+    monkeypatch.setattr(
+        "app.services.reservation_service.ReservationService",
+        FakeLiveReservationService,
+    )
+    monkeypatch.setattr(
+        execution_orchestrator,
+        "AISuggestionService",
+        FakeAISuggestionService,
+    )
+    monkeypatch.setattr(
+        execution_orchestrator,
+        "IntelligenceEventRepository",
+        FakeIntelligenceEventRepository,
+    )
+    monkeypatch.setattr(
+        execution_orchestrator,
+        "IntelligenceEventService",
+        FakeIntelligenceEventService,
+    )
+
+    session = FakeSession()
+
+    payload = (
+        IntelligenceApplyLiveSeatedModificationRequest(
+            suggestion_id=SUGGESTION_ID,
+            reservation_id=RESERVATION_ID,
+            destination_table_ids=[TABLE_ID],
+            destination_primary_table_id=TABLE_ID,
+        )
+    )
+
+    orchestrator = (
+        execution_orchestrator
+        .IntelligenceExecutionOrchestrator(
+            intelligence_service=FakeOptimizationService(),
+        )
+    )
+
+    result = await orchestrator.apply_live_seated_modification(
+        session=session,
+        payload=payload,
+        allowed_restaurant_ids=[RESTAURANT_ID],
+        source=IntelligenceEventSource.MANAGER,
+        actor_user_id=USER_ID,
+    )
+
+    assert result.applied is True
+    assert result.reservation_id == RESERVATION_ID
+    assert result.restaurant_id == RESTAURANT_ID
+    assert result.party_size == 4
+    assert result.status == "seated"
+    assert result.primary_table_id == TABLE_ID
+    assert result.table_ids == [TABLE_ID]
+
+    assert len(FakeLiveExecutionGate.calls) == 1
+
+    gate_call = FakeLiveExecutionGate.calls[0]
+
+    assert gate_call["suggestion_id"] == SUGGESTION_ID
+    assert gate_call["reservation_id"] == RESERVATION_ID
+    assert gate_call["destination_table_ids"] == [
+        TABLE_ID
+    ]
+    assert (
+        gate_call["destination_primary_table_id"]
+        == TABLE_ID
+    )
+
+    assert gate_call["current_reservation_state"] == {
+        "id": str(RESERVATION_ID),
+        "party_size": 2,
+        "reservation_time": (
+            "2026-10-17T11:30:00+00:00"
+        ),
+        "duration_minutes": 90,
+        "status": "seated",
+        "primary_table_id": str(original_table_id),
+        "table_ids": [str(original_table_id)],
+    }
+
+    assert FakeLiveReservationService.apply_calls == [
+        {
+            "reservation_id": RESERVATION_ID,
+            "restaurant_ids": [RESTAURANT_ID],
+            "requested_party_size": 4,
+            "destination_table_ids": [TABLE_ID],
+            "destination_primary_table_id": TABLE_ID,
+        }
+    ]
+
+    assert FakeAISuggestionService.accept_calls == [
+        {
+            "suggestion_id": SUGGESTION_ID,
+            "restaurant_ids": [RESTAURANT_ID],
+            "source": IntelligenceEventSource.MANAGER,
+        }
+    ]
+
+    assert len(
+        FakeIntelligenceEventService.record_calls
+    ) == 1
+
+    audit_call = (
+        FakeIntelligenceEventService.record_calls[0]
+    )
+
+    assert audit_call["restaurant_id"] == RESTAURANT_ID
+    assert audit_call["entity_type"] == "reservation"
+    assert audit_call["entity_id"] == RESERVATION_ID
+    assert audit_call["source"] == (
+        IntelligenceEventSource.MANAGER
+    )
+    assert audit_call["actor_user_id"] == USER_ID
+
+    assert audit_call["payload"]["suggestion_id"] == str(
+        SUGGESTION_ID
+    )
+    assert audit_call["payload"]["requested_party_size"] == 4
+    assert audit_call["payload"]["from_table_ids"] == [
+        str(original_table_id)
+    ]
+    assert audit_call["payload"]["to_table_ids"] == [
+        str(TABLE_ID)
+    ]
+    assert audit_call["payload"]["status"] == "seated"
+
+    session.commit.assert_not_awaited()
+
+
+
+@pytest.mark.asyncio
+async def test_apply_live_seated_modification_mutation_failure_does_not_accept_or_audit(
+    monkeypatch,
+):
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from app.core.exceptions import ConflictError
+    from app.intelligence_execution.orchestrator import (
+        IntelligenceExecutionOrchestrator,
+    )
+    from app.models.ai_suggestion import (
+        AISuggestionStatus,
+        AISuggestionType,
+    )
+    from app.models.reservation import ReservationStatus
+
+    suggestion_id = uuid4()
+    expected_suggestion_id = suggestion_id
+    reservation_id = uuid4()
+    expected_reservation_id = reservation_id
+    restaurant_id = uuid4()
+    original_table_id = uuid4()
+    destination_table_id = uuid4()
+
+    reservation = SimpleNamespace(
+        id=reservation_id,
+        restaurant_id=restaurant_id,
+        party_size=2,
+        reservation_time=datetime.fromisoformat(
+            "2026-10-17T11:30:00+00:00"
+        ),
+        duration_minutes=90,
+        status=ReservationStatus.SEATED,
+        table_id=original_table_id,
+        assigned_table_ids=[original_table_id],
+        table_assignments=[],
+        table=SimpleNamespace(
+            id=original_table_id,
+            table_number="43",
+        ),
+    )
+
+    suggestion = SimpleNamespace(
+        id=suggestion_id,
+        restaurant_id=restaurant_id,
+        reservation_id=reservation_id,
+        suggestion_type=(
+            AISuggestionType.LIVE_SEATED_MODIFICATION
+        ),
+        status=AISuggestionStatus.PENDING,
+        expires_at=None,
+        payload={
+            "reservation": {
+                "id": str(reservation_id),
+                "party_size": 2,
+                "reservation_time": (
+                    "2026-10-17T11:30:00+00:00"
+                ),
+                "duration_minutes": 90,
+                "status": "seated",
+                "primary_table_id": str(original_table_id),
+                "table_ids": [
+                    str(original_table_id),
+                ],
+            },
+            "requested_modification": {
+                "party_size": 4,
+                "reservation_time": (
+                    "2026-10-17T11:30:00+00:00"
+                ),
+            },
+            "plan": {
+                "new_reservation_assignment": {
+                    "table_ids": [
+                        str(destination_table_id),
+                    ],
+                },
+                "moves": [],
+                "moved_reservations_count": 0,
+            },
+        },
+    )
+
+    class FakeReservationRepository:
+        def __init__(self, db):
+            self.db = db
+
+        async def get_by_id_for_restaurants(
+            self,
+            reservation_id: object,
+            restaurant_ids,
+        ):
+            assert reservation_id == expected_reservation_id
+            assert restaurant_ids == [restaurant_id]
+            return reservation
+
+    class FakeSuggestionRepository:
+        def __init__(self, db):
+            self.db = db
+
+        async def get_by_id(
+            self,
+            suggestion_id: object,
+            *,
+            restaurant_ids=None,
+        ):
+            assert suggestion_id == expected_suggestion_id
+            assert restaurant_ids == [restaurant_id]
+            return suggestion
+
+    class FakeLiveExecutionGate:
+        async def validate_live_seated_modification(
+            self,
+            **kwargs,
+        ):
+            return suggestion
+
+    class FakeLiveReservationService:
+        def __init__(self, **kwargs):
+            pass
+
+        async def apply_live_seated_modification_for_restaurants(
+            self,
+            **kwargs,
+        ):
+            raise ConflictError(
+                "Destination became occupied."
+            )
+
+    accept_calls = []
+    audit_calls = []
+
+    async def fake_accept(*args, **kwargs):
+        accept_calls.append(
+            {
+                "args": args,
+                "kwargs": kwargs,
+            }
+        )
+
+    class FakeIntelligenceEventRepository:
+        def __init__(self, db):
+            self.db = db
+
+    class FakeIntelligenceEventService:
+        def __init__(self, repository):
+            self.repository = repository
+
+        async def record(self, **kwargs):
+            audit_calls.append(dict(kwargs))
+
+    monkeypatch.setattr(
+        "app.intelligence_execution.orchestrator.ReservationRepository",
+        FakeReservationRepository,
+    )
+    monkeypatch.setattr(
+        "app.intelligence_execution.orchestrator.AISuggestionRepository",
+        FakeSuggestionRepository,
+    )
+    monkeypatch.setattr(
+        "app.services.reservation_service.ReservationService",
+        FakeLiveReservationService,
+    )
+    monkeypatch.setattr(
+        "app.intelligence_execution.orchestrator.AISuggestionService.accept",
+        fake_accept,
+    )
+    monkeypatch.setattr(
+        "app.intelligence_execution.orchestrator.IntelligenceEventRepository",
+        FakeIntelligenceEventRepository,
+    )
+    monkeypatch.setattr(
+        "app.intelligence_execution.orchestrator.IntelligenceEventService",
+        FakeIntelligenceEventService,
+    )
+
+    orchestrator = IntelligenceExecutionOrchestrator(
+        intelligence_service=SimpleNamespace(),
+    )
+    orchestrator.execution_gate = FakeLiveExecutionGate()
+
+    from app.intelligence.schemas import (
+        IntelligenceApplyLiveSeatedModificationRequest,
+    )
+    from app.intelligence_events.models import (
+        IntelligenceEventSource,
+    )
+
+    session = SimpleNamespace()
+
+    payload = IntelligenceApplyLiveSeatedModificationRequest(
+        suggestion_id=suggestion_id,
+        reservation_id=reservation_id,
+        destination_table_ids=[
+            destination_table_id,
+        ],
+        destination_primary_table_id=(
+            destination_table_id
+        ),
+    )
+
+    with pytest.raises(
+        ConflictError,
+        match="Destination became occupied",
+    ):
+        await orchestrator.apply_live_seated_modification(
+            session=session,
+            payload=payload,
+            allowed_restaurant_ids=[
+                restaurant_id,
+            ],
+            source=IntelligenceEventSource.MANAGER,
+            actor_user_id=None,
+        )
+
+    assert accept_calls == []
+    assert audit_calls == []
+    assert suggestion.status == AISuggestionStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_manager_apply_live_seated_modification_calls_orchestrator_and_commits(
+    monkeypatch,
+):
+    destination_table_id = uuid4()
+
+    payload = IntelligenceApplyLiveSeatedModificationRequest(
+        suggestion_id=SUGGESTION_ID,
+        reservation_id=RESERVATION_ID,
+        destination_table_ids=[destination_table_id],
+        destination_primary_table_id=destination_table_id,
+    )
+
+    expected_result = SimpleNamespace(
+        reservation_id=RESERVATION_ID,
+        restaurant_id=RESTAURANT_ID,
+        party_size=4,
+        primary_table_id=destination_table_id,
+        table_ids=[destination_table_id],
+        table_numbers=["50"],
+        status="seated",
+        mode="assisted_live_service",
+        applied=True,
+    )
+
+    class FakeLiveRouterOrchestrator:
+        calls = []
+
+        def __init__(self, *, intelligence_service):
+            self.intelligence_service = intelligence_service
+
+        async def apply_live_seated_modification(self, **kwargs):
+            self.__class__.calls.append(kwargs)
+            return expected_result
+
+    monkeypatch.setattr(
+        intelligence_router,
+        "RestaurantRepository",
+        FakeRestaurantRepository,
+    )
+    monkeypatch.setattr(
+        intelligence_router,
+        "IntelligenceExecutionOrchestrator",
+        FakeLiveRouterOrchestrator,
+    )
+
+    session = FakeSession()
+    current_user = SimpleNamespace(id=USER_ID)
+
+    result = await intelligence_router.apply_live_seated_modification(
+        payload=payload,
+        current_user=current_user,
+        session=session,
+    )
+
+    assert result is expected_result
+    assert FakeLiveRouterOrchestrator.calls == [
+        {
+            "session": session,
+            "payload": payload,
+            "allowed_restaurant_ids": [RESTAURANT_ID],
+            "source": IntelligenceEventSource.MANAGER,
+            "actor_user_id": USER_ID,
+        },
+    ]
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_manager_apply_live_seated_modification_failure_does_not_commit(
+    monkeypatch,
+):
+    destination_table_id = uuid4()
+
+    payload = IntelligenceApplyLiveSeatedModificationRequest(
+        suggestion_id=SUGGESTION_ID,
+        reservation_id=RESERVATION_ID,
+        destination_table_ids=[destination_table_id],
+        destination_primary_table_id=destination_table_id,
+    )
+
+    class FailingLiveRouterOrchestrator:
+        calls = []
+
+        def __init__(self, *, intelligence_service):
+            self.intelligence_service = intelligence_service
+
+        async def apply_live_seated_modification(self, **kwargs):
+            self.__class__.calls.append(kwargs)
+            raise RuntimeError("live apply failed")
+
+    monkeypatch.setattr(
+        intelligence_router,
+        "RestaurantRepository",
+        FakeRestaurantRepository,
+    )
+    monkeypatch.setattr(
+        intelligence_router,
+        "IntelligenceExecutionOrchestrator",
+        FailingLiveRouterOrchestrator,
+    )
+
+    session = FakeSession()
+    current_user = SimpleNamespace(id=USER_ID)
+
+    with pytest.raises(
+        RuntimeError,
+        match="live apply failed",
+    ):
+        await intelligence_router.apply_live_seated_modification(
+            payload=payload,
+            current_user=current_user,
+            session=session,
+        )
+
+    assert FailingLiveRouterOrchestrator.calls == [
+        {
+            "session": session,
+            "payload": payload,
+            "allowed_restaurant_ids": [RESTAURANT_ID],
+            "source": IntelligenceEventSource.MANAGER,
+            "actor_user_id": USER_ID,
+        },
+    ]
 
     session.commit.assert_not_awaited()

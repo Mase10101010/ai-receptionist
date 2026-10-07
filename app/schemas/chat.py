@@ -28,6 +28,7 @@ class ChatResponse(BaseModel):
     # and authoritative lifecycle status to the client.
     reservation_id: uuid.UUID | None = None
     reservation_status: str | None = None
+    modification_status: str | None = None
 
 
 class MessageResponse(BaseModel):

@@ -480,3 +480,289 @@ async def test_legacy_reoptimization_does_not_require_original_snapshot():
         gate,
         current_reservation_state=None,
     )
+@pytest.mark.asyncio
+async def test_live_seated_modification_allows_matching_pending_suggestion():
+    destination_table_id = uuid.uuid4()
+
+    original_time = datetime(
+        2026,
+        10,
+        17,
+        11,
+        30,
+        tzinfo=timezone.utc,
+    )
+
+    suggestion = build_suggestion(
+        suggestion_type=(
+            AISuggestionType.LIVE_SEATED_MODIFICATION
+        ),
+    )
+
+    suggestion.payload = {
+        "reservation": {
+            "id": str(RESERVATION_ID),
+            "party_size": 2,
+            "reservation_time": original_time.isoformat(),
+            "duration_minutes": 90,
+            "status": "seated",
+            "primary_table_id": str(TABLE_1_ID),
+            "table_ids": [
+                str(TABLE_1_ID),
+            ],
+        },
+        "requested_modification": {
+            "party_size": 4,
+            "reservation_time": original_time.isoformat(),
+        },
+        "plan": {
+            "new_reservation_assignment": {
+                "table_ids": [
+                    str(destination_table_id),
+                ],
+            },
+            "moves": [],
+            "moved_reservations_count": 0,
+        },
+    }
+
+    gate = build_gate(suggestion)
+
+    await gate.validate_live_seated_modification(
+        suggestion_id=SUGGESTION_ID,
+        allowed_restaurant_ids=[
+            RESTAURANT_ID,
+        ],
+        reservation_id=RESERVATION_ID,
+        destination_table_ids=[
+            destination_table_id,
+        ],
+        destination_primary_table_id=(
+            destination_table_id
+        ),
+        current_reservation_state={
+            "id": str(RESERVATION_ID),
+            "party_size": 2,
+            "reservation_time": (
+                original_time.isoformat()
+            ),
+            "duration_minutes": 90,
+            "status": "seated",
+            "primary_table_id": str(
+                TABLE_1_ID
+            ),
+            "table_ids": [
+                str(TABLE_1_ID),
+            ],
+        },
+    )
+
+@pytest.mark.asyncio
+async def test_live_seated_modification_rejects_stale_original_snapshot():
+    destination_table_id = uuid.uuid4()
+    original_time = datetime(
+        2026, 10, 17, 11, 30,
+        tzinfo=timezone.utc,
+    )
+
+    suggestion = build_suggestion(
+        suggestion_type=(
+            AISuggestionType.LIVE_SEATED_MODIFICATION
+        ),
+    )
+    suggestion.payload = {
+        "reservation": {
+            "id": str(RESERVATION_ID),
+            "party_size": 2,
+            "reservation_time": original_time.isoformat(),
+            "duration_minutes": 90,
+            "status": "seated",
+            "primary_table_id": str(TABLE_1_ID),
+            "table_ids": [str(TABLE_1_ID)],
+        },
+        "requested_modification": {
+            "party_size": 4,
+            "reservation_time": original_time.isoformat(),
+        },
+        "plan": {
+            "new_reservation_assignment": {
+                "table_ids": [str(destination_table_id)],
+            },
+            "moves": [],
+            "moved_reservations_count": 0,
+        },
+    }
+
+    gate = build_gate(suggestion)
+
+    with pytest.raises(
+        ValidationError,
+        match="stale",
+    ):
+        await gate.validate_live_seated_modification(
+            suggestion_id=SUGGESTION_ID,
+            allowed_restaurant_ids=[RESTAURANT_ID],
+            reservation_id=RESERVATION_ID,
+            destination_table_ids=[destination_table_id],
+            destination_primary_table_id=destination_table_id,
+            current_reservation_state={
+                "id": str(RESERVATION_ID),
+                "party_size": 3,
+                "reservation_time": original_time.isoformat(),
+                "duration_minutes": 90,
+                "status": "seated",
+                "primary_table_id": str(TABLE_1_ID),
+                "table_ids": [str(TABLE_1_ID)],
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_live_seated_modification_rejects_destination_not_in_stored_plan():
+    destination_table_id = uuid.uuid4()
+    wrong_destination_table_id = uuid.uuid4()
+    original_time = datetime(
+        2026, 10, 17, 11, 30,
+        tzinfo=timezone.utc,
+    )
+
+    suggestion = build_suggestion(
+        suggestion_type=(
+            AISuggestionType.LIVE_SEATED_MODIFICATION
+        ),
+    )
+    suggestion.payload = {
+        "reservation": {
+            "id": str(RESERVATION_ID),
+            "party_size": 2,
+            "reservation_time": original_time.isoformat(),
+            "duration_minutes": 90,
+            "status": "seated",
+            "primary_table_id": str(TABLE_1_ID),
+            "table_ids": [str(TABLE_1_ID)],
+        },
+        "requested_modification": {
+            "party_size": 4,
+            "reservation_time": original_time.isoformat(),
+        },
+        "plan": {
+            "new_reservation_assignment": {
+                "table_ids": [str(destination_table_id)],
+            },
+            "moves": [],
+            "moved_reservations_count": 0,
+        },
+    }
+
+    gate = build_gate(suggestion)
+
+    with pytest.raises(
+        ValidationError,
+        match="Requested tables",
+    ):
+        await gate.validate_live_seated_modification(
+            suggestion_id=SUGGESTION_ID,
+            allowed_restaurant_ids=[RESTAURANT_ID],
+            reservation_id=RESERVATION_ID,
+            destination_table_ids=[
+                wrong_destination_table_id
+            ],
+            destination_primary_table_id=(
+                wrong_destination_table_id
+            ),
+            current_reservation_state={
+                "id": str(RESERVATION_ID),
+                "party_size": 2,
+                "reservation_time": original_time.isoformat(),
+                "duration_minutes": 90,
+                "status": "seated",
+                "primary_table_id": str(TABLE_1_ID),
+                "table_ids": [str(TABLE_1_ID)],
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_live_seated_modification_rejects_plan_that_moves_other_reservation():
+    destination_table_id = uuid.uuid4()
+    original_time = datetime(
+        2026, 10, 17, 11, 30,
+        tzinfo=timezone.utc,
+    )
+
+    suggestion = build_suggestion(
+        suggestion_type=(
+            AISuggestionType.LIVE_SEATED_MODIFICATION
+        ),
+    )
+    suggestion.payload = {
+        "reservation": {
+            "id": str(RESERVATION_ID),
+            "party_size": 2,
+            "reservation_time": original_time.isoformat(),
+            "duration_minutes": 90,
+            "status": "seated",
+            "primary_table_id": str(TABLE_1_ID),
+            "table_ids": [str(TABLE_1_ID)],
+        },
+        "requested_modification": {
+            "party_size": 4,
+            "reservation_time": original_time.isoformat(),
+        },
+        "plan": {
+            "new_reservation_assignment": {
+                "table_ids": [str(destination_table_id)],
+            },
+            "moves": [
+                {
+                    "reservation_id": str(
+                        MOVED_RESERVATION_ID
+                    ),
+                    "to_table_ids": [
+                        str(MOVE_TABLE_ID)
+                    ],
+                },
+            ],
+            "moved_reservations_count": 1,
+        },
+    }
+
+    gate = build_gate(suggestion)
+
+    with pytest.raises(
+        ValidationError,
+        match="cannot move other reservations",
+    ):
+        await gate.validate_live_seated_modification(
+            suggestion_id=SUGGESTION_ID,
+            allowed_restaurant_ids=[RESTAURANT_ID],
+            reservation_id=RESERVATION_ID,
+            destination_table_ids=[destination_table_id],
+            destination_primary_table_id=destination_table_id,
+            current_reservation_state={
+                "id": str(RESERVATION_ID),
+                "party_size": 2,
+                "reservation_time": original_time.isoformat(),
+                "duration_minutes": 90,
+                "status": "seated",
+                "primary_table_id": str(TABLE_1_ID),
+                "table_ids": [str(TABLE_1_ID)],
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_reoptimization_gate_rejects_live_seated_modification_suggestion():
+    gate = build_gate(
+        build_suggestion(
+            suggestion_type=(
+                AISuggestionType.LIVE_SEATED_MODIFICATION
+            ),
+        ),
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="not a reoptimization suggestion",
+    ):
+        await validate(gate)

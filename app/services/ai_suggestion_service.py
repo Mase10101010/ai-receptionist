@@ -383,6 +383,9 @@ class AISuggestionService:
             await self.repository
             .find_pending_for_reservation(
                 reservation.id,
+                suggestion_type=(
+                    AISuggestionType.REOPTIMIZATION
+                ),
             )
         )
 
@@ -544,6 +547,155 @@ class AISuggestionService:
 
         return created
 
+    async def analyze_live_seated_modification(
+        self,
+        reservation: Reservation,
+        *,
+        requested_party_size: int,
+    ) -> AISuggestion | None:
+        """
+        Propose a live-service reassignment for a seated reservation
+        without mutating its authoritative reservation or table state.
+        """
+        if reservation.restaurant_id is None:
+            return None
+
+        if reservation.status != ReservationStatus.SEATED:
+            return None
+
+        result = await self.intelligence_service.reoptimize(
+            session=self.repository.db,
+            payload=IntelligenceReoptimizeRequest(
+                restaurant_id=reservation.restaurant_id,
+                reservation_id=reservation.id,
+                requested_start=reservation.reservation_time,
+                party_size=requested_party_size,
+                duration_minutes=reservation.duration_minutes,
+                buffer_before_minutes=0,
+                buffer_after_minutes=0,
+                preferred_service_area_id=None,
+                max_reservations_to_move=1,
+                max_plans=5,
+            ),
+        )
+
+        plan = result.recommended
+
+        if not result.available or plan is None:
+            return None
+
+        # LAB-012 V1 live authority is deliberately narrow:
+        # the seated target may be reassigned, but creating this
+        # proposal must never require moving another reservation.
+        if plan.moved_reservations_count != 0:
+            return None
+
+        assignment = plan.new_reservation_assignment
+
+        if not assignment.table_ids:
+            return None
+
+        original_table_ids = list(
+            dict.fromkeys(
+                reservation.assigned_table_ids
+                or (
+                    [reservation.table_id]
+                    if reservation.table_id is not None
+                    else []
+                )
+            )
+        )
+
+        table_label = self._format_tables(
+            assignment.table_numbers,
+        )
+
+        payload = {
+            "reservation": {
+                "id": str(reservation.id),
+                "customer_name": reservation.customer_name,
+                "party_size": reservation.party_size,
+                "reservation_time": (
+                    reservation.reservation_time.isoformat()
+                ),
+                "duration_minutes": reservation.duration_minutes,
+                "status": reservation.status.value,
+                "primary_table_id": (
+                    str(reservation.table_id)
+                    if reservation.table_id is not None
+                    else None
+                ),
+                "table_ids": [
+                    str(table_id)
+                    for table_id in original_table_ids
+                ],
+            },
+            "requested_modification": {
+                "party_size": requested_party_size,
+                "reservation_time": (
+                    reservation.reservation_time.isoformat()
+                ),
+            },
+            "plan": plan.model_dump(
+                mode="json",
+                exclude={
+                    "temporal_autopilot_safety",
+                },
+            ),
+            "engine_version": result.engine_version,
+            "mode": result.mode,
+        }
+
+        await self.expire_for_reservation(
+            reservation.id,
+            suggestion_type=(
+                AISuggestionType.LIVE_SEATED_MODIFICATION
+            ),
+        )
+
+        suggestion = AISuggestion(
+            restaurant_id=reservation.restaurant_id,
+            reservation_id=reservation.id,
+            suggestion_type=(
+                AISuggestionType.LIVE_SEATED_MODIFICATION
+            ),
+            status=AISuggestionStatus.PENDING,
+            title="Live seated modification requires approval",
+            description=(
+                f"{reservation.customer_name} requested a party-size "
+                f"change from {reservation.party_size} to "
+                f"{requested_party_size}. Moving the seated party to "
+                f"{table_label} requires an explicit live-service action."
+            ),
+            score=plan.score,
+            payload=payload,
+            is_read=False,
+            expires_at=(
+                reservation.reservation_time
+                + timedelta(
+                    minutes=reservation.duration_minutes,
+                )
+            ),
+        )
+
+        created = await self.repository.create(
+            suggestion,
+        )
+
+        await self._record_ai_suggestion_event(
+            suggestion=created,
+            event_type=(
+                IntelligenceEventType.AI_SUGGESTION_CREATED
+            ),
+            source=IntelligenceEventSource.AI,
+        )
+
+        await self._refresh_learning_profile(
+            restaurant_id=created.restaurant_id,
+        )
+
+        return created
+
     async def analyze_reservation_modification(
         self,
         reservation: Reservation,
@@ -690,6 +842,9 @@ class AISuggestionService:
         # only after a valid replacement plan has been found.
         await self.expire_for_reservation(
             reservation.id,
+            suggestion_type=(
+                AISuggestionType.REOPTIMIZATION
+            ),
         )
 
         suggestion = AISuggestion(
@@ -892,11 +1047,14 @@ class AISuggestionService:
     async def expire_for_reservation(
         self,
         reservation_id: uuid.UUID,
+        *,
+        suggestion_type: AISuggestionType | None = None,
     ) -> int:
         expired_suggestions = await (
             self.repository
             .expire_pending_for_reservation(
                 reservation_id,
+                suggestion_type=suggestion_type,
             )
         )
 

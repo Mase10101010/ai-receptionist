@@ -16,6 +16,7 @@ from app.intelligence_temporal.calibration_state import (
 from app.intelligence_temporal.prediction import (
     ExpectedTurnConfidence,
 )
+from app.models.ai_suggestion import AISuggestionType
 from app.models.reservation import ReservationStatus
 from app.services.ai_suggestion_service import (
     AISuggestionService,
@@ -40,6 +41,8 @@ class FakeSuggestionRepository:
     async def find_pending_for_reservation(
         self,
         reservation_id,
+        *,
+        suggestion_type=None,
     ):
         return None
 
@@ -485,7 +488,8 @@ async def test_modification_reoptimization_uses_requested_state_without_mutating
     )
 
     service.expire_for_reservation.assert_awaited_once_with(
-        reservation.id
+        reservation.id,
+        suggestion_type=AISuggestionType.REOPTIMIZATION,
     )
 
     # Proposal creation must never mutate the live reservation.

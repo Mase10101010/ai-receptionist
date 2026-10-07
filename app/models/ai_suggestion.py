@@ -30,6 +30,7 @@ class AISuggestionType(str, Enum):
     REOPTIMIZATION = "reoptimization"
     CAPACITY = "capacity"
     TABLE_RELEASE = "table_release"
+    LIVE_SEATED_MODIFICATION = "live_seated_modification"
 
 
 class AISuggestionStatus(str, Enum):
