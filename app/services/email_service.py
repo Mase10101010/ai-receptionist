@@ -256,7 +256,20 @@ class EmailService:
                                     border:1px solid #2a2a2a;
                                 ">
 
-                                    <p><strong>{text["reservation_id_label"]}:</strong><br>{reservation_id}</p>
+                                    <p>
+    <strong>{text["reservation_id_label"]}:</strong><br>
+    <span style="overflow-wrap:anywhere;">{reservation_id}</span>
+    <a href="https://www.aliasconcierge.com/copy-reservation-id?id={reservation_id}"
+       title="Copy reservation ID"
+       aria-label="Copy reservation ID"
+       style="display:inline-block;vertical-align:middle;margin-left:8px;color:#67e8f9;text-decoration:none;font-size:21px;line-height:1;"
+    ><img src="https://www.aliasconcierge.com/copy-icon.png"
+       width="20"
+       height="20"
+       alt="Copy"
+       style="display:inline-block;border:0;vertical-align:middle;"
+    /></a>
+</p>
 
                                     <p><strong>{text["date_label"]}:</strong><br>{reservation_time}</p>
 
@@ -360,7 +373,20 @@ class EmailService:
                             <p style="color:#cccccc;font-size:16px;line-height:1.7;">{text["greeting"]}</p>
                             <p style="color:#cccccc;font-size:16px;line-height:1.7;">{text["body"]}</p>
                             <div style="margin:30px 0;padding:24px;background:#181818;border-radius:16px;border:1px solid #2a2a2a;">
-                                <p><strong>{text["reservation_id_label"]}:</strong><br>{reservation_id}</p>
+                                <p>
+    <strong>{text["reservation_id_label"]}:</strong><br>
+    <span style="overflow-wrap:anywhere;">{reservation_id}</span>
+    <a href="https://www.aliasconcierge.com/copy-reservation-id?id={reservation_id}"
+       title="Copy reservation ID"
+       aria-label="Copy reservation ID"
+       style="display:inline-block;vertical-align:middle;margin-left:8px;color:#67e8f9;text-decoration:none;font-size:21px;line-height:1;"
+    ><img src="https://www.aliasconcierge.com/copy-icon.png"
+       width="20"
+       height="20"
+       alt="Copy"
+       style="display:inline-block;border:0;vertical-align:middle;"
+    /></a>
+</p>
                                 <p><strong>{text["date_label"]}:</strong><br>{reservation_time}</p>
                                 <p><strong>{text["party_label"]}:</strong><br>{party_size} {text["guest_word"]}</p>
                             </div>
@@ -563,7 +589,20 @@ class EmailService:
                                     border:1px solid #2a2a2a;
                                 ">
 
-                                    <p><strong>{text["reservation_id_label"]}:</strong><br>{reservation_id}</p>
+                                    <p>
+    <strong>{text["reservation_id_label"]}:</strong><br>
+    <span style="overflow-wrap:anywhere;">{reservation_id}</span>
+    <a href="https://www.aliasconcierge.com/copy-reservation-id?id={reservation_id}"
+       title="Copy reservation ID"
+       aria-label="Copy reservation ID"
+       style="display:inline-block;vertical-align:middle;margin-left:8px;color:#67e8f9;text-decoration:none;font-size:21px;line-height:1;"
+    ><img src="https://www.aliasconcierge.com/copy-icon.png"
+       width="20"
+       height="20"
+       alt="Copy"
+       style="display:inline-block;border:0;vertical-align:middle;"
+    /></a>
+</p>
 
                                     <p><strong>{text["date_label"]}:</strong><br>{reservation_time}</p>
 
@@ -733,7 +772,20 @@ class EmailService:
                                     border:1px solid #2a2a2a;
                                 ">
 
-                                    <p><strong>{text["reservation_id_label"]}:</strong><br>{reservation_id}</p>
+                                    <p>
+    <strong>{text["reservation_id_label"]}:</strong><br>
+    <span style="overflow-wrap:anywhere;">{reservation_id}</span>
+    <a href="https://www.aliasconcierge.com/copy-reservation-id?id={reservation_id}"
+       title="Copy reservation ID"
+       aria-label="Copy reservation ID"
+       style="display:inline-block;vertical-align:middle;margin-left:8px;color:#67e8f9;text-decoration:none;font-size:21px;line-height:1;"
+    ><img src="https://www.aliasconcierge.com/copy-icon.png"
+       width="20"
+       height="20"
+       alt="Copy"
+       style="display:inline-block;border:0;vertical-align:middle;"
+    /></a>
+</p>
 
                                     <p><strong>{text["date_label"]}:</strong><br>{reservation_time}</p>
 
