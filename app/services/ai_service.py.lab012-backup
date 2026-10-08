@@ -440,7 +440,6 @@ class AIService:
         validated_booking_time: str | None = None
         validated_reservation_id: str | None = None
         validated_party_size: int | None = None
-        live_modification_pending = False
 
         for completion_round in range(5):
 
@@ -474,16 +473,6 @@ class AIService:
             )
 
             if not msg.tool_calls:
-                if live_modification_pending:
-                    messages.append({"role": "assistant", "content": msg.content or ""})
-                    messages.append({"role": "system", "content": (
-                        "The previous availability check was read-only and returned "
-                        "live_service_approval_required. Call update_reservation now "
-                        "using only the explicitly requested modification and the "
-                        "validated reservation ID and party size. Do not claim "
-                        "submission before modification_status=pending is returned."
-                    )})
-                    continue
                 return (
                     msg.content or "",
                     reservation_id,
@@ -672,11 +661,6 @@ class AIService:
                 )
 
                 if tc.function.name == "check_availability":
-                    live_modification_pending = (
-                        result.get("booking_outcome")
-                        == "live_service_approval_required"
-                        and bool(json.loads(tc.function.arguments or "{}").get("reservation_id"))
-                    )
                     if result.get("validated_reservation_time") is not None:
                         validated_booking_time = result["validated_reservation_time"]
 
@@ -687,15 +671,6 @@ class AIService:
 
                     if check_args.get("party_size") is not None:
                         validated_party_size = check_args["party_size"]
-
-                if (
-                    tc.function.name == "update_reservation"
-                    and result.get("success") is True
-                    and result.get("modification_status") == "pending"
-                    and result.get("booking_outcome")
-                    == "live_service_approval_required"
-                ):
-                    live_modification_pending = False
 
                 if rid:
                     reservation_id = rid
