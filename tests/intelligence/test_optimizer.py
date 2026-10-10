@@ -158,3 +158,94 @@ def test_optimizer_can_use_configured_combination() -> None:
     assert result.available is True
     assert result.recommended is not None
     assert result.recommended.candidate.table_ids == ("t1", "t2")
+
+
+def test_optimizer_supports_large_party_with_four_table_combination() -> None:
+    """A 14-person booking can use a valid 16-seat combination."""
+    optimizer = ReservationOptimizer()
+
+    tables = [
+        IntelligenceTable(
+            id=f"t{i}",
+            table_number=str(i),
+            min_capacity=1,
+            max_capacity=4,
+            area_id="main",
+            floor_id="ground",
+        )
+        for i in range(1, 5)
+    ]
+
+    combination = TableCombination(
+        id="large-party-combination",
+        name="T1 + T2 + T3 + T4",
+        table_ids=("t1", "t2", "t3", "t4"),
+        min_capacity=1,
+        max_capacity=16,
+        setup_minutes=0,
+    )
+
+    result = optimizer.optimize(
+        request=OptimizationRequest(
+            requested_start=dt(19),
+            party_size=14,
+            duration_minutes=90,
+        ),
+        tables=tables,
+        reservations=[],
+        combinations=[combination],
+    )
+
+    assert result.available is True
+    assert result.recommended is not None
+    assert set(result.recommended.candidate.table_ids) == {
+        "t1", "t2", "t3", "t4"
+    }
+
+
+def test_optimizer_rejects_large_party_combination_when_table_occupied() -> None:
+    """A 14-person booking cannot reuse a table occupied by another party."""
+    optimizer = ReservationOptimizer()
+
+    tables = [
+        IntelligenceTable(
+            id=f"t{i}",
+            table_number=str(i),
+            min_capacity=1,
+            max_capacity=4,
+            area_id="main",
+            floor_id="ground",
+        )
+        for i in range(1, 5)
+    ]
+
+    combination = TableCombination(
+        id="large-party-combination",
+        name="T1 + T2 + T3 + T4",
+        table_ids=("t1", "t2", "t3", "t4"),
+        min_capacity=1,
+        max_capacity=16,
+        setup_minutes=0,
+    )
+
+    result = optimizer.optimize(
+        request=OptimizationRequest(
+            requested_start=dt(19),
+            party_size=14,
+            duration_minutes=90,
+        ),
+        tables=tables,
+        reservations=[
+            ExistingReservation(
+                id="existing-booking",
+                start_at=dt(18, 30),
+                end_at=dt(20),
+                party_size=2,
+                table_ids=("t2",),
+            ),
+        ],
+        combinations=[combination],
+    )
+
+    assert result.available is False
+    assert result.recommended is None

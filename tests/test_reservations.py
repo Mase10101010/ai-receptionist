@@ -58,7 +58,7 @@ async def test_oversized_party_rejected(client):
     payload = {
         "customer_name": "Big Group",
         "customer_phone": "+15551234567",
-        "party_size": 99,  # exceeds MAX_PARTY_SIZE
+        "party_size": 65,  # exceeds the proposed technical safety limit
         "reservation_time": _future_time(),
     }
     r = await client.post("/api/v1/reservations", json=payload)
@@ -735,3 +735,177 @@ async def test_cannot_seat_when_legacy_seated_reservation_occupies_table(
     )
 
     assert seat_second_response.status_code == 409, seat_second_response.text
+
+@pytest.mark.asyncio
+async def test_large_party_booking_assigns_four_derived_tables(
+    client,
+    db_session,
+):
+    """A 14-person HTTP booking uses four connected 4-seat tables."""
+    from app.models.floor_plan import FloorPlan
+    from app.models.reservation_table_assignment import (
+        ReservationTableAssignment,
+    )
+    from app.repositories.table_combination_repository import (
+        TableCombinationRepository,
+    )
+    from app.services.smart_layout.derivation import (
+        derive_table_combinations,
+    )
+    from app.services.smart_layout.derived_materialization import (
+        SmartLayoutDerivedMaterializationService,
+    )
+
+    tables = list(
+        (
+            await db_session.execute(
+                select(Table).order_by(Table.table_number)
+            )
+        ).scalars().all()
+    )
+    assert len(tables) == 4
+
+    restaurant_id = tables[0].restaurant_id
+    area_id = tables[0].service_area_id
+
+    floor_plan = FloorPlan(
+        service_area_id=area_id,
+        name=f"LAB016 Large Party {uuid.uuid4()}",
+        width=1200,
+        height=800,
+        sort_order=0,
+        is_default=True,
+        is_active=True,
+    )
+    db_session.add(floor_plan)
+    await db_session.flush()
+
+    joins = [
+        frozenset((tables[index].id, tables[index + 1].id))
+        for index in range(3)
+    ]
+    derived = derive_table_combinations(joins)
+
+    materializer = SmartLayoutDerivedMaterializationService(
+        combination_repository=TableCombinationRepository(db_session),
+    )
+    await materializer.sync(
+        restaurant_id=restaurant_id,
+        service_area_id=area_id,
+        floor_plan_id=floor_plan.id,
+        derived_table_sets=derived,
+        tables_by_id={table.id: table for table in tables},
+    )
+    await db_session.flush()
+
+    response = await client.post(
+        "/api/v1/reservations",
+        json={
+            "customer_name": "LAB016 Birthday Party",
+            "customer_phone": "+15551234567",
+            "party_size": 14,
+            "reservation_time": _future_time(72),
+            "duration_minutes": 90,
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    booking = response.json()
+    assert booking["status"] == "confirmed"
+    assert booking["party_size"] == 14
+
+
+@pytest.mark.asyncio
+async def test_large_party_booking_assigns_four_derived_tables(
+    client,
+    db_session,
+):
+    """A 14-person HTTP booking uses four connected 4-seat tables."""
+    from app.models.floor_plan import FloorPlan
+    from app.models.reservation_table_assignment import (
+        ReservationTableAssignment,
+    )
+    from app.repositories.table_combination_repository import (
+        TableCombinationRepository,
+    )
+    from app.services.smart_layout.derivation import (
+        derive_table_combinations,
+    )
+    from app.services.smart_layout.derived_materialization import (
+        SmartLayoutDerivedMaterializationService,
+    )
+
+    tables = list(
+        (
+            await db_session.execute(
+                select(Table).order_by(Table.table_number)
+            )
+        ).scalars().all()
+    )
+    assert len(tables) == 4
+
+    restaurant_id = tables[0].restaurant_id
+    area_id = tables[0].service_area_id
+
+    floor_plan = FloorPlan(
+        service_area_id=area_id,
+        name=f"LAB016 Large Party {uuid.uuid4()}",
+        width=1200,
+        height=800,
+        sort_order=0,
+        is_default=True,
+        is_active=True,
+    )
+    db_session.add(floor_plan)
+    await db_session.flush()
+
+    joins = [
+        frozenset((tables[index].id, tables[index + 1].id))
+        for index in range(3)
+    ]
+    derived = derive_table_combinations(joins)
+
+    materializer = SmartLayoutDerivedMaterializationService(
+        combination_repository=TableCombinationRepository(db_session),
+    )
+    await materializer.sync(
+        restaurant_id=restaurant_id,
+        service_area_id=area_id,
+        floor_plan_id=floor_plan.id,
+        derived_table_sets=derived,
+        tables_by_id={table.id: table for table in tables},
+    )
+    await db_session.flush()
+
+    response = await client.post(
+        "/api/v1/reservations",
+        json={
+            "customer_name": "LAB016 Birthday Party",
+            "customer_phone": "+15551234567",
+            "party_size": 14,
+            "reservation_time": _future_time(72),
+            "duration_minutes": 90,
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    booking = response.json()
+    assert booking["status"] == "confirmed"
+    assert booking["party_size"] == 14
+
+    assignments = list(
+        (
+            await db_session.execute(
+                select(ReservationTableAssignment).where(
+                    ReservationTableAssignment.reservation_id
+                    == uuid.UUID(booking["id"])
+                )
+            )
+        ).scalars().all()
+    )
+
+    assert len(assignments) == 4
+    assert {assignment.table_id for assignment in assignments} == {
+        table.id for table in tables
+    }
+    assert sum(assignment.is_primary for assignment in assignments) == 1

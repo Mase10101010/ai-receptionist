@@ -28,76 +28,6 @@ from app.schemas.reservation import ReservationCreate, ReservationUpdate
 logger = get_logger(__name__)
 
 
-async def _classify_unverified_booking_intent(
-    client: AsyncOpenAI,
-    messages: list[dict[str, Any]],
-    proposed_reply: str,
-) -> bool | None:
-    """Classify whether an unverified reply needs an availability check."""
-    conversation = [
-        {
-            "role": entry["role"],
-            "content": entry.get("content") or "",
-        }
-        for entry in messages
-        if entry.get("role") in {"user", "assistant"}
-        and isinstance(entry.get("content"), str)
-    ]
-
-    response = await client.chat.completions.create(
-        model=settings.OPENAI_MODEL,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are a booking-intent classifier, not a receptionist. "
-                    "Return JSON only with boolean fields: "
-                    "new_booking, has_date, has_time, has_party_size, "
-                    "requires_availability_check. "
-                    "Classify the latest customer request in context. "
-                    "Set requires_availability_check=true only when the "
-                    "customer is requesting availability or a new booking "
-                    "with an explicit date, time, and party size, and the "
-                    "proposed reply attempts to answer or refuse that request "
-                    "without checking availability. "
-                    "Do not classify modifications, cancellations, greetings "
-                    "or incomplete booking requests as complete new bookings. "
-                    "Interpret all languages."
-                ),
-            },
-            {
-                "role": "user",
-                "content": json.dumps({
-                    "conversation": conversation,
-                    "proposed_reply": proposed_reply,
-                }),
-            },
-        ],
-        response_format={"type": "json_object"},
-        temperature=0,
-    )
-
-    try:
-        result = json.loads(response.choices[0].message.content or "{}")
-    except (ValueError, TypeError):
-        return None
-
-    required = (
-        "new_booking",
-        "has_date",
-        "has_time",
-        "has_party_size",
-        "requires_availability_check",
-    )
-
-    if not isinstance(result, dict) or any(
-        type(result.get(key)) is not bool for key in required
-    ):
-        return None
-
-    return all(result[key] for key in required)
-
-
 def _build_system_prompt(
     restaurant_name: str,
     timezone_name: str,
@@ -596,8 +526,6 @@ class AIService:
         modification_status: str | None = None
         validated_booking_time: str | None = None
         booking_creation_authorized = False
-        availability_checked = False
-        availability_attempted = False
         validated_reservation_id: str | None = None
         validated_party_size: int | None = None
         live_modification_pending = False
@@ -674,67 +602,6 @@ class AIService:
                     })
                     force_availability_check = True
                     continue
-                if (
-                    not availability_checked
-                    and not availability_attempted
-                    and not force_availability_check
-                    and any(
-                        entry.get("role") == "user"
-                        and isinstance(entry.get("content"), str)
-                        for entry in messages
-                    )
-                    and any(
-                        term in (msg.content or "").casefold()
-                        for term in (
-                            "disponibil",
-                            "available",
-                            "availability",
-                            "booking limit",
-                            "booking capacity",
-                            "group exceeds",
-                            "massimo",
-                            "massima",
-                            "limite",
-                            "accetta gruppi",
-                            "fully booked",
-                            "sold out",
-                        )
-                    )
-                ):
-                    try:
-                        needs_check = await _classify_unverified_booking_intent(
-                            self.client,
-                            messages,
-                            msg.content or "",
-                        )
-                    except (OpenAIError, ValueError, TypeError) as exc:
-                        logger.warning(
-                            "Booking intent classification failed: %s",
-                            exc,
-                        )
-                        needs_check = None
-
-                    if needs_check is None:
-                        return (
-                            "Non riesco a verificare la disponibilità in questo momento. "
-                            "Puoi riprovare tra poco?",
-                            reservation_id,
-                            reservation_status,
-                            modification_status,
-                        )
-
-                    if needs_check:
-                        messages.append({
-                            "role": "system",
-                            "content": (
-                                "The guest made a complete booking request. "
-                                "Do not claim availability or invent booking limits. "
-                                "Call check_availability before answering."
-                            ),
-                        })
-                        force_availability_check = True
-                        continue
-
                 if live_modification_pending:
                     messages.append({"role": "assistant", "content": msg.content or ""})
                     messages.append({"role": "system", "content": (
@@ -979,13 +846,11 @@ class AIService:
                 )
 
                 if tc.function.name == "check_availability":
-                    availability_attempted = True
                     # A new availability attempt supersedes any previous check.
                     validated_booking_time = None
                     validated_party_size = None
                     validated_reservation_id = None
                     booking_creation_authorized = False
-                    availability_checked = False
 
                     live_modification_pending = (
                         result.get("booking_outcome")
@@ -999,7 +864,6 @@ class AIService:
                         booking_creation_authorized = (
                             result.get("available") is True
                         )
-                        availability_checked = True
                         validated_booking_time = result["validated_reservation_time"]
 
                         check_args = json.loads(tc.function.arguments or "{}")

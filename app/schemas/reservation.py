@@ -49,7 +49,7 @@ class ReservationUpdate(BaseModel):
     customer_name: str | None = Field(None, min_length=1, max_length=120)
     customer_phone: str | None = Field(None, min_length=7, max_length=32)
     customer_email: EmailStr | None = None
-    party_size: int | None = Field(None, ge=1)
+    party_size: int | None = Field(None, ge=1, le=settings.MAX_PARTY_SIZE)
     reservation_time: datetime | None = None
     duration_minutes: int | None = Field(None, ge=30, le=300)
     special_requests: str | None = Field(None, max_length=2000)

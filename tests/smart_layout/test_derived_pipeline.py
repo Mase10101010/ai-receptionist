@@ -20,6 +20,7 @@ from app.services.smart_layout.derived_materialization import (
 
 async def build_derived_pipeline_scenario(
     db_session,
+    table_count: int = 3,
 ):
     user = User(
         email=f"pipeline-{uuid.uuid4()}@example.com",
@@ -37,7 +38,7 @@ async def build_derived_pipeline_scenario(
         slug=f"pipeline-{uuid.uuid4()}",
         opening_hour=0,
         closing_hour=23,
-        number_of_tables=3,
+        number_of_tables=table_count,
         subscription_status="trialing",
         onboarding_completed=True,
         autopilot_enabled=False,
@@ -75,7 +76,7 @@ async def build_derived_pipeline_scenario(
             seats=4,
             is_active=True,
         )
-        for index in range(1, 4)
+        for index in range(1, table_count + 1)
     ]
     db_session.add_all(tables)
     await db_session.flush()
@@ -283,3 +284,62 @@ async def test_removing_join_reconciles_derived_combinations(
             ab,
         )
     )
+
+def test_four_connected_tables_derive_large_party_configuration():
+    """Four approved physical joins can yield a 16-seat configuration."""
+    table_ids = [uuid.uuid4() for _ in range(4)]
+
+    joins = [
+        frozenset((table_ids[0], table_ids[1])),
+        frozenset((table_ids[1], table_ids[2])),
+        frozenset((table_ids[2], table_ids[3])),
+    ]
+
+    derived = derive_table_combinations(joins)
+
+    assert frozenset(table_ids) in derived
+    assert len(frozenset(table_ids)) == 4
+    assert all(len(combination) <= 4 for combination in derived)
+
+
+@pytest.mark.asyncio
+async def test_four_table_large_party_combination_is_materialized(
+    db_session,
+):
+    """Four connected 4-seat tables materialize as a 16-seat combination."""
+    scenario = await build_derived_pipeline_scenario(
+        db_session,
+        table_count=4,
+    )
+
+    tables = scenario["tables"]
+    all_table_ids = frozenset(table.id for table in tables)
+
+    joins = [
+        frozenset((tables[index].id, tables[index + 1].id))
+        for index in range(3)
+    ]
+
+    derived = derive_table_combinations(joins)
+    assert all_table_ids in derived
+
+    await scenario["materializer"].sync(
+        restaurant_id=scenario["restaurant"].id,
+        service_area_id=scenario["area"].id,
+        floor_plan_id=scenario["floor_plan"].id,
+        derived_table_sets=derived,
+        tables_by_id={table.id: table for table in tables},
+    )
+
+    combination = await scenario["repository"].get_by_smart_layout_key(
+        smart_layout_key=combination_key(
+            scenario["floor_plan"].id,
+            all_table_ids,
+        ),
+        restaurant_id=scenario["restaurant"].id,
+    )
+
+    assert combination is not None
+    assert combination.is_active is True
+    assert combination.max_capacity == 16
+    assert combination.min_capacity <= 14

@@ -77,7 +77,7 @@ class Settings(BaseSettings):
     RESTAURANT_TIMEZONE: str = "America/New_York"
     OPENING_HOUR: int = 11
     CLOSING_HOUR: int = 22
-    MAX_PARTY_SIZE: int = 12
+    MAX_PARTY_SIZE: int = 64
     MIN_PARTY_SIZE: int = 1
     RESERVATION_DURATION_MINUTES: int = 90
     MAX_DAILY_CAPACITY: int = 80
