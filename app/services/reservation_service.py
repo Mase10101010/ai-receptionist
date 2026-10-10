@@ -1,7 +1,8 @@
-﻿"""
+"""
 Reservation service.
 """
 import uuid
+from urllib.parse import quote
 from enum import Enum
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -30,6 +31,8 @@ from app.repositories.restaurant_repository import RestaurantRepository
 from app.repositories.table_repository import TableRepository
 from app.schemas.reservation import ReservationCreate, ReservationUpdate
 from app.services.email_service import EmailService
+from app.services.reservation_access_service import ReservationAccessService
+from app.services.post_commit_notifications import enqueue
 from app.intelligence_events.models import (
     IntelligenceEventSource,
     IntelligenceEventType,
@@ -112,6 +115,19 @@ class ReservationService:
         self.intelligence_service = (
             intelligence_service
             or IntelligenceOptimizationService()
+        )
+
+    @staticmethod
+    def _build_manage_reservation_url(
+        restaurant_slug: str,
+        access_token: str,
+    ) -> str:
+        base = settings.PUBLIC_FRONTEND_URL.rstrip("/")
+        slug = quote(restaurant_slug, safe="")
+        token = quote(access_token, safe="")
+        return (
+            f"{base}/concierge?restaurant={slug}"
+            f"#reservation_access_token={token}"
         )
 
     @staticmethod
@@ -565,35 +581,60 @@ class ReservationService:
                     restaurant_language,
                 )
 
-                if created.customer_email:
-                    await self.email_service.send_reservation_pending_confirmation(
-                        to_email=created.customer_email,
-                        restaurant_name=restaurant_name,
-                        customer_name=created.customer_name,
-                        reservation_id=str(created.id),
-                        reservation_time=formatted_time,
-                        party_size=created.party_size,
-                        language=restaurant_language,
+                manage_url = None
+                if (
+                    created.customer_email
+                    and created.restaurant_id
+                    and restaurant is not None
+                ):
+                    access_token = await ReservationAccessService(
+                        self.repository.db
+                    ).issue(
+                        reservation_id=created.id,
+                        restaurant_id=created.restaurant_id,
+                    )
+                    manage_url = self._build_manage_reservation_url(
+                        restaurant.slug,
+                        access_token,
                     )
 
+                if created.customer_email:
+                    async def send_customer_pending_email():
+                        await self.email_service.send_reservation_pending_confirmation(
+                            to_email=created.customer_email,
+                            restaurant_name=restaurant_name,
+                            customer_name=created.customer_name,
+                            reservation_id=str(created.id),
+                            reservation_time=formatted_time,
+                            party_size=created.party_size,
+                            language=restaurant_language,
+                            manage_url=manage_url,
+                        )
+
+                    enqueue(self.repository.db, send_customer_pending_email)
+
                 if restaurant is not None and restaurant.email:
-                    await self.email_service.send_restaurant_pending_reservation_notification(
-                        restaurant_email=restaurant.email,
-                        restaurant_name=restaurant.name,
-                        customer_name=created.customer_name,
-                        customer_email=created.customer_email,
-                        customer_phone=created.customer_phone,
-                        reservation_time=formatted_time,
-                        party_size=created.party_size,
-                        special_requests=created.special_requests,
-                        language=restaurant_language,
-                    )
+                    async def send_restaurant_pending_email():
+                        await self.email_service.send_restaurant_pending_reservation_notification(
+                            restaurant_email=restaurant.email,
+                            restaurant_name=restaurant.name,
+                            customer_name=created.customer_name,
+                            customer_email=created.customer_email,
+                            customer_phone=created.customer_phone,
+                            reservation_time=formatted_time,
+                            party_size=created.party_size,
+                            special_requests=created.special_requests,
+                            language=restaurant_language,
+                        )
+
+                    enqueue(self.repository.db, send_restaurant_pending_email)
 
             except Exception:
                 logger.exception(
-                    "Pending reservation notification failed, "
-                    "but reservation was created."
+                    "Pending reservation notification preparation failed; "
+                    "transaction must roll back."
                 )
+                raise
         if (
             created.status == ReservationStatus.CONFIRMED
             and created.customer_email
@@ -627,39 +668,61 @@ class ReservationService:
                         ZoneInfo("UTC")
                     )
 
-                await self.email_service.send_reservation_confirmation(
-                    to_email=created.customer_email,
-                    restaurant_name=restaurant_name,
-                    customer_name=created.customer_name,
-                    reservation_id=str(created.id),
-                    reservation_time=_format_reservation_time_for_language(
-                        localized_time,
-                        restaurant_language,
-                    ),
-                    party_size=created.party_size,
-                    language=restaurant_language,
+                formatted_time = _format_reservation_time_for_language(
+                    localized_time,
+                    restaurant_language,
                 )
 
-                if restaurant is not None and restaurant.email:
-                    await self.email_service.send_restaurant_reservation_notification(
-                        restaurant_email=restaurant.email,
-                        restaurant_name=restaurant.name,
-                        customer_name=created.customer_name,
-                        customer_email=created.customer_email,
-                        customer_phone=created.customer_phone,
-                        reservation_time=_format_reservation_time_for_language(
-                            localized_time,
-                            restaurant_language,
-                        ),
-                        party_size=created.party_size,
-                        table_number=created.table_number,
-                        special_requests=created.special_requests,
-                        language=restaurant.preferred_language,
+                manage_url = None
+                if created.restaurant_id and restaurant is not None:
+                    access_token = await ReservationAccessService(
+                        self.repository.db
+                    ).issue(
+                        reservation_id=created.id,
+                        restaurant_id=created.restaurant_id,
                     )
+                    manage_url = self._build_manage_reservation_url(
+                        restaurant.slug,
+                        access_token,
+                    )
+
+                async def send_customer_confirmed_email():
+                    await self.email_service.send_reservation_confirmation(
+                        to_email=created.customer_email,
+                        restaurant_name=restaurant_name,
+                        customer_name=created.customer_name,
+                        reservation_id=str(created.id),
+                        reservation_time=formatted_time,
+                        party_size=created.party_size,
+                        language=restaurant_language,
+                        manage_url=manage_url,
+                    )
+
+                enqueue(self.repository.db, send_customer_confirmed_email)
+
+                if restaurant is not None and restaurant.email:
+                    async def send_restaurant_confirmed_email():
+                        await self.email_service.send_restaurant_reservation_notification(
+                            restaurant_email=restaurant.email,
+                            restaurant_name=restaurant.name,
+                            customer_name=created.customer_name,
+                            customer_email=created.customer_email,
+                            customer_phone=created.customer_phone,
+                            reservation_time=formatted_time,
+                            party_size=created.party_size,
+                            table_number=created.table_number,
+                            special_requests=created.special_requests,
+                            language=restaurant.preferred_language,
+                        )
+
+                    enqueue(self.repository.db, send_restaurant_confirmed_email)
+
             except Exception:
                 logger.exception(
-                    "Reservation confirmation email failed, but reservation was created."
+                    "Reservation confirmation notification preparation failed; "
+                    "transaction must roll back."
                 )
+                raise
 
         return created
 

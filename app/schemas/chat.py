@@ -17,12 +17,33 @@ class ChatRequest(BaseModel):
         max_length=64,
     )
     message: str = Field(..., min_length=1, max_length=4000)
+    public_session_token: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=512,
+        exclude=True,
+        repr=False,
+        description="Private capability for continuing a public chat",
+    )
+    reservation_access_token: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=512,
+        exclude=True,
+        repr=False,
+        description="Private customer access token, verified server-side only",
+    )
 
 
 class ChatResponse(BaseModel):
     """The AI's reply plus session metadata."""
     session_id: str
     reply: str
+    public_session_token: str | None = Field(
+        default=None,
+        repr=False,
+        description="Private capability for continuing a public chat",
+    )
 
     # If a reservation was affected during this turn, surface its identity
     # and authoritative lifecycle status to the client.

@@ -212,6 +212,38 @@ async def test_complete_intent_reaches_availability_service():
     reservation_service.assess_booking_availability.assert_awaited_once()
 
 @pytest.mark.asyncio
+async def test_create_reservation_exception_returns_error_not_success():
+    service, reservation_service = _build_ai_service()
+    reservation_service.create_reservation.side_effect = RuntimeError(
+        "simulated reservation failure"
+    )
+
+    arguments = {
+        "customer_name": "Mario Rossi",
+        "customer_phone": "3333333333",
+        "customer_email": "mario@example.com",
+        "party_size": 2,
+        "reservation_time": "2026-10-17T19:00:00",
+        "special_requests": "",
+        "customer_provided_date": True,
+        "customer_provided_time": True,
+        "customer_provided_party_size": True,
+    }
+
+    result, reservation_id = await service._execute_tool(
+        "create_reservation",
+        json.dumps(arguments),
+        restaurant_id=uuid.uuid4(),
+        session_id="lab015-error-test",
+    )
+
+    assert result.get("success") is not True
+    assert "error" in result
+    assert reservation_id is None
+    reservation_service.create_reservation.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_complete_intent_reaches_create_reservation():
     service, reservation_service = _build_ai_service()
 

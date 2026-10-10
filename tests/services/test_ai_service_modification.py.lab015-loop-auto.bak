@@ -1199,7 +1199,6 @@ async def test_completion_loop_rejects_guest_local_update_time_different_from_va
         restaurant_id=restaurant_id,
         session_id="lab-009-check-update-consistency",
         timezone_name="Australia/Perth",
-        access_context=ReservationAccessContext(restaurant_id=restaurant_id, reservation_id=reservation_id),
     )
 
     reservation_service.assess_modification_availability.assert_awaited_once()
@@ -1303,7 +1302,6 @@ async def test_completion_loop_allows_guest_local_update_matching_validated_chec
         restaurant_id=restaurant_id,
         session_id="lab-009-check-update-matching",
         timezone_name="Australia/Perth",
-        access_context=ReservationAccessContext(restaurant_id=restaurant_id, reservation_id=reservation_id),
     )
 
     reservation_service.assess_modification_availability.assert_awaited_once()
@@ -1409,7 +1407,6 @@ async def test_completion_loop_uses_validated_check_time_for_alternative_search(
         restaurant_id=restaurant_id,
         session_id="lab-009-check-alternatives-consistency",
         timezone_name="Australia/Perth",
-        access_context=ReservationAccessContext(restaurant_id=restaurant_id, reservation_id=reservation_id),
     )
 
     reservation_service.assess_modification_availability.assert_awaited_once()
@@ -1536,7 +1533,6 @@ async def test_completion_loop_rejects_update_for_different_reservation_than_val
         restaurant_id=restaurant_id,
         session_id="lab-009-check-update-identity",
         timezone_name="Australia/Perth",
-        access_context=ReservationAccessContext(restaurant_id=restaurant_id, reservation_id=reservation_id),
     )
 
     reservation_service.assess_modification_availability.assert_awaited_once()
@@ -1655,7 +1651,6 @@ async def test_completion_loop_rejects_update_party_size_different_from_validate
         restaurant_id=restaurant_id,
         session_id="lab-009-check-update-party-size",
         timezone_name="Australia/Perth",
-        access_context=ReservationAccessContext(restaurant_id=restaurant_id, reservation_id=reservation_id),
     )
 
     reservation_service.assess_modification_availability.assert_awaited_once()
@@ -1772,7 +1767,6 @@ async def test_completion_loop_allows_backend_alternative_after_validated_check(
         restaurant_id=restaurant_id,
         session_id="lab-008-backend-alternative-regression",
         timezone_name="Australia/Perth",
-        access_context=ReservationAccessContext(restaurant_id=restaurant_id, reservation_id=reservation_id),
     )
 
     reservation_service.assess_modification_availability.assert_awaited_once()
@@ -1918,7 +1912,6 @@ async def test_completion_loop_returns_final_reply_after_production_like_modific
             restaurant_id=restaurant_id,
             session_id="production-like-modification-flow",
             timezone_name="Australia/Perth",
-            access_context=ReservationAccessContext(restaurant_id=restaurant_id, reservation_id=reservation_id),
         )
     )
 
@@ -2000,7 +1993,6 @@ async def test_completion_loop_surfaces_pending_live_modification_separately_fro
         restaurant_id=restaurant_id,
         session_id="lab-012b-live-pending-contract",
         timezone_name="Australia/Perth",
-        access_context=ReservationAccessContext(restaurant_id=restaurant_id, reservation_id=reservation_id),
     )
 
     assert (
@@ -2086,7 +2078,6 @@ async def test_live_precheck_premature_reply_requires_update_before_pending_conf
             restaurant_id=restaurant_id,
             session_id="lab012-live-premature-reply",
             timezone_name="Australia/Perth",
-            access_context=ReservationAccessContext(restaurant_id=restaurant_id, reservation_id=reservation_id),
         )
     )
 

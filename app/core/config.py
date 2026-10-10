@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     ENVIRONMENT: Literal["development", "staging", "production"] = "development"
     DEBUG: bool = False
     API_V1_PREFIX: str = "/api/v1"
+    PUBLIC_FRONTEND_URL: str = 'https://www.aliasconcierge.com'
     JWT_SECRET_KEY: str = "change-this-secret-in-production"
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7

@@ -1,3 +1,4 @@
+import html
 import resend
 
 from app.core.config import settings
@@ -115,6 +116,7 @@ class EmailService:
         reservation_time: str,
         party_size: int,
         language: str = "en",
+        manage_url: str | None = None,
     ) -> None:
 
         if not settings.RESEND_API_KEY:
@@ -123,6 +125,7 @@ class EmailService:
         
         content = {
             "en": {
+                "manage_label": "Manage reservation",
                 "subject": f"{restaurant_name} Reservation Confirmation",
                 "title": "Reservation Confirmed",
                 "greeting": f"Hello {customer_name},",
@@ -135,6 +138,7 @@ class EmailService:
                 "footer": "We look forward to welcoming you.",
             },
             "it": {
+                "manage_label": "Gestisci prenotazione",
                 "subject": f"Conferma prenotazione {restaurant_name}",
                 "title": "Prenotazione confermata",
                 "greeting": f"Ciao {customer_name},",
@@ -147,6 +151,7 @@ class EmailService:
                 "footer": "Non vediamo l'ora di accoglierti.",
             },
             "es": {
+                "manage_label": "Gestionar reserva",
                 "subject": f"Confirmación de reserva {restaurant_name}",
                 "title": "Reserva confirmada",
                 "greeting": f"Hola {customer_name},",
@@ -159,6 +164,7 @@ class EmailService:
                 "footer": "Esperamos darte la bienvenida.",
             },
             "fr": {
+                "manage_label": "Gérer la réservation",
                 "subject": f"Confirmation de réservation {restaurant_name}",
                 "title": "Réservation confirmée",
                 "greeting": f"Bonjour {customer_name},",
@@ -171,6 +177,7 @@ class EmailService:
                 "footer": "Nous avons hâte de vous accueillir.",
             },
             "de": {
+                "manage_label": "Reservierung verwalten",
                 "subject": f"Reservierungsbestätigung {restaurant_name}",
                 "title": "Reservierung bestätigt",
                 "greeting": f"Hallo {customer_name},",
@@ -194,6 +201,7 @@ class EmailService:
                     "to": [to_email],
                     "subject": text["subject"],
                     "html": f"""
+
                     <div style="
                         background:#0b0b0b;
                         padding:40px 20px;
@@ -284,6 +292,7 @@ class EmailService:
                                 ">
                                     {text["note"]}
                                 </p>
+{f'<p style="margin:24px 0;text-align:center;"><a href="{html.escape(manage_url, quote=True)}" style="display:inline-block;padding:14px 24px;background:#67e8f9;color:#111111;border-radius:10px;text-decoration:none;font-weight:bold;">{text["manage_label"]}</a></p>' if manage_url else ""}
 
                                 <p style="
                                     margin-top:40px;
@@ -312,6 +321,7 @@ class EmailService:
         reservation_time: str,
         party_size: int,
         language: str = "en",
+        manage_url: str | None = None,
     ) -> None:
         if not settings.RESEND_API_KEY:
             logger.warning("RESEND_API_KEY missing - skipping pending reservation email")
@@ -319,6 +329,7 @@ class EmailService:
 
         content = {
             "en": {
+                "manage_label": "Manage reservation",
                 "subject": f"Reservation request received - {restaurant_name}",
                 "title": "Reservation request received",
                 "greeting": f"Hello {customer_name},",
@@ -327,6 +338,7 @@ class EmailService:
                 "note": "Your reservation is not confirmed yet. You will receive another email once the restaurant confirms your request.",
             },
             "it": {
+                "manage_label": "Gestisci prenotazione",
                 "subject": f"Richiesta di prenotazione ricevuta - {restaurant_name}",
                 "title": "Richiesta di prenotazione ricevuta",
                 "greeting": f"Ciao {customer_name},",
@@ -335,6 +347,7 @@ class EmailService:
                 "note": "La prenotazione non è ancora confermata. Riceverai un'altra email quando il ristorante avrà confermato la richiesta.",
             },
             "es": {
+                "manage_label": "Gestionar reserva",
                 "subject": f"Solicitud de reserva recibida - {restaurant_name}",
                 "title": "Solicitud de reserva recibida",
                 "greeting": f"Hola {customer_name},",
@@ -343,6 +356,7 @@ class EmailService:
                 "note": "Tu reserva aún no está confirmada. Recibirás otro correo cuando el restaurante confirme tu solicitud.",
             },
             "fr": {
+                "manage_label": "Gérer la réservation",
                 "subject": f"Demande de réservation reçue - {restaurant_name}",
                 "title": "Demande de réservation reçue",
                 "greeting": f"Bonjour {customer_name},",
@@ -351,6 +365,7 @@ class EmailService:
                 "note": "Votre réservation n'est pas encore confirmée. Vous recevrez un autre e-mail lorsque le restaurant aura confirmé votre demande.",
             },
             "de": {
+                "manage_label": "Reservierung verwalten",
                 "subject": f"Reservierungsanfrage erhalten - {restaurant_name}",
                 "title": "Reservierungsanfrage erhalten",
                 "greeting": f"Hallo {customer_name},",
@@ -365,6 +380,7 @@ class EmailService:
             resend.Emails.send({
                 "from": settings.EMAIL_FROM, "to": [to_email], "subject": text["subject"],
                 "html": f"""
+
                 <div style="background:#0b0b0b;padding:40px 20px;font-family:Arial,sans-serif;color:white;">
                     <div style="max-width:600px;margin:0 auto;background:#111111;border:1px solid #222;border-radius:20px;overflow:hidden;">
                         <div style="padding:40px 20px;text-align:center;background:black;"><img src="https://www.aliasconcierge.com/alias-word-dark.png" alt="Alias" style="max-width:260px;width:100%;" /></div>
@@ -391,6 +407,7 @@ class EmailService:
                                 <p><strong>{text["party_label"]}:</strong><br>{party_size} {text["guest_word"]}</p>
                             </div>
                             <p style="color:#aaaaaa;font-size:14px;line-height:1.7;">{text["note"]}</p>
+{f'<p style="margin:24px 0;text-align:center;"><a href="{html.escape(manage_url, quote=True)}" style="display:inline-block;padding:14px 24px;background:#67e8f9;color:#111111;border-radius:10px;text-decoration:none;font-weight:bold;">{text["manage_label"]}</a></p>' if manage_url else ""}
                         </div>
                     </div>
                 </div>

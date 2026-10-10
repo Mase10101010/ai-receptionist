@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import DateTime, Enum as SQLEnum, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import DateTime, Enum as SQLEnum, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -170,6 +170,11 @@ class Reservation(Base):
     __table_args__ = (
         Index("ix_reservations_time_status", "reservation_time", "status"),
         Index("ix_reservations_restaurant_time", "restaurant_id", "reservation_time"),
+        UniqueConstraint(
+            "id",
+            "restaurant_id",
+            name="uq_reservations_id_restaurant_id",
+        ),
     )
 
     @property

@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Any
+from app.services.reservation_access_context import ReservationAccessContext
 from app.services.reservation_service import (
     BookingAvailabilityOutcome,
     ReservationService,
@@ -338,6 +339,54 @@ def _missing_required_booking_intent(
     return missing
 
 
+
+def _requires_reservation_access(
+    tool_name: str,
+    arguments: dict[str, Any],
+) -> bool:
+    """Identify AI tool calls that operate on an existing reservation."""
+    if tool_name in {
+        "get_reservation",
+        "update_reservation",
+        "cancel_reservation",
+    }:
+        return True
+
+    if tool_name in {
+        "check_availability",
+        "suggest_alternative_slots",
+    }:
+        return arguments.get("reservation_id") is not None
+
+    return False
+
+
+
+def _reservation_tool_is_authorized(
+    tool_name: str,
+    arguments: dict[str, Any],
+    restaurant_id: uuid.UUID | None,
+    access_context: "ReservationAccessContext | None",
+) -> bool:
+    """Authorize reservation-sensitive tool calls using server-verified scope."""
+    if not _requires_reservation_access(tool_name, arguments):
+        return True
+
+    if access_context is None or restaurant_id is None:
+        return False
+
+    raw_reservation_id = arguments.get("reservation_id")
+    if not isinstance(raw_reservation_id, str):
+        return False
+
+    try:
+        reservation_id = uuid.UUID(raw_reservation_id)
+    except (ValueError, AttributeError):
+        return False
+
+    return access_context.allows(restaurant_id, reservation_id)
+
+
 class AIService:
 
     def __init__(
@@ -360,12 +409,19 @@ class AIService:
         session_id: str | None, 
         user_message: str,
         restaurant_id: uuid.UUID | None = None,
+        access_context: ReservationAccessContext | None = None,
     ) -> tuple[str, str, uuid.UUID | None, str | None, str | None]:
+
+        if restaurant_id is None:
+            raise ValueError("Restaurant context is required for chat")
 
         if session_id is None:
             session_id = uuid.uuid4().hex
 
-        conversation, _ = await self.conversation_repo.get_or_create(session_id)
+        conversation, _ = await self.conversation_repo.get_or_create(
+            session_id,
+            restaurant_id,
+        )
         await self.conversation_repo.touch(conversation)
 
         # FIX: enum corretto
@@ -416,6 +472,7 @@ class AIService:
             restaurant_id,
             session_id,
             timezone_name,
+            access_context=access_context,
         )
 
         await self.conversation_repo.add_message(
@@ -432,6 +489,7 @@ class AIService:
         restaurant_id: uuid.UUID | None = None,
         session_id: str | None = None,
         timezone_name: str | None = None,
+        access_context: ReservationAccessContext | None = None,
     ) -> tuple[str, uuid.UUID | None, str | None, str | None]:
 
         reservation_id: uuid.UUID | None = None
@@ -669,6 +727,7 @@ class AIService:
                     restaurant_id,
                     session_id,
                     timezone_name=timezone_name,
+                    access_context=access_context,
                 )
 
                 if tc.function.name == "check_availability":
@@ -736,9 +795,18 @@ class AIService:
         session_id: str | None = None,
         timezone_name: str | None = None,
         customer_local_datetime: str | None = None,
+        access_context: ReservationAccessContext | None = None,
     ) -> tuple[dict[str, Any], uuid.UUID | None]:
 
         args = json.loads(raw_arguments or "{}")
+
+        if not _reservation_tool_is_authorized(
+            name,
+            args,
+            restaurant_id,
+            access_context,
+        ):
+            return {"error": "reservation_access_denied"}, None
 
 
         logger.info(

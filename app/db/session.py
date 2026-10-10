@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.core.config import settings
+from app.services.post_commit_notifications import dispatch, discard
 
 # ── Engine ────────────────────────────────────────────────────────────────
 # `pool_pre_ping=True` tests connections before use, which prevents stale
@@ -27,12 +28,24 @@ engine = create_async_engine(
     future=True,
 )
 
+class AliasAsyncSession(AsyncSession):
+    """Dispatch notifications after successful commits, including explicit ones."""
+
+    async def commit(self) -> None:
+        await super().commit()
+        await dispatch(self)
+
+    async def rollback(self) -> None:
+        discard(self)
+        await super().rollback()
+
+
 # ── Session factory ───────────────────────────────────────────────────────
 # expire_on_commit=False keeps ORM objects usable after `commit()` without
 # re-querying — important for returning objects from API handlers.
 AsyncSessionLocal = async_sessionmaker(
     bind=engine,
-    class_=AsyncSession,
+    class_=AliasAsyncSession,
     expire_on_commit=False,
     autoflush=False,
 )

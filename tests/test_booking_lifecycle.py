@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
@@ -14,6 +14,8 @@ from app.models.reservation import ReservationStatus
 from app.schemas.reservation import ReservationCreate
 from app.services.ai_suggestion_service import AISuggestionService
 from app.services.reservation_service import ReservationService
+from app.services.reservation_access_service import ReservationAccessService
+from app.services.post_commit_notifications import dispatch
 from app.core.exceptions import (
     ConflictError,
     ValidationError,
@@ -22,7 +24,7 @@ from app.core.exceptions import (
 
 class FakeReservationRepository:
     def __init__(self):
-        self.db = None
+        self.db = SimpleNamespace(info={})
         self.created = []
 
     async def create(self, reservation):
@@ -47,6 +49,7 @@ class FakeRestaurantRepository:
         return SimpleNamespace(
             id=restaurant_id,
             name="Test Restaurant",
+            slug="test-restaurant",
             timezone="UTC",
             preferred_language="en",
             email="restaurant@example.com",
@@ -238,21 +241,27 @@ async def test_direct_booking_is_confirmed_and_sends_confirmation():
     table_id = uuid4()
 
     service, repository, email_service = _build_service()
+    token_mock = AsyncMock(return_value="test-access-token")
 
     service._assign_tables_with_aie = AsyncMock(
         return_value=(table_id, [table_id]),
     )
     service._reoptimization_available = AsyncMock(return_value=False)
 
-    reservation = await service.create_reservation(
-        _payload(restaurant_id=restaurant_id),
-    )
+    with patch.object(ReservationAccessService, "issue", new=token_mock):
+        reservation = await service.create_reservation(
+            _payload(restaurant_id=restaurant_id),
+        )
 
     assert reservation.status == ReservationStatus.CONFIRMED
     assert reservation.table_id == table_id
     assert len(repository.created) == 1
 
+    email_service.send_reservation_confirmation.assert_not_awaited()
+    await dispatch(repository.db)
     email_service.send_reservation_confirmation.assert_awaited_once()
+    email_service.send_restaurant_reservation_notification.assert_awaited_once()
+
     service._reoptimization_available.assert_not_awaited()
 
 
@@ -263,6 +272,7 @@ async def test_reoptimization_booking_is_pending_creates_suggestion_and_sends_no
     restaurant_id = uuid4()
 
     service, repository, email_service = _build_service()
+    token_mock = AsyncMock(return_value="test-access-token")
 
     service._assign_tables_with_aie = AsyncMock(
         return_value=(None, []),
@@ -281,15 +291,19 @@ async def test_reoptimization_booking_is_pending_creates_suggestion_and_sends_no
         analyze_reservation,
     )
 
-    reservation = await service.create_reservation(
-        _payload(restaurant_id=restaurant_id),
-    )
+    with patch.object(ReservationAccessService, "issue", new=token_mock):
+        reservation = await service.create_reservation(
+            _payload(restaurant_id=restaurant_id),
+        )
 
     assert reservation.status == ReservationStatus.PENDING
     assert reservation.table_id is None
     assert len(repository.created) == 1
 
     analyze_reservation.assert_awaited_once_with(reservation)
+    email_service.send_reservation_pending_confirmation.assert_not_awaited()
+    email_service.send_restaurant_pending_reservation_notification.assert_not_awaited()
+    await dispatch(repository.db)
     email_service.send_reservation_pending_confirmation.assert_awaited_once()
     email_service.send_restaurant_pending_reservation_notification.assert_awaited_once()
 
@@ -518,11 +532,16 @@ async def test_reoptimization_booking_passes_suggestion_to_autopilot(
 
     service._try_autopilot_reoptimization = autopilot_attempt
 
-    reservation = await service.create_reservation(
-        _payload(
-            restaurant_id=restaurant_id,
-        ),
-    )
+    with patch.object(
+        ReservationAccessService,
+        "issue",
+        new=AsyncMock(return_value="test-access-token"),
+    ):
+        reservation = await service.create_reservation(
+            _payload(
+                restaurant_id=restaurant_id,
+            ),
+        )
 
     assert reservation.status == ReservationStatus.PENDING
 
@@ -632,7 +651,13 @@ async def test_create_reservation_aie_assignment_is_not_blocked_by_legacy_capaci
     restaurant_repository = FakeRestaurantRepository()
     restaurant_repository.get_by_id = AsyncMock(
         return_value=SimpleNamespace(
+            id=restaurant_id,
             number_of_tables=20,
+            name="Test Restaurant",
+            slug="test-restaurant",
+            timezone="UTC",
+            preferred_language="en",
+            email="restaurant@example.com",
         ),
     )
 
@@ -656,7 +681,12 @@ async def test_create_reservation_aie_assignment_is_not_blocked_by_legacy_capaci
     service._record_reservation_event = AsyncMock()
     service._try_record_temporal_prediction = AsyncMock()
 
-    reservation = await service.create_reservation(
+    with patch.object(
+        ReservationAccessService,
+        "issue",
+        new=AsyncMock(return_value="test-access-token"),
+    ):
+        reservation = await service.create_reservation(
         ReservationCreate(
             restaurant_id=restaurant_id,
             customer_name="LAB-006 Guest",
@@ -1125,3 +1155,42 @@ async def test_apply_reoptimization_rejects_move_of_seated_reservation():
             ),
             allowed_restaurant_ids=[restaurant_id],
         )
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("booking_status", ["confirmed", "pending"])
+async def test_booking_token_failure_propagates(booking_status):
+    service, repository, email_service = _build_service()
+
+    if booking_status == "confirmed":
+        table_id = uuid4()
+        service._assign_tables_with_aie = AsyncMock(
+            return_value=(table_id, [table_id])
+        )
+        service._reoptimization_available = AsyncMock(return_value=False)
+    else:
+        service._assign_tables_with_aie = AsyncMock(
+            return_value=(None, [])
+        )
+        service._reoptimization_available = AsyncMock(return_value=True)
+        service._try_autopilot_reoptimization = AsyncMock(
+            side_effect=lambda *, reservation, suggestion: reservation
+        )
+
+    with patch.object(
+        AISuggestionService,
+        "analyze_reservation",
+        new=AsyncMock(return_value=SimpleNamespace(id=uuid4())),
+    ), patch.object(
+        ReservationAccessService,
+        "issue",
+        new=AsyncMock(side_effect=RuntimeError("Simulated token failure")),
+    ):
+        with pytest.raises(RuntimeError, match="Simulated token failure"):
+            await service.create_reservation(
+                _payload(restaurant_id=uuid4())
+            )
+
+    email_service.send_reservation_confirmation.assert_not_awaited()
+    email_service.send_reservation_pending_confirmation.assert_not_awaited()
+    email_service.send_restaurant_reservation_notification.assert_not_awaited()
+    email_service.send_restaurant_pending_reservation_notification.assert_not_awaited()

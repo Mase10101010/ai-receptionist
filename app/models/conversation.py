@@ -46,6 +46,22 @@ class Conversation(Base):
         nullable=False,
     )
 
+    # NULL is reserved for historical conversations without verified ownership.
+    # New conversations must always receive a restaurant_id from the repository.
+    restaurant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("restaurants.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+
+    # SHA-256 of the private capability used to resume a public chat.
+    # NULL is allowed for staff and legacy conversations.
+    public_access_token_hash: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+    )
+
     customer_name: Mapped[str | None] = mapped_column(String(120))
     customer_phone: Mapped[str | None] = mapped_column(String(32))
 
