@@ -100,3 +100,55 @@ async def test_authorized_update_reaches_reservation_service():
 
     assert result == {"error": "reservation_access_denied"}
     reservation_service.update_reservation.assert_not_awaited()
+
+@pytest.mark.asyncio
+async def test_authorized_context_supplies_reservation_id_when_missing():
+    from types import SimpleNamespace
+
+    from app.services.reservation_access_context import ReservationAccessContext
+
+    restaurant_id = uuid.uuid4()
+    reservation_id = uuid.uuid4()
+
+    reservation_service = MagicMock()
+    reservation_service.get_reservation = AsyncMock(
+        return_value=SimpleNamespace(
+            id=reservation_id,
+            customer_name="Authorized Guest",
+            customer_email="guest@example.com",
+            customer_phone="0400000000",
+            party_size=2,
+            reservation_time=__import__("datetime").datetime(
+                2026, 10, 14, 11, 30,
+                tzinfo=__import__("datetime").timezone.utc,
+            ),
+            special_requests="",
+            status=SimpleNamespace(value="confirmed"),
+        )
+    )
+
+    restaurant_repo = MagicMock()
+    restaurant_repo.get_by_id = AsyncMock(return_value=None)
+
+    ai_service = object.__new__(AIService)
+    ai_service.reservation_service = reservation_service
+    ai_service.restaurant_repo = restaurant_repo
+
+    context = ReservationAccessContext(
+        restaurant_id=restaurant_id,
+        reservation_id=reservation_id,
+    )
+
+    result, _ = await ai_service._execute_tool(
+        "get_reservation",
+        json.dumps({}),
+        restaurant_id=restaurant_id,
+        access_context=context,
+    )
+
+    reservation_service.get_reservation.assert_awaited_once_with(
+        reservation_id=reservation_id,
+        restaurant_id=restaurant_id,
+    )
+    assert result["success"] is True
+    assert result["reservation_id"] == str(reservation_id)

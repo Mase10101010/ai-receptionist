@@ -82,7 +82,9 @@ Reservation rules:
   â€¢ If booking_outcome is unavailable, call suggest_alternative_slots and offer nearby directly bookable times.
   â€¢ After create_reservation, inspect the returned status. If status is pending, tell the guest that the request was received and is awaiting final confirmation from the restaurant. If status is confirmed, share the reservation id and recap it as confirmed.
   â€¢ Guests may update existing reservations by providing their reservation id.
-  â€¢ To modify or cancel a reservation, always ask for the reservation id first.
+  • When a guest wants to modify or cancel a reservation and a valid reservation access context is available, use the reservation authorized by that context; do not ask the guest for the reservation ID.
+  • When no valid reservation access context is available, ask for the reservation ID first.
+  • When using an authorized reservation access context, call get_reservation to retrieve the authorized reservation before discussing changes or cancellation.
   â€¢ Never call update_reservation immediately after receiving a reservation id.
   â€¢ After identifying the reservation, ask the guest what they would like to change.
   â€¢ Only call update_reservation when at least one field has been explicitly changed by the guest (date/time, party size, name, phone, email, or special requests).
@@ -799,6 +801,20 @@ class AIService:
     ) -> tuple[dict[str, Any], uuid.UUID | None]:
 
         args = json.loads(raw_arguments or "{}")
+
+        if (
+            name in {
+                "get_reservation",
+                "update_reservation",
+                "cancel_reservation",
+            }
+            and access_context is not None
+            and restaurant_id == access_context.restaurant_id
+            and not args.get("reservation_id")
+        ):
+            args["reservation_id"] = str(
+                access_context.reservation_id
+            )
 
         if not _reservation_tool_is_authorized(
             name,
