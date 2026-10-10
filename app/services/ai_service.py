@@ -464,6 +464,28 @@ class AIService:
             }
         ]
 
+        if (
+            access_context is not None
+            and access_context.restaurant_id == restaurant_id
+        ):
+            messages.append({
+                "role": "system",
+                "content": (
+                    "VERIFIED RESERVATION ACCESS CONTEXT: "
+                    f"This conversation is authorized to manage reservation "
+                    f"{access_context.reservation_id}. "
+                    "The guest has already verified access through their "
+                    "reservation management link. "
+                    "When the guest requests a modification or cancellation, "
+                    "call get_reservation using this reservation ID. "
+                    "Do not ask the guest to provide their reservation ID again. "
+                    "After retrieving the reservation, follow the normal "
+                    "modification or cancellation confirmation rules. "
+                    "Never assume a modification or cancellation has succeeded "
+                    "until the corresponding tool confirms it."
+                ),
+            })
+
         for msg in memory:
             messages.append(
                 {"role": msg.role, "content": msg.content}

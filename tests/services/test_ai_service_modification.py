@@ -2099,3 +2099,64 @@ async def test_live_precheck_premature_reply_requires_update_before_pending_conf
         requested_party_size=4,
     )
     assert service.client.chat.completions.create.await_count == 4
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("context_mode", ["authorized", "missing", "wrong_restaurant"])
+async def test_handle_message_injects_only_matching_reservation_access_context(
+    context_mode,
+):
+    restaurant_id = uuid4()
+    reservation_id = uuid4()
+
+    conversation = SimpleNamespace(id=uuid4())
+    conversation_repo = SimpleNamespace(
+        get_or_create=AsyncMock(return_value=(conversation, True)),
+        touch=AsyncMock(),
+        add_message=AsyncMock(),
+        get_recent_messages=AsyncMock(return_value=[]),
+    )
+
+    service, _ = _build_ai_service()
+    service.conversation_repo = conversation_repo
+    service._run_completion_loop = AsyncMock(
+        return_value=("Test reply", None, None, None)
+    )
+
+    if context_mode == "missing":
+        context = None
+    else:
+        context = ReservationAccessContext(
+            restaurant_id=(
+                restaurant_id
+                if context_mode == "authorized"
+                else uuid4()
+            ),
+            reservation_id=reservation_id,
+        )
+
+    await service.handle_message(
+        session_id=None,
+        user_message="I want to modify my reservation",
+        restaurant_id=restaurant_id,
+        access_context=context,
+    )
+
+    messages = service._run_completion_loop.await_args.args[0]
+
+    access_messages = [
+        message
+        for message in messages
+        if message["role"] == "system"
+        and "VERIFIED RESERVATION ACCESS CONTEXT" in message["content"]
+    ]
+
+    if context_mode == "authorized":
+        assert len(access_messages) == 1
+        assert str(reservation_id) in access_messages[0]["content"]
+        assert "Do not ask the guest" in access_messages[0]["content"]
+    else:
+        assert access_messages == []
+        assert all(
+            str(reservation_id) not in message["content"]
+            for message in messages
+        )
