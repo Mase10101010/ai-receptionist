@@ -230,7 +230,7 @@ class EmailService:
                                 />
                             </div>
 
-                            <div style="padding:40px;">
+                            <div style="padding:24px;">
 
                                 <h1 style="
                                     margin-top:0;
@@ -257,8 +257,8 @@ class EmailService:
                                 </p>
 
                                 <div style="
-                                    margin:30px 0;
-                                    padding:24px;
+                                    margin:18px 0;
+                                    padding:18px;
                                     background:#181818;
                                     border-radius:16px;
                                     border:1px solid #2a2a2a;
@@ -267,16 +267,6 @@ class EmailService:
                                     <p>
     <strong>{text["reservation_id_label"]}:</strong><br>
     <span style="overflow-wrap:anywhere;">{reservation_id}</span>
-    <a href="https://www.aliasconcierge.com/copy-reservation-id?id={reservation_id}"
-       title="Copy reservation ID"
-       aria-label="Copy reservation ID"
-       style="display:inline-block;vertical-align:middle;margin-left:8px;color:#67e8f9;text-decoration:none;font-size:21px;line-height:1;"
-    ><img src="https://www.aliasconcierge.com/copy-icon.png"
-       width="20"
-       height="20"
-       alt="Copy"
-       style="display:inline-block;border:0;vertical-align:middle;"
-    /></a>
 </p>
 
                                     <p><strong>{text["date_label"]}:</strong><br>{reservation_time}</p>
@@ -285,14 +275,16 @@ class EmailService:
 
                                 </div>
 
+{f'<p style="margin:18px 0;text-align:center;"><a href="{html.escape(manage_url, quote=True)}" style="display:inline-block;padding:14px 24px;background:#67e8f9;color:#111111;border-radius:10px;text-decoration:none;font-weight:bold;">{text["manage_label"]}</a></p>' if manage_url else ""}
+
                                 <p style="
                                     color:#aaaaaa;
                                     font-size:14px;
-                                    line-height:1.7;
+                                    line-height:1.5;
+                                    margin-top:16px;
                                 ">
                                     {text["note"]}
                                 </p>
-{f'<p style="margin:24px 0;text-align:center;"><a href="{html.escape(manage_url, quote=True)}" style="display:inline-block;padding:14px 24px;background:#67e8f9;color:#111111;border-radius:10px;text-decoration:none;font-weight:bold;">{text["manage_label"]}</a></p>' if manage_url else ""}
 
                                 <p style="
                                     margin-top:40px;
