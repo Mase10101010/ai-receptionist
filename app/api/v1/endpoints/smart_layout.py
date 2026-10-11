@@ -7,6 +7,9 @@ from app.api.dependencies import CurrentUserDep
 from app.db.session import get_db
 from app.repositories.floor_feature_repository import FloorFeatureRepository
 from app.schemas.spatial_intelligence import FloorPlanSpatialAnalysisResponse
+from app.services.spatial_intelligence.advisory import (
+    evaluate_table_pair_advisory,
+)
 from app.repositories.floor_plan_repository import (
     FloorPlanRepository,
 )
@@ -137,7 +140,18 @@ async def get_smart_layout_spatial_analysis(
         owner_id=current_user.id,
     )
 
-    return FloorPlanSpatialAnalysisResponse.model_validate(result)
+    response = FloorPlanSpatialAnalysisResponse.model_validate(result)
+
+    response.table_pair_advisories = [
+        evaluate_table_pair_advisory(
+            analysis=result,
+            first_table_id=pair.first_table_id,
+            second_table_id=pair.second_table_id,
+        )
+        for pair in result.table_pair_obstacles
+    ]
+
+    return response
 
 
 @router.get(

@@ -160,3 +160,74 @@ async def test_spatial_analysis_wrong_scope_returns_404(
     assert response.status_code == 404
     assert await _count_rules(db_session) == 0
     assert await _count_smart_combinations(db_session) == 0
+
+
+async def test_spatial_advisory_reports_potential_obstacle_without_mutation(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    _, restaurant, area, tables = await _get_workspace(db_session)
+    floor = await _create_floor_plan_with_adjacent_tables(
+        db_session, area=area, tables=tables
+    )
+
+    wall = FloorFeature(
+        floor_plan_id=floor.id,
+        feature_type="wall",
+        x=180,
+        y=100,
+        width=10,
+        height=80,
+        rotation=0,
+        is_visible=True,
+    )
+    db_session.add(wall)
+    await db_session.flush()
+
+    before_rules = await _count_rules(db_session)
+    before_combinations = await _count_smart_combinations(db_session)
+
+    response = await client.get(
+        spatial_url(restaurant.id, area.id, floor.id)
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+
+    assert len(payload["table_pair_advisories"]) == 1
+    advisory = payload["table_pair_advisories"][0]
+
+    assert advisory["status"] == "potential_obstacle"
+    assert advisory["obstacle_feature_ids"] == [str(wall.id)]
+
+    assert await _count_rules(db_session) == before_rules
+    assert await _count_smart_combinations(db_session) == before_combinations
+
+
+async def test_spatial_advisory_reports_clear_without_mutation(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    _, restaurant, area, tables = await _get_workspace(db_session)
+    floor = await _create_floor_plan_with_adjacent_tables(
+        db_session, area=area, tables=tables
+    )
+
+    before_rules = await _count_rules(db_session)
+    before_combinations = await _count_smart_combinations(db_session)
+
+    response = await client.get(
+        spatial_url(restaurant.id, area.id, floor.id)
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+
+    assert len(payload["table_pair_advisories"]) == 1
+    advisory = payload["table_pair_advisories"][0]
+
+    assert advisory["status"] == "clear"
+    assert advisory["obstacle_feature_ids"] == []
+
+    assert await _count_rules(db_session) == before_rules
+    assert await _count_smart_combinations(db_session) == before_combinations

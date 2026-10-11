@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class TableFeatureRelationshipResponse(BaseModel):
@@ -26,6 +26,15 @@ class TablePairObstacleResponse(BaseModel):
     has_potential_obstacles: bool
 
 
+class TablePairSpatialAdvisoryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    first_table_id: uuid.UUID
+    second_table_id: uuid.UUID
+    status: str
+    obstacle_feature_ids: tuple[uuid.UUID, ...]
+
+
 class FloorPlanSpatialAnalysisResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -36,3 +45,6 @@ class FloorPlanSpatialAnalysisResponse(BaseModel):
     table_pair_obstacles: list[
         TablePairObstacleResponse
     ]
+    table_pair_advisories: list[
+        TablePairSpatialAdvisoryResponse
+    ] = Field(default_factory=list)
