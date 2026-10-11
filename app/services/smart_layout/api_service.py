@@ -5,6 +5,13 @@ import uuid
 from fastapi import HTTPException, status
 
 from app.core.exceptions import NotFoundError
+from app.repositories.floor_feature_repository import FloorFeatureRepository
+from app.repositories.table_placement_repository import TablePlacementRepository
+from app.services.spatial_intelligence.analysis import (
+    FloorPlanSpatialAnalysis,
+    analyze_floor_plan_spatially,
+)
+
 from app.repositories.floor_plan_repository import (
     FloorPlanRepository,
 )
@@ -36,12 +43,16 @@ class SmartLayoutApiService:
         service_area_repository: ServiceAreaRepository,
         floor_plan_repository: FloorPlanRepository,
         rule_repository: TableCombinationRuleRepository,
+        placement_repository: TablePlacementRepository | None = None,
+        feature_repository: FloorFeatureRepository | None = None,
     ) -> None:
         self.smart_layout_service = smart_layout_service
         self.restaurant_repository = restaurant_repository
         self.service_area_repository = service_area_repository
         self.floor_plan_repository = floor_plan_repository
         self.rule_repository = rule_repository
+        self.placement_repository = placement_repository
+        self.feature_repository = feature_repository
 
     async def list_rules(
         self,
@@ -153,6 +164,42 @@ class SmartLayoutApiService:
                 service_area_id=area_id,
                 floor_plan_id=floor_plan_id,
             )
+        )
+
+    async def get_spatial_analysis(
+        self,
+        *,
+        restaurant_id: uuid.UUID,
+        area_id: uuid.UUID,
+        floor_plan_id: uuid.UUID,
+        owner_id: uuid.UUID,
+    ) -> FloorPlanSpatialAnalysis:
+        await self._authorize_floor_plan(
+            restaurant_id=restaurant_id,
+            area_id=area_id,
+            floor_plan_id=floor_plan_id,
+            owner_id=owner_id,
+        )
+
+        if (
+            self.placement_repository is None
+            or self.feature_repository is None
+        ):
+            raise RuntimeError(
+                "Spatial Intelligence repositories are not configured"
+            )
+
+        placements = await self.placement_repository.list_by_floor_plan(
+            floor_plan_id
+        )
+        features = await self.feature_repository.list_by_floor_plan(
+            floor_plan_id
+        )
+
+        return analyze_floor_plan_spatially(
+            floor_plan_id=floor_plan_id,
+            placements=placements,
+            features=features,
         )
 
     async def update_rule_status(

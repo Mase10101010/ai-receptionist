@@ -5,6 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import CurrentUserDep
 from app.db.session import get_db
+from app.repositories.floor_feature_repository import FloorFeatureRepository
+from app.schemas.spatial_intelligence import FloorPlanSpatialAnalysisResponse
 from app.repositories.floor_plan_repository import (
     FloorPlanRepository,
 )
@@ -76,6 +78,8 @@ def get_smart_layout_api_service(
         service_area_repository=service_area_repository,
         floor_plan_repository=floor_plan_repository,
         rule_repository=rule_repository,
+        placement_repository=TablePlacementRepository(db),
+        feature_repository=FloorFeatureRepository(db),
     )
 
 
@@ -111,6 +115,29 @@ async def analyze_smart_layout(
             result.deleted_obsolete_auto_count
         ),
     )
+
+
+@router.get(
+    "/spatial-analysis",
+    response_model=FloorPlanSpatialAnalysisResponse,
+)
+async def get_smart_layout_spatial_analysis(
+    restaurant_id: uuid.UUID,
+    area_id: uuid.UUID,
+    floor_plan_id: uuid.UUID,
+    current_user: CurrentUserDep,
+    service: SmartLayoutApiService = Depends(
+        get_smart_layout_api_service,
+    ),
+) -> FloorPlanSpatialAnalysisResponse:
+    result = await service.get_spatial_analysis(
+        restaurant_id=restaurant_id,
+        area_id=area_id,
+        floor_plan_id=floor_plan_id,
+        owner_id=current_user.id,
+    )
+
+    return FloorPlanSpatialAnalysisResponse.model_validate(result)
 
 
 @router.get(
