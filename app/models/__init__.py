@@ -10,6 +10,7 @@ from app.models.reservation_access_token import ReservationAccessToken
 from app.models.restaurant import Restaurant
 from app.models.service_area import ServiceArea
 from app.models.floor_plan import FloorPlan
+from app.models.floor_feature import FloorFeature
 from app.models.table_placement import TablePlacement
 from app.models.table import Table
 from app.models.reservation_table_assignment import ReservationTableAssignment
@@ -69,6 +70,7 @@ __all__ = [
     "Restaurant",
     "ServiceArea",
     "FloorPlan",
+    "FloorFeature",
     "Table",
     "ReservationTableAssignment",
     "TablePlacement",

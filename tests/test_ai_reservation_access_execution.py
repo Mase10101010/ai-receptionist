@@ -57,6 +57,11 @@ async def test_authorized_update_reaches_reservation_service():
     other_reservation_id = uuid.uuid4()
 
     reservation_service = MagicMock()
+    reservation_service.get_reservation = AsyncMock(
+        return_value=SimpleNamespace(
+            special_requests="Existing reservation notes",
+        )
+    )
     reservation_service.update_reservation = AsyncMock(
         return_value=SimpleNamespace(
             id=reservation_id,

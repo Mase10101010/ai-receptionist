@@ -6,6 +6,7 @@ from app.api.v1.endpoints import (
     billing,
     chat,
     floor_plans,
+    floor_features,
     integrations,
     reservations,
     restaurants,
@@ -52,6 +53,7 @@ api_router.include_router(reservations.router)
 api_router.include_router(restaurants.router)
 api_router.include_router(service_areas.router)
 api_router.include_router(floor_plans.router)
+api_router.include_router(floor_features.router)
 api_router.include_router(smart_layout.router)
 api_router.include_router(tables.router)
 api_router.include_router(

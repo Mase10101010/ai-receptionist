@@ -103,3 +103,9 @@ class FloorPlan(Base):
         back_populates="floor_plan",
         cascade="all, delete-orphan",
     )
+
+    features = relationship(
+        "FloorFeature",
+        back_populates="floor_plan",
+        cascade="all, delete-orphan",
+    )

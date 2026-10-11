@@ -1,4 +1,4 @@
-﻿"""
+"""
 AI service â€” OpenAI integration with conversation memory and function calling.
 """
 
@@ -26,6 +26,33 @@ from app.schemas.reservation import ReservationCreate, ReservationUpdate
 
 
 logger = get_logger(__name__)
+
+
+
+
+def _merge_reservation_notes(
+    existing: str | None,
+    incoming: str,
+    operation: str,
+) -> str:
+    """Apply an explicit operation to reservation notes."""
+    previous = existing or ""
+    new_text = incoming.strip()
+
+    if operation == "append":
+        if not new_text:
+            return previous
+        if new_text in [part.strip() for part in previous.splitlines()]:
+            return previous
+        return previous.rstrip() + chr(10) + new_text if previous.strip() else new_text
+
+    if operation == "replace":
+        return new_text
+
+    if operation == "clear":
+        return ""
+
+    raise ValueError("Unsupported reservation notes operation")
 
 
 async def _classify_unverified_booking_intent(
@@ -162,6 +189,13 @@ Reservation rules:
   • When using an authorized reservation access context, call get_reservation to retrieve the authorized reservation before discussing changes or cancellation.
   â€¢ Never call update_reservation immediately after receiving a reservation id.
   â€¢ After identifying the reservation, ask the guest what they would like to change.
+  • When modifying reservation notes, preserve all existing notes by default.
+  • For an additional special request, call update_reservation with notes_operation="append" and only the new note.
+  • Use notes_operation="replace" only when the guest explicitly wants to replace ALL existing notes.
+  • Use notes_operation="clear" only when the guest explicitly wants to remove ALL existing notes.
+  • Never silently remove existing allergies, dietary restrictions, or other safety-related requests.
+  • If the guest wants to correct or remove one existing note while preserving others, clarify the intended final notes before replacing the complete field.
+  • When modifying only date, time, party size, or customer details, omit special_requests and notes_operation entirely.
   â€¢ Only call update_reservation when at least one field has been explicitly changed by the guest (date/time, party size, name, phone, email, or special requests).
   â€¢ If no change has been specified, continue the conversation and ask for the desired modification.
   â€¢ When the guest provides a reservation id for modification or cancellation, first call get_reservation.
@@ -361,7 +395,28 @@ TOOLS: list[dict[str, Any]] = [
                             "exactly and do not reinterpret it as a local wall-clock time."
                         ),
                     },
-                    "special_requests": {"type": "string"},
+                    "special_requests": {
+                        "type": "string",
+                        "description": (
+                            "New or replacement reservation notes. "
+                            "When adding a new request, provide only the new text, "
+                            "not a rewritten version of existing notes. "
+                            "Omit when notes are not being changed."
+                        ),
+                    },
+                    "notes_operation": {
+                        "type": "string",
+                        "enum": ["append", "replace", "clear"],
+                        "description": (
+                            "Use append for additional notes (default). "
+                            "Use replace only when the guest explicitly requests "
+                            "replacing all existing notes. "
+                            "Use clear only when the guest explicitly requests "
+                            "removing all notes. "
+                            "Never remove existing allergy or safety information "
+                            "without explicit guest confirmation."
+                        ),
+                    },
                 },
                 "required": ["reservation_id"],
             },
@@ -1329,8 +1384,41 @@ class AIService:
                             args["reservation_time"].replace("Z", "+00:00")
                         )
 
-                if args.get("special_requests") is not None:
-                    update_data["special_requests"] = args["special_requests"]
+                notes_operation = args.get("notes_operation", "append")
+
+                if notes_operation not in ("append", "replace", "clear"):
+                    return {
+                        "error": "Invalid notes operation."
+                    }, None
+
+                notes_requested = (
+                    args.get("special_requests") is not None
+                    or notes_operation == "clear"
+                )
+
+                if notes_requested:
+                    if (
+                        notes_operation == "replace"
+                        and args.get("special_requests") is None
+                    ):
+                        return {
+                            "error": "Replacement notes are required."
+                        }, None
+
+                    existing_reservation = await (
+                        self.reservation_service.get_reservation(
+                            reservation_id=uuid.UUID(args["reservation_id"]),
+                            restaurant_id=restaurant_id,
+                        )
+                    )
+
+                    update_data["special_requests"] = (
+                        _merge_reservation_notes(
+                            existing_reservation.special_requests,
+                            args.get("special_requests") or "",
+                            notes_operation,
+                        )
+                    )
 
                 if not update_data:
                     return {
