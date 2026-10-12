@@ -34,6 +34,9 @@ from app.schemas.smart_layout import (
     SmartLayoutRuleResponse,
     SmartLayoutRuleStatusUpdate,
 )
+from app.services.spatial_intelligence.join_assessment import (
+    assess_physical_join,
+)
 from app.services.smart_layout.api_service import (
     SmartLayoutApiService,
 )
@@ -149,6 +152,24 @@ async def get_smart_layout_spatial_analysis(
             second_table_id=pair.second_table_id,
         )
         for pair in result.table_pair_obstacles
+    ]
+    rules = await service.list_rules(
+        restaurant_id=restaurant_id,
+        area_id=area_id,
+        floor_plan_id=floor_plan_id,
+        owner_id=current_user.id,
+    )
+
+    response.join_assessments = [
+        assess_physical_join(
+            rule_id=rule.id,
+            first_table_id=rule.members[0].table_id,
+            second_table_id=rule.members[1].table_id,
+            rule_status=rule.status,
+            analysis=result,
+        )
+        for rule in rules
+        if len(rule.members) == 2
     ]
 
     return response

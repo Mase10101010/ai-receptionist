@@ -34,6 +34,17 @@ class TablePairSpatialAdvisoryResponse(BaseModel):
     status: str
     obstacle_feature_ids: tuple[uuid.UUID, ...]
 
+class SpatialJoinAssessmentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    rule_id: uuid.UUID
+    first_table_id: uuid.UUID
+    second_table_id: uuid.UUID
+    rule_status: str
+    spatial_status: str
+    obstacle_feature_ids: tuple[uuid.UUID, ...]
+    requires_review: bool
+
 
 class FloorPlanSpatialAnalysisResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -47,4 +58,7 @@ class FloorPlanSpatialAnalysisResponse(BaseModel):
     ]
     table_pair_advisories: list[
         TablePairSpatialAdvisoryResponse
+    ] = Field(default_factory=list)
+    join_assessments: list[
+        SpatialJoinAssessmentResponse
     ] = Field(default_factory=list)

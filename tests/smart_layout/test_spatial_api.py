@@ -231,3 +231,231 @@ async def test_spatial_advisory_reports_clear_without_mutation(
 
     assert await _count_rules(db_session) == before_rules
     assert await _count_smart_combinations(db_session) == before_combinations
+
+async def test_spatial_join_assessment_returns_existing_rule_without_mutation(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    from app.models.table_combination_rule import (
+        TableCombinationRuleStatus,
+    )
+    from app.repositories.table_combination_rule_repository import (
+        TableCombinationRuleRepository,
+    )
+
+    _, restaurant, area, tables = await _get_workspace(db_session)
+
+    floor = await _create_floor_plan_with_adjacent_tables(
+        db_session,
+        area=area,
+        tables=tables,
+    )
+
+    rule_repository = TableCombinationRuleRepository(db_session)
+
+    rule = await rule_repository.create(
+        restaurant_id=restaurant.id,
+        service_area_id=area.id,
+        floor_plan_id=floor.id,
+        table_ids=[tables[0].id, tables[1].id],
+        status=TableCombinationRuleStatus.CONFIRMED,
+    )
+
+    before_rules = await _count_rules(db_session)
+    before_combinations = await _count_smart_combinations(db_session)
+
+    response = await client.get(
+        spatial_url(restaurant.id, area.id, floor.id)
+    )
+
+    assert response.status_code == 200, response.text
+
+    payload = response.json()
+
+    assert len(payload["join_assessments"]) == 1
+
+    assessment = payload["join_assessments"][0]
+
+    assert assessment["rule_id"] == str(rule.id)
+    assert assessment["rule_status"] == "confirmed"
+    assert assessment["spatial_status"] == "clear"
+    assert assessment["requires_review"] is False
+    assert assessment["obstacle_feature_ids"] == []
+
+    assert {
+        assessment["first_table_id"],
+        assessment["second_table_id"],
+    } == {
+        str(tables[0].id),
+        str(tables[1].id),
+    }
+
+    assert await _count_rules(db_session) == before_rules
+    assert (
+        await _count_smart_combinations(db_session)
+        == before_combinations
+    )
+
+@pytest.mark.parametrize(
+    "rule_status",
+    ["auto", "confirmed", "blocked"],
+)
+async def test_spatial_join_obstacle_preserves_rule_status(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    rule_status: str,
+):
+    from app.models.table_combination_rule import (
+        TableCombinationRuleStatus,
+    )
+    from app.repositories.table_combination_rule_repository import (
+        TableCombinationRuleRepository,
+    )
+
+    _, restaurant, area, tables = await _get_workspace(db_session)
+
+    floor = await _create_floor_plan_with_adjacent_tables(
+        db_session,
+        area=area,
+        tables=tables,
+    )
+
+    wall = FloorFeature(
+        floor_plan_id=floor.id,
+        feature_type="wall",
+        x=180,
+        y=100,
+        width=10,
+        height=80,
+        rotation=0,
+        is_visible=True,
+    )
+    db_session.add(wall)
+    await db_session.flush()
+
+    repository = TableCombinationRuleRepository(db_session)
+
+    rule = await repository.create(
+        restaurant_id=restaurant.id,
+        service_area_id=area.id,
+        floor_plan_id=floor.id,
+        table_ids=[tables[0].id, tables[1].id],
+        status=TableCombinationRuleStatus(rule_status),
+    )
+
+    before_rules = await _count_rules(db_session)
+    before_combinations = await _count_smart_combinations(db_session)
+
+    response = await client.get(
+        spatial_url(restaurant.id, area.id, floor.id)
+    )
+
+    assert response.status_code == 200, response.text
+
+    assessments = response.json()["join_assessments"]
+
+    assert len(assessments) == 1
+
+    assessment = assessments[0]
+
+    assert assessment["rule_id"] == str(rule.id)
+    assert assessment["rule_status"] == rule_status
+    assert assessment["spatial_status"] == "potential_obstacle"
+    assert assessment["requires_review"] is True
+    assert assessment["obstacle_feature_ids"] == [str(wall.id)]
+
+    persisted_rule = await repository.get_by_id(
+        rule_id=rule.id,
+        restaurant_id=restaurant.id,
+    )
+
+    assert persisted_rule is not None
+    assert persisted_rule.status == TableCombinationRuleStatus(rule_status)
+
+    assert await _count_rules(db_session) == before_rules
+    assert (
+        await _count_smart_combinations(db_session)
+        == before_combinations
+    )
+
+async def test_spatial_join_assessment_empty_without_rules(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    _, restaurant, area, tables = await _get_workspace(db_session)
+
+    floor = await _create_floor_plan_with_adjacent_tables(
+        db_session,
+        area=area,
+        tables=tables,
+    )
+
+    response = await client.get(
+        spatial_url(restaurant.id, area.id, floor.id)
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["join_assessments"] == []
+
+    assert await _count_rules(db_session) == 0
+    assert await _count_smart_combinations(db_session) == 0
+
+async def test_spatial_join_assessment_ignores_multi_table_rules(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    from app.models.table_combination_rule import (
+        TableCombinationRuleStatus,
+    )
+    from app.repositories.table_combination_rule_repository import (
+        TableCombinationRuleRepository,
+    )
+
+    _, restaurant, area, tables = await _get_workspace(db_session)
+
+    assert len(tables) >= 3
+
+    floor = await _create_floor_plan_with_adjacent_tables(
+        db_session,
+        area=area,
+        tables=tables,
+    )
+
+    repository = TableCombinationRuleRepository(db_session)
+
+    rule = await repository.create(
+        restaurant_id=restaurant.id,
+        service_area_id=area.id,
+        floor_plan_id=floor.id,
+        table_ids=[
+            tables[0].id,
+            tables[1].id,
+            tables[2].id,
+        ],
+        status=TableCombinationRuleStatus.CONFIRMED,
+    )
+
+    before_rules = await _count_rules(db_session)
+    before_combinations = await _count_smart_combinations(db_session)
+
+    response = await client.get(
+        spatial_url(restaurant.id, area.id, floor.id)
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["join_assessments"] == []
+
+    persisted_rule = await repository.get_by_id(
+        rule_id=rule.id,
+        restaurant_id=restaurant.id,
+    )
+
+    assert persisted_rule is not None
+    assert persisted_rule.status == TableCombinationRuleStatus.CONFIRMED
+    assert len(persisted_rule.members) == 3
+
+    assert await _count_rules(db_session) == before_rules
+    assert (
+        await _count_smart_combinations(db_session)
+        == before_combinations
+    )
