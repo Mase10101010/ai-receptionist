@@ -22,6 +22,15 @@ from app.schemas.floor_plan import (
     FloorPlanUpdate,
 )
 
+from app.repositories.floor_feature_repository import (
+    FloorFeatureRepository,
+)
+
+from app.services.floor_plan_centering import (
+    LayoutCenteringError,
+    calculate_centering_offset,
+)
+
 
 class FloorPlanService:
     def __init__(
@@ -30,11 +39,13 @@ class FloorPlanService:
         placement_repository: TablePlacementRepository,
         service_area_repository: ServiceAreaRepository,
         restaurant_repository: RestaurantRepository,
+        feature_repository: FloorFeatureRepository,
     ) -> None:
         self.repository = repository
         self.placement_repository = placement_repository
         self.service_area_repository = service_area_repository
         self.restaurant_repository = restaurant_repository
+        self.feature_repository = feature_repository
 
     def _ensure_active_subscription(self, restaurant) -> None:
         if restaurant.subscription_status not in {
@@ -284,10 +295,88 @@ class FloorPlanService:
                 "The default floor plan cannot be deactivated",
             )
 
+        # LAB-021G: Automatically center physical layout on expansion.
+        new_width = updates.get("width", floor_plan.width)
+        new_height = updates.get("height", floor_plan.height)
+
+        if new_width is None:
+            new_width = floor_plan.width
+        if new_height is None:
+            new_height = floor_plan.height
+
+        dimensions_changed = (
+            new_width != floor_plan.width
+            or new_height != floor_plan.height
+        )
+
+        # LAB-021G: shrinking is not supported.
+        # Prevent API clients from bypassing frontend restrictions.
+        if (
+            new_width < floor_plan.width
+            or new_height < floor_plan.height
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Floor plan dimensions cannot be reduced",
+            )
+
+        expanding = (
+            new_width >= floor_plan.width
+            and new_height >= floor_plan.height
+            and dimensions_changed
+        )
+
+        if expanding:
+            placements = (
+                await self.placement_repository.list_by_floor_plan(
+                    floor_plan.id
+                )
+            )
+            features = (
+                await self.feature_repository.list_by_floor_plan(
+                    floor_plan.id
+                )
+            )
+
+            elements = [*placements, *features]
+
+            try:
+                dx, dy = calculate_centering_offset(
+                    elements,
+                    floor_width=new_width,
+                    floor_height=new_height,
+                )
+            except LayoutCenteringError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=str(exc),
+                ) from exc
+
+            # Persist every translated element in the same transaction.
+            if dx != 0 or dy != 0:
+                for placement in placements:
+                    await self.placement_repository.update(
+                        placement=placement,
+                        fields={
+                            "x": placement.x + dx,
+                            "y": placement.y + dy,
+                        },
+                    )
+
+                for feature in features:
+                    await self.feature_repository.update(
+                        feature=feature,
+                        fields={
+                            "x": feature.x + dx,
+                            "y": feature.y + dy,
+                        },
+                    )
+
         return await self.repository.update(
             floor_plan=floor_plan,
             fields=updates,
         )
+
 
     async def deactivate_floor_plan(
         self,

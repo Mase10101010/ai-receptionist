@@ -25,6 +25,10 @@ from app.repositories.table_placement_repository import (
 )
 from app.services.floor_plan_service import FloorPlanService
 
+from app.repositories.floor_feature_repository import (
+    FloorFeatureRepository,
+)
+
 
 router = APIRouter(
     prefix=(
@@ -44,6 +48,7 @@ def get_floor_plan_service(
         placement_repository=TablePlacementRepository(db),
         service_area_repository=ServiceAreaRepository(db),
         restaurant_repository=RestaurantRepository(db),
+        feature_repository=FloorFeatureRepository(db),
     )
 
 
