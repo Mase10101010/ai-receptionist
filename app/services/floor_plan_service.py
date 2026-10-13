@@ -226,10 +226,52 @@ class FloorPlanService:
         floor_plan = await self.repository.create(floor_plan)
 
         if source_floor_plan is not None:
-            await self.placement_repository.copy_floor_plan(
-                source_floor_plan_id=source_floor_plan.id,
-                target_floor_plan_id=floor_plan.id,
+            copied_placements = (
+                await self.placement_repository.copy_floor_plan(
+                    source_floor_plan_id=source_floor_plan.id,
+                    target_floor_plan_id=floor_plan.id,
+                )
             )
+
+            copied_features = (
+                await self.feature_repository.copy_floor_plan(
+                    source_floor_plan_id=source_floor_plan.id,
+                    target_floor_plan_id=floor_plan.id,
+                )
+            )
+
+            elements = [*copied_placements, *copied_features]
+
+            try:
+                dx, dy = calculate_centering_offset(
+                    elements,
+                    floor_width=floor_plan.width,
+                    floor_height=floor_plan.height,
+                )
+            except LayoutCenteringError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=str(exc),
+                ) from exc
+
+            if dx != 0 or dy != 0:
+                for placement in copied_placements:
+                    await self.placement_repository.update(
+                        placement=placement,
+                        fields={
+                            "x": placement.x + dx,
+                            "y": placement.y + dy,
+                        },
+                    )
+
+                for feature in copied_features:
+                    await self.feature_repository.update(
+                        feature=feature,
+                        fields={
+                            "x": feature.x + dx,
+                            "y": feature.y + dy,
+                        },
+                    )
 
         return floor_plan
 

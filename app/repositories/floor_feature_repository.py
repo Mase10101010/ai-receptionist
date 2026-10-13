@@ -54,6 +54,37 @@ class FloorFeatureRepository:
         await self.db.refresh(feature)
         return feature
 
+    async def copy_floor_plan(
+        self,
+        source_floor_plan_id: uuid.UUID,
+        target_floor_plan_id: uuid.UUID,
+    ) -> list[FloorFeature]:
+        source_features = await self.list_by_floor_plan(
+            source_floor_plan_id
+        )
+
+        copied_features: list[FloorFeature] = []
+
+        for source in source_features:
+            copied = FloorFeature(
+                floor_plan_id=target_floor_plan_id,
+                feature_type=source.feature_type,
+                label=source.label,
+                x=source.x,
+                y=source.y,
+                width=source.width,
+                height=source.height,
+                rotation=source.rotation,
+                is_visible=source.is_visible,
+            )
+
+            self.db.add(copied)
+            copied_features.append(copied)
+
+        await self.db.flush()
+
+        return copied_features
+
     async def delete(self, feature: FloorFeature) -> None:
         await self.db.delete(feature)
         await self.db.flush()
