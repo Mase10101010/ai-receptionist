@@ -30,6 +30,11 @@ from app.repositories.table_combination_repository import (
 from app.repositories.restaurant_repository import RestaurantRepository
 from app.repositories.table_repository import TableRepository
 from app.schemas.reservation import ReservationCreate, ReservationUpdate
+from app.services.opening_hours_service import OpeningHoursError, is_booking_time_allowed
+from app.services.reservation_datetime_service import (
+    ReservationDateTimeError,
+    normalize_reservation_datetime,
+)
 from app.services.email_service import EmailService
 from app.services.reservation_access_service import ReservationAccessService
 from app.services.post_commit_notifications import enqueue
@@ -386,6 +391,29 @@ class ReservationService:
             return reservation
 
     async def create_reservation(self, payload: ReservationCreate) -> Reservation:
+        restaurant_timezone = "UTC"
+
+        if payload.restaurant_id is not None:
+            restaurant = await self.restaurant_repository.get_by_id(
+                payload.restaurant_id
+            )
+            if restaurant is None:
+                raise ValidationError("Restaurant not found.")
+
+            restaurant_timezone = restaurant.timezone or "UTC"
+
+        try:
+            normalized_utc = normalize_reservation_datetime(
+                payload.reservation_time,
+                restaurant_timezone,
+            )
+        except ReservationDateTimeError as exc:
+            raise ValidationError(str(exc)) from exc
+
+        payload = payload.model_copy(
+            update={"reservation_time": normalized_utc}
+        )
+
         await self._validate_reservation_time(
             payload.reservation_time,
             payload.restaurant_id,
@@ -1216,6 +1244,27 @@ class ReservationService:
         previous_status = reservation.status
 
         updates = payload.model_dump(exclude_unset=True)
+
+        if "reservation_time" in updates:
+            restaurant_timezone = "UTC"
+
+            if reservation.restaurant_id is not None:
+                restaurant = await self.restaurant_repository.get_by_id(
+                    reservation.restaurant_id
+                )
+                if restaurant is None:
+                    raise ValidationError("Restaurant not found.")
+
+                restaurant_timezone = restaurant.timezone or "UTC"
+
+            try:
+                updates["reservation_time"] = normalize_reservation_datetime(
+                    updates["reservation_time"],
+                    restaurant_timezone,
+                )
+            except ReservationDateTimeError as exc:
+                raise ValidationError(str(exc)) from exc
+
         updates = self._apply_lifecycle_timestamps(
             reservation=reservation,
             updates=updates,
@@ -1440,6 +1489,27 @@ class ReservationService:
         previous_status = reservation.status
 
         updates = payload.model_dump(exclude_unset=True)
+
+        if "reservation_time" in updates:
+            restaurant_timezone = "UTC"
+
+            if reservation.restaurant_id is not None:
+                restaurant = await self.restaurant_repository.get_by_id(
+                    reservation.restaurant_id
+                )
+                if restaurant is None:
+                    raise ValidationError("Restaurant not found.")
+
+                restaurant_timezone = restaurant.timezone or "UTC"
+
+            try:
+                updates["reservation_time"] = normalize_reservation_datetime(
+                    updates["reservation_time"],
+                    restaurant_timezone,
+                )
+            except ReservationDateTimeError as exc:
+                raise ValidationError(str(exc)) from exc
+
         updates = self._apply_lifecycle_timestamps(
             reservation=reservation,
             updates=updates,
@@ -2546,8 +2616,13 @@ class ReservationService:
                 "for this party size."
             )
 
-        requested_start = reservation_time
-        requested_end = reservation_time + timedelta(
+        # Compare reservation instants consistently in UTC.
+        requested_start = (
+            reservation_time.replace(tzinfo=timezone.utc)
+            if reservation_time.tzinfo is None
+            else reservation_time.astimezone(timezone.utc)
+        )
+        requested_end = requested_start + timedelta(
             minutes=duration_minutes
         )
 
@@ -2585,12 +2660,14 @@ class ReservationService:
             if table_id not in existing_table_ids:
                 continue
 
-            existing_start = existing.reservation_time
-            existing_end = (
-                existing.reservation_time
-                + timedelta(
-                    minutes=existing.duration_minutes,
-                )
+            # Database drivers may return naive UTC datetimes.
+            existing_start = (
+                existing.reservation_time.replace(tzinfo=timezone.utc)
+                if existing.reservation_time.tzinfo is None
+                else existing.reservation_time.astimezone(timezone.utc)
+            )
+            existing_end = existing_start + timedelta(
+                minutes=existing.duration_minutes
             )
 
             overlaps = (
@@ -2607,10 +2684,10 @@ class ReservationService:
         return table.id
 
     async def _validate_reservation_time(
-        self, 
+        self,
         reservation_time: datetime,
         restaurant_id: uuid.UUID | None = None,
-        ) -> None:
+    ) -> None:
         if reservation_time.tzinfo is None:
             reservation_time = reservation_time.replace(tzinfo=timezone.utc)
 
@@ -2619,57 +2696,40 @@ class ReservationService:
         if reservation_time <= now:
             raise ValidationError("Reservation time must be in the future")
 
-        opening_hour = settings.OPENING_HOUR
-        closing_hour = settings.CLOSING_HOUR
-        local_time = reservation_time
+        if restaurant_id is None:
+            if not (
+                settings.OPENING_HOUR
+                <= reservation_time.hour
+                < settings.CLOSING_HOUR
+            ):
+                raise ValidationError(
+                    "Reservation time is outside opening hours."
+                )
+            return
 
-        if restaurant_id is not None:
-            restaurant = await self.restaurant_repository.get_by_id(restaurant_id)
+        restaurant = await self.restaurant_repository.get_by_id(
+            restaurant_id
+        )
 
-            if restaurant is not None:
-                opening_hour = restaurant.opening_hour
-                closing_hour = restaurant.closing_hour
-                try:
-                    local_time = reservation_time.astimezone(
-                        ZoneInfo(restaurant.timezone or "UTC")
-                    )
-                except Exception:
-                    logger.exception(
-                        "Invalid restaurant timezone: %s. Falling back to UTC.",
-                        restaurant.timezone,
-                    )
-                    local_time = reservation_time.astimezone(ZoneInfo("UTC"))
+        if restaurant is None:
+            raise ValidationError("Restaurant not found.")
 
-                reservation_date = local_time.date().isoformat()
+        try:
+            allowed = is_booking_time_allowed(
+                reservation_time=reservation_time,
+                timezone_name=restaurant.timezone or "UTC",
+                weekly_schedule=restaurant.weekly_schedule,
+                opening_hour=restaurant.opening_hour,
+                closing_hour=restaurant.closing_hour,
+                special_closures=restaurant.special_closures,
+            )
+        except OpeningHoursError as exc:
+            raise ValidationError(str(exc)) from exc
 
-                for closure in restaurant.special_closures or []:
-                    if closure.get("date") == reservation_date:
-                        reason = closure.get("reason") or "special closure"
-                        raise ValidationError(
-                            f"The restaurant is closed on this date due to {reason}."
-                        )
-
-                day_name = local_time.strftime("%a")
-
-                for schedule in restaurant.weekly_schedule or []:
-                    if schedule.get("day") == day_name:
-                        is_open = schedule.get("is_open", True)
-
-                        if not is_open:
-                            raise ValidationError(
-                                "The restaurant is closed on this day."
-                            )
-
-                        opening_hour = int(schedule.get("opening_hour", opening_hour))
-                        closing_hour = int(schedule.get("closing_hour", closing_hour))
-                        break
-
-        hour = local_time.hour
-
-        if hour < opening_hour or hour >= closing_hour:
+        if not allowed:
             raise ValidationError(
-                f"Reservations are only accepted between "
-                f"{opening_hour:02d}:00 and {closing_hour:02d}:00"
+                "Reservation time is outside the restaurant's "
+                "available booking hours or falls on a closed day."
             )
 
     async def _enforce_capacity(

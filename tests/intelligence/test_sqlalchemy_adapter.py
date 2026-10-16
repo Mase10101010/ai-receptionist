@@ -49,3 +49,34 @@ def test_unassigned_reservation_does_not_block_table() -> None:
         status=ReservationStatus.PENDING,
     )
     assert reservation_to_intelligence(reservation) is None
+
+
+def test_reservation_adapter_normalizes_datetime_to_utc() -> None:
+    perth_timezone = timezone(timedelta(hours=8))
+
+    cases = [
+        datetime(2026, 10, 26, 12, 0),
+        datetime(2026, 10, 26, 12, 0, tzinfo=timezone.utc),
+        datetime(2026, 10, 26, 20, 0, tzinfo=perth_timezone),
+    ]
+
+    expected_start = datetime(2026, 10, 26, 12, 0, tzinfo=timezone.utc)
+    expected_end = datetime(2026, 10, 26, 13, 30, tzinfo=timezone.utc)
+
+    for reservation_time in cases:
+        reservation = SimpleNamespace(
+            id=uuid.uuid4(),
+            table_id=uuid.uuid4(),
+            reservation_time=reservation_time,
+            duration_minutes=90,
+            party_size=2,
+            status=ReservationStatus.CONFIRMED,
+        )
+
+        converted = reservation_to_intelligence(reservation)
+
+        assert converted is not None
+        assert converted.start_at == expected_start
+        assert converted.end_at == expected_end
+        assert converted.start_at.tzinfo == timezone.utc
+        assert converted.end_at.tzinfo == timezone.utc

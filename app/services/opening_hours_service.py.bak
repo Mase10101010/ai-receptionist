@@ -1,0 +1,182 @@
+
+from __future__ import annotations
+
+import re
+from datetime import datetime, time, timedelta
+from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+
+class OpeningHoursError(ValueError):
+    """Invalid opening-hours configuration."""
+
+
+_TIME_PATTERN = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
+_DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def _minutes(value: str) -> int:
+    if not isinstance(value, str):
+        raise OpeningHoursError("Time must use HH:MM format.")
+
+    match = _TIME_PATTERN.fullmatch(value)
+    if match is None:
+        raise OpeningHoursError(
+            f"Invalid time '{value}'. Expected HH:MM."
+        )
+
+    return int(match.group(1)) * 60 + int(match.group(2))
+
+
+def validate_weekly_schedule(
+    weekly_schedule: list[dict[str, Any]] | None,
+) -> None:
+    """Validate legacy days and optional multiple daily sessions."""
+    if weekly_schedule is None:
+        return
+
+    if not isinstance(weekly_schedule, list):
+        raise OpeningHoursError("Weekly schedule must be a list.")
+
+    seen_days: set[str] = set()
+
+    for day in weekly_schedule:
+        if not isinstance(day, dict):
+            raise OpeningHoursError("Each day must be an object.")
+
+        name = day.get("day")
+        if name not in _DAYS:
+            raise OpeningHoursError(f"Invalid weekday: {name}")
+
+        if name in seen_days:
+            raise OpeningHoursError(f"Duplicate weekday: {name}")
+
+        seen_days.add(name)
+
+        is_open = day.get("is_open", True)
+        if not isinstance(is_open, bool):
+            raise OpeningHoursError("is_open must be boolean.")
+
+        sessions = day.get("sessions")
+
+        if sessions is None:
+            continue
+
+        if not isinstance(sessions, list):
+            raise OpeningHoursError("Sessions must be a list.")
+
+        if not is_open and sessions:
+            raise OpeningHoursError(
+                f"{name} is closed but contains sessions."
+            )
+
+        previous_end = -1
+
+        for session in sessions:
+            if not isinstance(session, dict):
+                raise OpeningHoursError(
+                    "Each session must be an object."
+                )
+
+            start = _minutes(session.get("start"))
+            end = _minutes(session.get("end"))
+            last_booking = _minutes(
+                session.get("last_booking")
+            )
+
+            if end <= start:
+                raise OpeningHoursError(
+                    "Session closing time must follow opening time."
+                )
+
+            if last_booking < start or last_booking >= end:
+                raise OpeningHoursError(
+                    "Last booking must be inside the session."
+                )
+
+            if start < previous_end:
+                raise OpeningHoursError(
+                    f"Overlapping or unordered sessions on {name}."
+                )
+
+            previous_end = end
+
+
+def is_booking_time_allowed(
+    *,
+    reservation_time: datetime,
+    timezone_name: str,
+    weekly_schedule: list[dict[str, Any]] | None,
+    opening_hour: int,
+    closing_hour: int,
+    special_closures: list[dict[str, Any]] | None = None,
+) -> bool:
+    """
+    Check whether the arrival time is bookable.
+
+    Sessions use inclusive last_booking boundaries.
+    Reservation duration is deliberately not checked:
+    it remains relevant to table occupancy and capacity.
+
+    Legacy schedules retain their previous hour-based behavior.
+    """
+    if reservation_time.tzinfo is None:
+        raise OpeningHoursError(
+            "Reservation time must include timezone information."
+        )
+
+    try:
+        local_time = reservation_time.astimezone(
+            ZoneInfo(timezone_name)
+        )
+    except ZoneInfoNotFoundError as exc:
+        raise OpeningHoursError(
+            f"Unknown restaurant timezone: {timezone_name}"
+        ) from exc
+
+    local_date = local_time.date().isoformat()
+
+    for closure in special_closures or []:
+        if closure.get("date") == local_date:
+            return False
+
+    day_name = _DAYS[local_time.weekday()]
+
+    schedule = next(
+        (
+            day
+            for day in weekly_schedule or []
+            if day.get("day") == day_name
+        ),
+        None,
+    )
+
+    if schedule is not None:
+        if not schedule.get("is_open", True):
+            return False
+
+        sessions = schedule.get("sessions")
+
+        if sessions is not None:
+            arrival = local_time.hour * 60 + local_time.minute
+
+            for session in sessions:
+                start = _minutes(session["start"])
+                last_booking = _minutes(
+                    session["last_booking"]
+                )
+
+                if start <= arrival <= last_booking:
+                    return True
+
+            return False
+
+        opening_hour = schedule.get(
+            "opening_hour", opening_hour
+        )
+        closing_hour = schedule.get(
+            "closing_hour", closing_hour
+        )
+
+    # Preserve the existing booking policy for legacy restaurants.
+    return opening_hour <= local_time.hour < closing_hour

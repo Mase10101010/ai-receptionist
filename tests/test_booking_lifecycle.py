@@ -394,14 +394,16 @@ async def test_apply_modification_reoptimization_updates_same_reservation_reques
     new_table_id = uuid4()
     service_area_id = uuid4()
 
-    original_time = (
-        datetime.now(timezone.utc)
-        + timedelta(days=7)
+    original_time = datetime(2026, 10, 26, 10, 0)
+
+    requested_time = datetime(
+        2026, 10, 26, 20, 0,
+        tzinfo=timezone(timedelta(hours=8)),
     )
 
-    requested_time = (
-        original_time
-        + timedelta(hours=1)
+    expected_utc = datetime(
+        2026, 10, 26, 12, 0,
+        tzinfo=timezone.utc,
     )
 
     reservation = SimpleNamespace(
@@ -481,10 +483,8 @@ async def test_apply_modification_reoptimization_updates_same_reservation_reques
 
     assert reservation.id == reservation_id
     assert reservation.party_size == 10
-    assert (
-        reservation.reservation_time
-        == requested_time
-    )
+    assert reservation.reservation_time == expected_utc
+    assert reservation.reservation_time.tzinfo == timezone.utc
     assert (
         reservation.status
         == ReservationStatus.CONFIRMED
@@ -496,6 +496,94 @@ async def test_apply_modification_reoptimization_updates_same_reservation_reques
         result.new_reservation_primary_table_id
         == new_table_id
     )
+
+
+@pytest.mark.asyncio
+async def test_apply_modification_reoptimization_rejects_mixed_timezone_overlap():
+    restaurant_id = uuid4()
+    reservation_id = uuid4()
+    suggestion_id = uuid4()
+    table_id = uuid4()
+    service_area_id = uuid4()
+
+    original_time = datetime(2026, 10, 26, 10, 0)
+    requested_time = datetime(
+        2026, 10, 26, 20, 0,
+        tzinfo=timezone(timedelta(hours=8)),
+    )
+
+    reservation = SimpleNamespace(
+        id=reservation_id,
+        restaurant_id=restaurant_id,
+        status=ReservationStatus.CONFIRMED,
+        party_size=4,
+        reservation_time=original_time,
+        duration_minutes=90,
+        table_id=None,
+    )
+
+    conflicting_reservation = SimpleNamespace(
+        id=uuid4(),
+        restaurant_id=restaurant_id,
+        status=ReservationStatus.CONFIRMED,
+        party_size=4,
+        reservation_time=datetime(2026, 10, 26, 12, 30),
+        duration_minutes=90,
+        table_id=table_id,
+        assigned_table_ids=[table_id],
+    )
+
+    suggestion = SimpleNamespace(
+        id=suggestion_id,
+        restaurant_id=restaurant_id,
+        reservation_id=reservation_id,
+        payload={
+            "requested_modification": {
+                "party_size": 4,
+                "reservation_time": requested_time.isoformat(),
+            },
+            "plan": {},
+        },
+    )
+
+    table = SimpleNamespace(
+        id=table_id,
+        restaurant_id=restaurant_id,
+        service_area_id=service_area_id,
+        seats=4,
+        table_number="20",
+        is_active=True,
+    )
+
+    session = FakeApplySession(
+        reservation=reservation,
+        tables=[table],
+        suggestion=suggestion,
+        conflicting_reservations=[conflicting_reservation],
+    )
+
+    service = IntelligenceOptimizationService()
+
+    with pytest.raises(
+        ValidationError,
+        match="already occupied",
+    ):
+        await service.apply_reoptimization(
+            session=session,
+            payload=IntelligenceApplyReoptimizationRequest(
+                suggestion_id=suggestion_id,
+                new_reservation_id=reservation_id,
+                new_reservation_table_ids=[table_id],
+                new_reservation_primary_table_id=table_id,
+                moves=[],
+            ),
+            allowed_restaurant_ids=[restaurant_id],
+        )
+
+    assert reservation.reservation_time == original_time
+    assert reservation.table_id is None
+    session.flush.assert_not_awaited()
+
 
 @pytest.mark.asyncio
 async def test_reoptimization_booking_passes_suggestion_to_autopilot(

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.intelligence_reasoning.schemas import (
     RecommendationReasoning,
@@ -22,9 +22,22 @@ from app.intelligence_execution.schemas import (
 )
 
 
+def _normalize_intelligence_requested_start(value: datetime) -> datetime:
+    # Legacy contract: timezone-naive instants are interpreted as UTC.
+    # Restaurant-local wall-clock times must be resolved before this boundary.
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 class IntelligenceOptimizeRequest(BaseModel):
     restaurant_id: UUID
     requested_start: datetime
+
+    @field_validator("requested_start")
+    @classmethod
+    def _validate_requested_start_utc(cls, value: datetime) -> datetime:
+        return _normalize_intelligence_requested_start(value)
     party_size: int = Field(ge=1, le=100)
     duration_minutes: int = Field(default=90, ge=15, le=720)
     buffer_before_minutes: int = Field(default=0, ge=0, le=180)
@@ -96,6 +109,11 @@ class IntelligenceApplyResponse(BaseModel):
 class IntelligenceReoptimizeRequest(BaseModel):
     restaurant_id: UUID
     requested_start: datetime
+
+    @field_validator("requested_start")
+    @classmethod
+    def _validate_requested_start_utc(cls, value: datetime) -> datetime:
+        return _normalize_intelligence_requested_start(value)
     party_size: int = Field(
         ge=1,
         le=100,

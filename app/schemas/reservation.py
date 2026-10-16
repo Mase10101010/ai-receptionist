@@ -6,7 +6,7 @@ Keeping them separate is a clean-architecture principle: the database layout
 shouldn't leak into the API contract, and vice versa.
 """
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
@@ -62,6 +62,13 @@ class ReservationMove(BaseModel):
 
 class ReservationResponse(ReservationBase):
     """Reservation as returned by the API."""
+
+    @field_validator("reservation_time")
+    @classmethod
+    def _serialize_reservation_time_utc(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
     # `from_attributes=True` lets Pydantic build this directly from a SQLAlchemy ORM object.
     model_config = ConfigDict(from_attributes=True)
 

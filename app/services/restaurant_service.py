@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime
 
+from app.services.opening_hours_service import OpeningHoursError, validate_weekly_schedule
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.models.restaurant import Restaurant
 from app.repositories.restaurant_repository import RestaurantRepository
@@ -26,6 +27,11 @@ class RestaurantService:
     ) -> Restaurant:
         if payload.opening_hour >= payload.closing_hour:
             raise ValidationError("Opening hour must be before closing hour")
+
+        try:
+            validate_weekly_schedule(payload.weekly_schedule)
+        except OpeningHoursError as exc:
+            raise ValidationError(str(exc)) from exc
 
         existing = await self.repository.get_by_slug(payload.slug)
         if existing is not None:
@@ -128,6 +134,12 @@ class RestaurantService:
 
         if new_opening >= new_closing:
             raise ValidationError("Opening hour must be before closing hour")
+
+        if "weekly_schedule" in updates:
+            try:
+                validate_weekly_schedule(updates["weekly_schedule"])
+            except OpeningHoursError as exc:
+                raise ValidationError(str(exc)) from exc
 
         if "slug" in updates and updates["slug"] != restaurant.slug:
             existing = await self.repository.get_by_slug(updates["slug"])

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Iterable
 
+from app.services.reservation_datetime_service import normalize_persisted_datetime
 from app.models.reservation import Reservation
 from app.models.table import Table
 from app.models.table_combination import (
@@ -58,13 +59,14 @@ def reservation_to_intelligence(
         )
     ).lower()
 
+    start_at = normalize_persisted_datetime(
+        reservation.reservation_time
+    )
+
     return ExistingReservation(
         id=str(reservation.id),
-        start_at=reservation.reservation_time,
-        end_at=(
-            reservation.reservation_time
-            + timedelta(minutes=duration_minutes)
-        ),
+        start_at=start_at,
+        end_at=start_at + timedelta(minutes=duration_minutes),
         party_size=reservation.party_size,
         table_ids=table_ids,
         status=status,

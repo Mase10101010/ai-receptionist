@@ -15,6 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import NotFoundError, ValidationError
+from app.services.reservation_datetime_service import (
+    normalize_persisted_datetime,
+)
 from app.models.reservation_table_assignment import (
     ReservationTableAssignment,
 )
@@ -1541,7 +1544,7 @@ class IntelligenceOptimizationService:
         # modification, so validation must continue to use the
         # reservation's currently persisted state.
         target_party_size = new_reservation.party_size
-        target_reservation_time = (
+        target_reservation_time = normalize_persisted_datetime(
             new_reservation.reservation_time
         )
 
@@ -1605,11 +1608,18 @@ class IntelligenceOptimizationService:
                     "time is invalid."
                 ) from exc
 
-            if target_reservation_time.tzinfo is None:
+            if (
+                target_reservation_time.tzinfo is None
+                or target_reservation_time.utcoffset() is None
+            ):
                 raise ValidationError(
                     "AI suggestion requested reservation "
                     "time must be timezone-aware."
                 )
+
+            target_reservation_time = normalize_persisted_datetime(
+                target_reservation_time
+            )
 
             target_party_size = requested_party_size
 
@@ -1778,7 +1788,7 @@ class IntelligenceOptimizationService:
             [
                 target_reservation_time,
                 *[
-                    reservation.reservation_time
+                    normalize_persisted_datetime(reservation.reservation_time)
                     for reservation
                     in moved_reservations.values()
                 ],
@@ -1797,7 +1807,7 @@ class IntelligenceOptimizationService:
                 ),
                 *[
                     (
-                        reservation.reservation_time
+                        normalize_persisted_datetime(reservation.reservation_time)
                         + timedelta(
                             minutes=(
                                 reservation.duration_minutes
@@ -1901,7 +1911,7 @@ class IntelligenceOptimizationService:
                 target_reservation_time
                 if reservation.id
                 == new_reservation.id
-                else reservation.reservation_time
+                else normalize_persisted_datetime(reservation.reservation_time)
             )
 
             requested_end = (
@@ -1919,7 +1929,7 @@ class IntelligenceOptimizationService:
 
             for existing in nearby_reservations:
                 existing_start = (
-                    existing.reservation_time
+                    normalize_persisted_datetime(existing.reservation_time)
                 )
 
                 existing_end = (
@@ -1967,7 +1977,7 @@ class IntelligenceOptimizationService:
                     target_reservation_time
                     if other_reservation.id
                     == new_reservation.id
-                    else other_reservation.reservation_time
+                    else normalize_persisted_datetime(other_reservation.reservation_time)
                 )
 
                 other_end = (

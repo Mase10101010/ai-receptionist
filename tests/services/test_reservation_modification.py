@@ -25,7 +25,11 @@ def _build_service(*, reservation):
 
     service = ReservationService(
         repository=repository,
-        restaurant_repository=SimpleNamespace(),
+        restaurant_repository=SimpleNamespace(
+            get_by_id=AsyncMock(
+                return_value=SimpleNamespace(timezone="UTC")
+            ),
+        ),
         table_repository=SimpleNamespace(),
         email_service=SimpleNamespace(),
         intelligence_service=SimpleNamespace(),

@@ -1,0 +1,498 @@
+"""Integration tests for reservation opening hours."""
+
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+import pytest
+from sqlalchemy import select
+
+from app.models.restaurant import Restaurant
+
+
+@pytest.mark.asyncio
+async def test_reservation_rejected_between_lunch_and_dinner(
+    client, db_session
+):
+    result = await db_session.execute(select(Restaurant))
+    restaurant = result.scalar_one()
+
+    restaurant.timezone = "Australia/Perth"
+    restaurant.weekly_schedule = [
+        {
+            "day": "Mon",
+            "is_open": True,
+            "sessions": [
+                {"start": "12:00", "end": "15:00"},
+                {"start": "19:00", "end": "23:00"},
+            ],
+        }
+    ]
+
+    await db_session.flush()
+
+    perth = ZoneInfo("Australia/Perth")
+    target = datetime.now(perth) + timedelta(days=8)
+    days_until_monday = (0 - target.weekday()) % 7
+    target += timedelta(days=days_until_monday)
+    target = target.replace(
+        hour=16,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+
+    response = await client.post(
+        "/api/v1/reservations",
+        json={
+            "restaurant_id": str(restaurant.id),
+            "customer_name": "Opening Hours Test",
+            "customer_phone": "+15551234567",
+            "party_size": 2,
+            "reservation_time": target.isoformat(),
+        },
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+async def test_reservation_accepted_during_lunch(
+    client, db_session
+):
+    from app.models.table import Table
+
+    restaurant = (
+        await db_session.execute(select(Restaurant))
+    ).scalar_one()
+
+    restaurant.timezone = "Australia/Perth"
+    restaurant.weekly_schedule = [
+        {
+            "day": "Mon",
+            "is_open": True,
+            "sessions": [
+                {"start": "12:00", "end": "15:00"},
+                {"start": "19:00", "end": "23:00"},
+            ],
+        }
+    ]
+
+    table = (
+        await db_session.execute(
+            select(Table).where(
+                Table.restaurant_id == restaurant.id
+            )
+        )
+    ).scalars().first()
+
+    assert table is not None
+
+    await db_session.flush()
+
+    perth = ZoneInfo("Australia/Perth")
+    target = datetime.now(perth) + timedelta(days=8)
+    target += timedelta(days=(0 - target.weekday()) % 7)
+    target = target.replace(
+        hour=12,
+        minute=30,
+        second=0,
+        microsecond=0,
+    )
+
+    response = await client.post(
+        "/api/v1/reservations",
+        json={
+            "restaurant_id": str(restaurant.id),
+            "table_id": str(table.id),
+            "customer_name": "Lunch Session Test",
+            "customer_phone": "+15551234567",
+            "party_size": 2,
+            "reservation_time": target.isoformat(),
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["status"] == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_last_booking_cutoff_at_lunch(
+    client, db_session
+):
+    from app.models.table import Table
+
+    restaurant = (
+        await db_session.execute(select(Restaurant))
+    ).scalar_one()
+
+    restaurant.timezone = "Australia/Perth"
+    restaurant.weekly_schedule = [
+        {
+            "day": "Mon",
+            "is_open": True,
+            "sessions": [
+                {"start": "12:00", "end": "15:00"},
+                {"start": "19:00", "end": "23:00"},
+            ],
+        }
+    ]
+
+    table = (
+        await db_session.execute(
+            select(Table).where(
+                Table.restaurant_id == restaurant.id
+            )
+        )
+    ).scalars().first()
+
+    assert table is not None
+    await db_session.flush()
+
+    perth = ZoneInfo("Australia/Perth")
+    target = datetime.now(perth) + timedelta(days=8)
+    target += timedelta(days=(0 - target.weekday()) % 7)
+    target = target.replace(
+        hour=14, minute=30, second=0, microsecond=0
+    )
+
+    payload = {
+        "restaurant_id": str(restaurant.id),
+        "table_id": str(table.id),
+        "customer_name": "Last Booking Test",
+        "customer_phone": "+15551234567",
+        "party_size": 2,
+        "reservation_time": target.isoformat(),
+    }
+
+    accepted = await client.post(
+        "/api/v1/reservations",
+        json=payload,
+    )
+    assert accepted.status_code == 201, accepted.text
+
+    payload["reservation_time"] = target.replace(
+        minute=31
+    ).isoformat()
+
+    rejected = await client.post(
+        "/api/v1/reservations",
+        json=payload,
+    )
+    assert rejected.status_code == 422, rejected.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "hour,minute,expected_status",
+    [
+        (20, 0, 201),
+        (22, 30, 201),
+        (22, 31, 422),
+    ],
+)
+async def test_dinner_session_booking_boundaries(
+    client, db_session, hour, minute, expected_status
+):
+    from app.models.table import Table
+
+    restaurant = (
+        await db_session.execute(select(Restaurant))
+    ).scalar_one()
+
+    restaurant.timezone = "Australia/Perth"
+    restaurant.weekly_schedule = [
+        {
+            "day": "Mon",
+            "is_open": True,
+            "sessions": [
+                {"start": "12:00", "end": "15:00"},
+                {"start": "19:00", "end": "23:00"},
+            ],
+        }
+    ]
+
+    table = (
+        await db_session.execute(
+            select(Table).where(
+                Table.restaurant_id == restaurant.id
+            )
+        )
+    ).scalars().first()
+
+    assert table is not None
+    await db_session.flush()
+
+    perth = ZoneInfo("Australia/Perth")
+    target = datetime.now(perth) + timedelta(days=8)
+    target += timedelta(days=(0 - target.weekday()) % 7)
+    target = target.replace(
+        hour=hour,
+        minute=minute,
+        second=0,
+        microsecond=0,
+    )
+
+    response = await client.post(
+        "/api/v1/reservations",
+        json={
+            "restaurant_id": str(restaurant.id),
+            "table_id": str(table.id),
+            "customer_name": "Dinner Session Test",
+            "customer_phone": "+15551234567",
+            "party_size": 2,
+            "reservation_time": target.isoformat(),
+        },
+    )
+
+    assert response.status_code == expected_status, response.text
+
+
+@pytest.mark.asyncio
+async def test_invalid_time_update_preserves_original_reservation(
+    client, db_session
+):
+    from app.models.table import Table
+
+    restaurant = (
+        await db_session.execute(select(Restaurant))
+    ).scalar_one()
+
+    restaurant.timezone = "Australia/Perth"
+    restaurant.weekly_schedule = [
+        {
+            "day": "Mon",
+            "is_open": True,
+            "sessions": [
+                {"start": "12:00", "end": "15:00"},
+                {"start": "19:00", "end": "23:00"},
+            ],
+        }
+    ]
+
+    table = (
+        await db_session.execute(
+            select(Table).where(
+                Table.restaurant_id == restaurant.id
+            )
+        )
+    ).scalars().first()
+
+    assert table is not None
+    await db_session.flush()
+
+    perth = ZoneInfo("Australia/Perth")
+    target = datetime.now(perth) + timedelta(days=8)
+    target += timedelta(days=(0 - target.weekday()) % 7)
+
+    original_time = target.replace(
+        hour=20, minute=0, second=0, microsecond=0
+    )
+
+    invalid_time = original_time.replace(hour=18)
+
+    created = await client.post(
+        "/api/v1/reservations",
+        json={
+            "restaurant_id": str(restaurant.id),
+            "table_id": str(table.id),
+            "customer_name": "Modification Safety Test",
+            "customer_phone": "+15551234567",
+            "party_size": 2,
+            "reservation_time": original_time.isoformat(),
+        },
+    )
+
+    assert created.status_code == 201, created.text
+    reservation_id = created.json()["id"]
+
+    updated = await client.patch(
+        f"/api/v1/reservations/{reservation_id}",
+        json={
+            "reservation_time": invalid_time.isoformat()
+        },
+    )
+
+    assert updated.status_code == 422, updated.text
+
+    retrieved = await client.get(
+        f"/api/v1/reservations/{reservation_id}"
+    )
+
+    assert retrieved.status_code == 200, retrieved.text
+
+    saved_time = datetime.fromisoformat(
+        retrieved.json()["reservation_time"]
+    )
+
+    assert saved_time == original_time.astimezone(ZoneInfo('UTC'))
+    assert retrieved.json()["status"] == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_naive_datetime_is_interpreted_in_restaurant_timezone(
+    client, db_session
+):
+    from app.models.table import Table
+
+    restaurant = (
+        await db_session.execute(select(Restaurant))
+    ).scalar_one()
+
+    restaurant.timezone = "Australia/Perth"
+    restaurant.weekly_schedule = [
+        {
+            "day": "Mon",
+            "is_open": True,
+            "sessions": [
+                {"start": "12:00", "end": "15:00"},
+                {"start": "19:00", "end": "23:00"},
+            ],
+        }
+    ]
+
+    table = (
+        await db_session.execute(
+            select(Table).where(
+                Table.restaurant_id == restaurant.id
+            )
+        )
+    ).scalars().first()
+
+    assert table is not None
+    await db_session.flush()
+
+    perth = ZoneInfo("Australia/Perth")
+    target = datetime.now(perth) + timedelta(days=8)
+    target += timedelta(days=(0 - target.weekday()) % 7)
+
+    local_time = target.replace(
+        hour=20, minute=0, second=0, microsecond=0,
+        tzinfo=None,
+    )
+
+    response = await client.post(
+        "/api/v1/reservations",
+        json={
+            "restaurant_id": str(restaurant.id),
+            "table_id": str(table.id),
+            "customer_name": "Timezone Safety Test",
+            "customer_phone": "+15551234567",
+            "party_size": 2,
+            "reservation_time": local_time.isoformat(),
+        },
+    )
+
+    assert response.status_code == 201, response.text
+
+    saved_time = datetime.fromisoformat(
+        response.json()["reservation_time"]
+    )
+
+    expected_utc = (
+        local_time.replace(tzinfo=perth)
+        .astimezone(ZoneInfo("UTC"))
+    )
+
+    assert saved_time.tzinfo is not None, (
+        "API response must include timezone information."
+    )
+    assert saved_time.astimezone(ZoneInfo("UTC")) == expected_utc
+
+
+
+@pytest.mark.asyncio
+async def test_naive_datetime_update_is_normalized_to_restaurant_timezone(
+    client, db_session
+):
+    from app.models.table import Table
+
+    restaurant = (
+        await db_session.execute(select(Restaurant))
+    ).scalar_one()
+
+    restaurant.timezone = "Australia/Perth"
+    restaurant.weekly_schedule = [
+        {
+            "day": "Mon",
+            "is_open": True,
+            "sessions": [
+                {"start": "12:00", "end": "15:00"},
+                {"start": "19:00", "end": "23:00"},
+            ],
+        }
+    ]
+
+    table = (
+        await db_session.execute(
+            select(Table).where(
+                Table.restaurant_id == restaurant.id
+            )
+        )
+    ).scalars().first()
+
+    assert table is not None
+    await db_session.flush()
+
+    perth = ZoneInfo("Australia/Perth")
+    target = datetime.now(perth) + timedelta(days=8)
+    target += timedelta(days=(0 - target.weekday()) % 7)
+
+    original_local = target.replace(
+        hour=19, minute=0, second=0, microsecond=0,
+        tzinfo=None,
+    )
+
+    updated_local = original_local.replace(hour=20)
+
+    created = await client.post(
+        "/api/v1/reservations",
+        json={
+            "restaurant_id": str(restaurant.id),
+            "table_id": str(table.id),
+            "customer_name": "UTC Update Safety Test",
+            "customer_phone": "+15551234567",
+            "party_size": 2,
+            "reservation_time": original_local.isoformat(),
+        },
+    )
+
+    assert created.status_code == 201, created.text
+    reservation_id = created.json()["id"]
+
+    updated = await client.patch(
+        f"/api/v1/reservations/{reservation_id}",
+        json={
+            "reservation_time": updated_local.isoformat()
+        },
+    )
+
+    assert updated.status_code == 200, updated.text
+
+    expected_utc = (
+        updated_local.replace(tzinfo=perth)
+        .astimezone(ZoneInfo("UTC"))
+    )
+
+    updated_time = datetime.fromisoformat(
+        updated.json()["reservation_time"]
+    )
+
+    assert updated_time.tzinfo is not None
+    assert updated_time == expected_utc
+
+    retrieved = await client.get(
+        f"/api/v1/reservations/{reservation_id}"
+    )
+
+    assert retrieved.status_code == 200, retrieved.text
+
+    saved_time = datetime.fromisoformat(
+        retrieved.json()["reservation_time"]
+    )
+
+    assert saved_time == expected_utc
+    assert retrieved.json()["status"] == "confirmed"
+    assert retrieved.json()["customer_name"] == "UTC Update Safety Test"
+
+
+print("UTC UPDATE REGRESSION TEST ADDED")

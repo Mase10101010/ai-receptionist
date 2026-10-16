@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Any
+from app.services.reservation_datetime_service import normalize_reservation_datetime
 from app.services.reservation_access_context import ReservationAccessContext
 from app.services.reservation_service import (
     BookingAvailabilityOutcome,
@@ -452,7 +453,11 @@ def _canonicalize_customer_local_datetime(
             "restaurant-local wall-clock datetime"
         )
 
-    return local_value.replace(tzinfo=ZoneInfo(timezone_name))
+    validated_utc = normalize_reservation_datetime(
+        local_value,
+        timezone_name,
+    )
+    return validated_utc.astimezone(ZoneInfo(timezone_name))
 
 def _missing_required_booking_intent(
     arguments: dict[str, Any],
@@ -986,7 +991,24 @@ class AIService:
                             timezone_name,
                         )
 
-                        if update_time.isoformat() != validated_booking_time:
+                        checked_time = datetime.fromisoformat(
+                            validated_booking_time.replace("Z", "+00:00")
+                        )
+
+                        update_is_aware = (
+                            update_time.tzinfo is not None
+                            and update_time.utcoffset() is not None
+                        )
+                        checked_is_aware = (
+                            checked_time.tzinfo is not None
+                            and checked_time.utcoffset() is not None
+                        )
+
+                        if (
+                            not update_is_aware
+                            or not checked_is_aware
+                            or update_time != checked_time
+                        ):
                             result = {
                                 "error": "reservation_time_changed_after_availability_check",
                                 "instruction": (

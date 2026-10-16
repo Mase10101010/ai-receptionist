@@ -1310,6 +1310,109 @@ async def test_completion_loop_allows_guest_local_update_matching_validated_chec
     reservation_service.update_reservation.assert_awaited_once()
 
 @pytest.mark.asyncio
+async def test_completion_loop_allows_equivalent_utc_and_restaurant_local_update():
+    service, reservation_service = _build_ai_service()
+
+    reservation_id = uuid4()
+    restaurant_id = uuid4()
+
+    reservation_service.assess_modification_availability.return_value = (
+        BookingAvailabilityOutcome.DIRECT_AVAILABLE
+    )
+
+    fake_updated_reservation = MagicMock()
+    fake_updated_reservation.id = reservation_id
+    fake_updated_reservation.status.value = "confirmed"
+    fake_updated_reservation.customer_name = "Luca Test"
+    fake_updated_reservation.customer_email = "luca@example.com"
+    fake_updated_reservation.customer_phone = "3333333333"
+    fake_updated_reservation.party_size = 6
+    fake_updated_reservation.reservation_time = __import__(
+        "datetime"
+    ).datetime.fromisoformat("2026-10-07T19:45:00+08:00")
+    fake_updated_reservation.special_requests = ""
+
+    reservation_service.update_reservation.return_value = fake_updated_reservation
+
+    check_tool_call = MagicMock()
+    check_tool_call.id = "call_lab009_mod_check_matching"
+    check_tool_call.function.name = "check_availability"
+    check_tool_call.function.arguments = json.dumps(
+        {
+            "reservation_id": str(reservation_id),
+            "reservation_time": "2026-10-07T11:45:00+00:00",
+            "party_size": 6,
+            "customer_provided_date": True,
+            "customer_provided_time": True,
+            "customer_provided_party_size": True,
+        }
+    )
+
+    check_message = MagicMock()
+    check_message.content = None
+    check_message.tool_calls = [check_tool_call]
+
+    check_response = MagicMock()
+    check_response.choices = [MagicMock(message=check_message)]
+
+    update_tool_call = MagicMock()
+    update_tool_call.id = "call_lab009_mod_update_matching"
+    update_tool_call.function.name = "update_reservation"
+    update_tool_call.function.arguments = json.dumps(
+        {
+            "reservation_id": str(reservation_id),
+            "reservation_time": "2026-10-07T11:45:00+00:00",
+            "reservation_local_datetime": "2026-10-07T19:45:00",
+            "reservation_time_source": "guest_local",
+            "party_size": 6,
+        }
+    )
+
+    update_message = MagicMock()
+    update_message.content = None
+    update_message.tool_calls = [update_tool_call]
+
+    update_response = MagicMock()
+    update_response.choices = [MagicMock(message=update_message)]
+
+    final_message = MagicMock()
+    final_message.content = "Modifica confermata."
+    final_message.tool_calls = None
+
+    final_response = MagicMock()
+    final_response.choices = [MagicMock(message=final_message)]
+
+    service.client.chat.completions.create = AsyncMock(
+        side_effect=[
+            check_response,
+            update_response,
+            final_response,
+        ]
+    )
+
+    messages = [
+        {
+            "role": "system",
+            "content": "Test system prompt",
+        },
+        {
+            "role": "user",
+            "content": "Vorrei modificare la prenotazione alle 19:45.",
+        },
+    ]
+
+    await service._run_completion_loop(
+        messages=messages,
+        restaurant_id=restaurant_id,
+        session_id="lab-009-check-update-matching",
+        timezone_name="Australia/Perth",
+        access_context=ReservationAccessContext(restaurant_id=restaurant_id, reservation_id=reservation_id),
+    )
+
+    reservation_service.assess_modification_availability.assert_awaited_once()
+    reservation_service.update_reservation.assert_awaited_once()
+
+@pytest.mark.asyncio
 async def test_completion_loop_uses_validated_check_time_for_alternative_search():
     service, reservation_service = _build_ai_service()
 
@@ -2160,3 +2263,105 @@ async def test_handle_message_injects_only_matching_reservation_access_context(
             str(reservation_id) not in message["content"]
             for message in messages
         )
+
+
+@pytest.mark.parametrize(
+    ("local_datetime", "timezone_name", "expected_utc"),
+    [
+        (
+            "2026-10-26T20:00:00",
+            "Australia/Perth",
+            datetime(2026, 10, 26, 12, 0, tzinfo=timezone.utc),
+        ),
+        (
+            "2026-07-15T20:00:00",
+            "Europe/Rome",
+            datetime(2026, 7, 15, 18, 0, tzinfo=timezone.utc),
+        ),
+    ],
+)
+def test_customer_local_datetime_normalizes_to_utc(
+    local_datetime, timezone_name, expected_utc
+):
+    from app.services.ai_service import _canonicalize_customer_local_datetime
+
+    result = _canonicalize_customer_local_datetime(
+        local_datetime,
+        timezone_name,
+    )
+
+    assert result.astimezone(timezone.utc) == expected_utc
+    assert result.tzinfo is not None
+    assert result.isoformat() == local_datetime + (
+        "+08:00" if timezone_name == "Australia/Perth" else "+02:00"
+    )
+
+
+@pytest.mark.parametrize(
+    ("local_datetime", "expected_error"),
+    [
+        ("2026-03-29T02:30:00", "does not exist"),
+        ("2026-10-25T02:30:00", "ambiguous"),
+    ],
+)
+def test_customer_local_datetime_rejects_dst_transitions(
+    local_datetime, expected_error
+):
+    from app.services.ai_service import _canonicalize_customer_local_datetime
+
+    with pytest.raises(ValueError, match=expected_error):
+        _canonicalize_customer_local_datetime(
+            local_datetime,
+            "Europe/Rome",
+        )
+
+
+def test_customer_local_datetime_rejects_explicit_offset():
+    from app.services.ai_service import _canonicalize_customer_local_datetime
+
+    with pytest.raises(ValueError, match="timezone-naive"):
+        _canonicalize_customer_local_datetime(
+            "2026-10-26T20:00:00+08:00",
+            "Australia/Perth",
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("local_datetime", "expected_error"),
+    [
+        ("2026-03-29T02:30:00", "does not exist"),
+        ("2026-10-25T02:30:00", "ambiguous"),
+    ],
+)
+async def test_guest_modification_dst_invalid_time_fails_closed(
+    local_datetime, expected_error
+):
+    service, reservation_service = _build_ai_service()
+
+    reservation_id = uuid4()
+    restaurant_id = uuid4()
+
+    result, returned_reservation_id = await service._execute_tool(
+        name="update_reservation",
+        raw_arguments=json.dumps({
+            "reservation_id": str(reservation_id),
+            "reservation_time": local_datetime,
+            "reservation_local_datetime": local_datetime,
+            "reservation_time_source": "guest_local",
+            "party_size": 6,
+        }),
+        restaurant_id=restaurant_id,
+        access_context=ReservationAccessContext(
+            restaurant_id=restaurant_id,
+            reservation_id=reservation_id,
+        ),
+        timezone_name="Europe/Rome",
+    )
+
+    assert returned_reservation_id is None
+    assert "error" in result
+    assert expected_error in result["error"]
+
+    reservation_service.update_reservation.assert_not_awaited()
+    reservation_service.propose_reservation_modification_reoptimization.assert_not_awaited()
