@@ -33,8 +33,11 @@ def _now() -> datetime:
 
 
 def _ensure_aware(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ProviderValidationError(
+            "Timezone required for TheFork datetime",
+            provider=ProviderType.THEFORK,
+        )
     return value
 
 
