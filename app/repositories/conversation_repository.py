@@ -7,7 +7,7 @@ turn would be context-free and the AI couldn't remember anything earlier in
 the conversation.
 """
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -110,7 +110,7 @@ class ConversationRepository:
         return await self.create(session_id, restaurant_id), True
 
     async def touch(self, conversation: Conversation) -> None:
-        conversation.last_active_at = datetime.utcnow()
+        conversation.last_active_at = datetime.now(timezone.utc)
         await self.db.flush()
 
     async def update_customer_info(

@@ -8,7 +8,7 @@ last N messages for their session and pass them to OpenAI as context.
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 from sqlalchemy import DateTime, Enum as SQLEnum, ForeignKey, String, Text
@@ -68,7 +68,7 @@ class Conversation(Base):
     last_active_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
+        default=lambda: datetime.now(timezone.utc),
     )
 
     messages: Mapped[list["Message"]] = relationship(
