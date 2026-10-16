@@ -132,6 +132,7 @@ def _build_system_prompt(
     opening_hour: int,
     closing_hour: int,
 ) -> str:
+    local_now = datetime.now(ZoneInfo(timezone_name))
     return f"""\
 You are the AI receptionist for {restaurant_name}, a fine-dining restaurant.
 
@@ -222,7 +223,7 @@ Reservation rules:
   â€¢ Offer only the alternative times returned by suggest_alternative_slots. Never invent, infer, or reuse an alternative that was not returned by that tool call.
   â€¢ If no year is provided, assume current or next occurrence.
 
-Today is {datetime.utcnow().strftime("%A, %B %d, %Y")} (UTC).
+Today is {local_now.strftime("%A, %B %d, %Y")} ({timezone_name}, restaurant local date).
 """
 
 

@@ -2,7 +2,7 @@
 Reservation repository.
 """
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import and_, or_, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -263,7 +263,7 @@ class ReservationRepository:
                 *RESERVATION_LOAD_OPTIONS,
             )
             .where(
-                Reservation.reservation_time >= datetime.utcnow(),
+                Reservation.reservation_time >= datetime.now(timezone.utc),
                 Reservation.status.notin_(
                     (
                         ReservationStatus.CANCELLED,
