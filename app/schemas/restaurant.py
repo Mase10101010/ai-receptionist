@@ -48,6 +48,23 @@ class RestaurantUpdate(BaseModel):
     autopilot_enabled: bool | None = None
 
 
+
+class PublicRestaurantResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    name: str
+    slug: str
+    business_type: str
+    phone: str | None = None
+    email: EmailStr | None = None
+    preferred_language: str
+    timezone: str
+    opening_hour: int
+    closing_hour: int
+    weekly_schedule: list[dict[str, Any]] | None = None
+    special_closures: list[dict[str, Any]] | None = None
+
+
 class RestaurantResponse(RestaurantBase):
     model_config = ConfigDict(from_attributes=True)
 

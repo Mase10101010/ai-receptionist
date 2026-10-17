@@ -12,6 +12,7 @@ from app.models.user import User
 from app.repositories.restaurant_repository import RestaurantRepository
 from app.schemas.restaurant import (
     RestaurantCreate,
+    PublicRestaurantResponse,
     RestaurantResponse,
     RestaurantUpdate,
 )
@@ -76,20 +77,20 @@ async def list_restaurants(
 
 @router.get(
     "/public/{restaurant_slug}",
-    response_model=RestaurantResponse,
+    response_model=PublicRestaurantResponse,
     summary="Get public restaurant details",
 )
 async def get_public_restaurant(
     restaurant_slug: str,
     service: RestaurantService = Depends(get_restaurant_service),
-) -> RestaurantResponse:
+) -> PublicRestaurantResponse:
     restaurant = await service.repository.get_by_slug(restaurant_slug)
 
     if restaurant is None:
         from app.core.exceptions import NotFoundError
         raise NotFoundError(f"Restaurant '{restaurant_slug}' not found")
 
-    return RestaurantResponse.model_validate(restaurant)
+    return PublicRestaurantResponse.model_validate(restaurant)
 
 
 @router.get(
