@@ -1,3 +1,4 @@
+from typing import Literal
 """
 Pydantic schemas for reservations.
 
@@ -38,6 +39,9 @@ class ReservationBase(BaseModel):
 
 class ReservationCreate(ReservationBase):
     """Payload for creating a new reservation."""
+
+    spatial_preference: Literal["near_window"] | None = None
+    spatial_preference_required: bool = False
     duration_minutes: int = Field(
         default=settings.RESERVATION_DURATION_MINUTES, ge=30, le=300
     )

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
+from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 from app.intelligence_reasoning.schemas import (
@@ -45,6 +46,7 @@ class IntelligenceOptimizeRequest(BaseModel):
     preferred_service_area_id: UUID | None = None
     reservation_id: UUID | None = None
     max_alternatives: int = Field(default=5, ge=1, le=20)
+    spatial_preference: Literal["near_window"] | None = None
 
 
 class IntelligenceAssignmentResponse(BaseModel):

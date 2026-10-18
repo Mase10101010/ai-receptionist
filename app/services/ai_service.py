@@ -176,6 +176,12 @@ Reservation rules:
   â€¢ Set a customer_provided_* field to true only when that booking component was explicitly stated by the guest in the conversation or explicitly accepted by the guest after you proposed it.
   â€¢ Never set a customer_provided_* field to true merely because you inferred, defaulted, calculated, or generated the corresponding value yourself.
   â€¢ Before creating the reservation, ask whether the guest has any special requests, allergies, seating preferences, or notes. If they have none, continue with an empty special_requests value.
+  • When the guest explicitly requests a table near a window, including equivalent expressions in other languages, set spatial_preference="near_window" in create_reservation.
+  • Treat near_window as a seating preference, not a mandatory booking condition, unless the guest explicitly says they would not accept another location.
+  • Never infer near_window from unrelated notes or invent a seating preference.
+  • Preserve any additional guest requests in special_requests. Do not discard allergies, dietary restrictions, celebrations, or other notes.
+  • A confirmed reservation does not automatically mean a requested window location was satisfied. Unless a tool explicitly confirms spatial preference satisfaction, acknowledge the request without guaranteeing the table's position.
+  • Never claim that a specific window table has been assigned based only on the guest's request or the reservation's confirmed status.
   â€¢ Email is required because guests receive their reservation confirmation by email.
   â€¢ Interpret all guest-provided dates and times in the restaurant timezone.
   â€¢ Before confirming a slot, call check_availability.
@@ -329,7 +335,22 @@ TOOLS: list[dict[str, Any]] = [
                     "customer_provided_party_size": {"type": "boolean"},
                     "special_requests": {
                         "type": "string",
-                        "description": "Optional guest notes such as allergies, dietary restrictions, seating preferences, celebrations or other requests. Use an empty string if the guest has no special requests."},
+                        "description": "Optional guest notes such as allergies, dietary restrictions, celebrations or other requests. Preserve the guest's notes; do not use this field as a substitute for spatial_preference."},
+                    "spatial_preference": {
+                        "type": "string",
+                        "enum": ["near_window"],
+                        "description": "Set to near_window only when the guest explicitly requests a table near a window. Omit when no supported spatial preference is requested. Never infer this preference from allergies, dietary restrictions or unrelated notes."
+                    },
+                    "spatial_preference_required": {
+                        "type": "boolean",
+                        "description": (
+                            "Set true ONLY when the guest explicitly makes the "
+                            "window seating location a mandatory condition of "
+                            "booking, such as 'only if near a window'. "
+                            "For flexible requests such as 'if possible', "
+                            "set false or omit. Never infer a mandatory condition."
+                        ),
+                    },
                 },
                 "required": [
                     "reservation_time",
@@ -1301,6 +1322,10 @@ class AIService:
                     party_size=int(args["party_size"]),
                     reservation_time=requested_time,
                     special_requests=args.get("special_requests"),
+                    spatial_preference=args.get("spatial_preference"),
+                    spatial_preference_required=args.get(
+                        "spatial_preference_required", False
+                    ),
                 )
 
                 payload.session_id = session_id

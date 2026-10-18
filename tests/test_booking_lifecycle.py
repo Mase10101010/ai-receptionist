@@ -1282,3 +1282,81 @@ async def test_booking_token_failure_propagates(booking_status):
     email_service.send_reservation_pending_confirmation.assert_not_awaited()
     email_service.send_restaurant_reservation_notification.assert_not_awaited()
     email_service.send_restaurant_pending_reservation_notification.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "spatial_preference",
+    ["near_window", None],
+)
+async def test_create_reservation_forwards_spatial_preference_to_aie(
+    spatial_preference,
+):
+    """Explicit seating preferences reach AIE; absent preferences stay absent."""
+    restaurant_id = uuid4()
+    table_id = uuid4()
+
+    service, repository, _ = _build_service()
+    service._assign_tables_with_aie = AsyncMock(
+        return_value=(table_id, [table_id]),
+    )
+    service._reoptimization_available = AsyncMock(
+        return_value=False,
+    )
+    service._try_record_temporal_prediction = AsyncMock()
+
+    payload = _payload(restaurant_id=restaurant_id)
+    payload = payload.model_copy(
+        update={"spatial_preference": spatial_preference}
+    )
+
+    with patch.object(
+        ReservationAccessService,
+        "issue",
+        new=AsyncMock(return_value="test-access-token"),
+    ):
+        reservation = await service.create_reservation(payload)
+
+    assert reservation.status == ReservationStatus.CONFIRMED
+    service._assign_tables_with_aie.assert_awaited_once()
+
+    call_kwargs = (
+        service._assign_tables_with_aie.await_args.kwargs
+    )
+    assert call_kwargs["spatial_preference"] == spatial_preference
+    assert repository.created
+
+
+@pytest.mark.asyncio
+async def test_required_spatial_preference_fails_closed_before_booking(
+    client,
+    db_session,
+):
+    from unittest.mock import AsyncMock
+    from app.schemas.reservation import ReservationCreate
+    from app.services.reservation_service import ReservationService
+    from app.core.exceptions import ValidationError
+
+    service = ReservationService.__new__(ReservationService)
+    service.repository = AsyncMock()
+    service.restaurant_repository = AsyncMock()
+    service._assign_tables_with_aie = AsyncMock()
+
+    payload = ReservationCreate(
+        customer_name="Mario Rossi",
+        customer_phone="3333333333",
+        party_size=2,
+        reservation_time="2026-11-20T20:00:00",
+        spatial_preference="near_window",
+        spatial_preference_required=True,
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="guaranteed spatial seating preference",
+    ):
+        await service.create_reservation(payload)
+
+    service.repository.create.assert_not_awaited()
+    service.restaurant_repository.get_by_id.assert_not_awaited()
+    service._assign_tables_with_aie.assert_not_awaited()

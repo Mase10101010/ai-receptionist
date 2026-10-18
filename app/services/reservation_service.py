@@ -391,6 +391,13 @@ class ReservationService:
             return reservation
 
     async def create_reservation(self, payload: ReservationCreate) -> Reservation:
+        if payload.spatial_preference_required:
+            raise ValidationError(
+                "A guaranteed spatial seating preference cannot currently "
+                "be verified. No reservation has been created. "
+                "Please contact the restaurant to confirm the requested seating."
+            )
+
         restaurant_timezone = "UTC"
 
         if payload.restaurant_id is not None:
@@ -440,6 +447,7 @@ class ReservationService:
                 party_size=payload.party_size,
                 restaurant_id=payload.restaurant_id,
                 duration_minutes=payload.duration_minutes,
+                spatial_preference=payload.spatial_preference,
             )
 
             if table_id is None or not assigned_table_ids:
@@ -525,6 +533,7 @@ class ReservationService:
                     if created.session_id is None
                     else "concierge"
                 ),
+                "spatial_preference": payload.spatial_preference,
             },
         )
         await self._try_record_temporal_prediction(
@@ -2426,6 +2435,7 @@ class ReservationService:
         restaurant_id: uuid.UUID | None = None,
         duration_minutes: int = settings.RESERVATION_DURATION_MINUTES,
         reservation_id: uuid.UUID | None = None,
+        spatial_preference: str | None = None,
     ) -> tuple[uuid.UUID | None, list[uuid.UUID]]:
         """
         Use AIE to choose the best valid single-table or multi-table
@@ -2451,6 +2461,7 @@ class ReservationService:
                     buffer_after_minutes=0,
                     preferred_service_area_id=None,
                     max_alternatives=3,
+                    spatial_preference=spatial_preference,
                 ),
             )
 

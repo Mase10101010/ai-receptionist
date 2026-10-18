@@ -496,6 +496,84 @@ class IntelligenceOptimizationService:
             reasons,
         )
 
+    async def _apply_spatial_preference(
+        self,
+        *,
+        session,
+        restaurant_id,
+        preference_value,
+        technical_result,
+        temporal_result,
+    ):
+        """Conservative spatial reranking of accepted temporal candidates."""
+        from app.services.spatial_intelligence.geometry_loader import (
+            SpatialGeometryLoader,
+        )
+        from app.services.spatial_intelligence.preference_evaluator import (
+            SpatialPreference,
+            SpatialPreferenceEvaluator,
+        )
+        from app.services.spatial_intelligence.candidate_assessment import (
+            SpatialCandidateAssessmentService,
+        )
+        from app.services.spatial_intelligence.preference_policy import (
+            SpatialPreferencePolicy,
+        )
+
+        ranked = [
+            temporal_result.recommended,
+            *temporal_result.alternatives,
+        ]
+
+        try:
+            preference = SpatialPreference(preference_value)
+
+            async with session.begin_nested():
+                geometry = await SpatialGeometryLoader.load(
+                    session=session,
+                    restaurant_id=restaurant_id,
+                )
+
+            evaluations = SpatialPreferenceEvaluator.evaluate(
+                preference=preference,
+                placements=geometry.placements,
+                features=geometry.features,
+            )
+
+            technical_candidates = [
+                technical_result.recommended.candidate,
+                *(
+                    item.candidate
+                    for item in technical_result.alternatives
+                ),
+            ]
+
+            assessments = SpatialCandidateAssessmentService.assess(
+                candidates=technical_candidates,
+                evaluations=evaluations,
+                preference=preference,
+            )
+
+            decision = SpatialPreferencePolicy.choose(
+                ranked_candidates=ranked,
+                assessments=assessments,
+            )
+
+            if not decision.applied:
+                return ranked
+
+            selected = ranked.pop(decision.selected_index)
+            ranked.insert(0, selected)
+            return ranked
+
+        except Exception:
+            logger.exception(
+                "Spatial preference evaluation failed; "
+                "preserving temporal recommendation: restaurant_id=%s",
+                restaurant_id,
+            )
+            return ranked
+
     async def optimize(
         self,
         session: AsyncSession,
@@ -610,7 +688,9 @@ class IntelligenceOptimizationService:
                 preferred_floor_id=None,
                 allow_combinations=True,
                 max_alternatives=(
-                    payload.max_alternatives
+                    max(payload.max_alternatives, 10)
+                    if payload.spatial_preference is not None
+                    else payload.max_alternatives
                 ),
             ),
             tables=intelligence_tables,
@@ -748,18 +828,28 @@ class IntelligenceOptimizationService:
         ):
             return technical_response
 
+        spatial_ranked = [
+            temporal_result.recommended,
+            *temporal_result.alternatives,
+        ]
+
+        if payload.spatial_preference is not None:
+            spatial_ranked = await self._apply_spatial_preference(
+                session=session,
+                restaurant_id=payload.restaurant_id,
+                preference_value=payload.spatial_preference,
+                technical_result=result,
+                temporal_result=temporal_result,
+            )
+
         return IntelligenceOptimizeResponse(
             available=True,
-            recommended=(
-                temporal_result
-                .recommended
-                .evaluation
-                .candidate
-            ),
+            recommended=spatial_ranked[0].evaluation.candidate,
             alternatives=[
                 ranked.evaluation.candidate
-                for ranked
-                in temporal_result.alternatives
+                for ranked in spatial_ranked[
+                    1:payload.max_alternatives
+                ]
             ],
             rejected_candidates=(
                 result.rejected_candidates

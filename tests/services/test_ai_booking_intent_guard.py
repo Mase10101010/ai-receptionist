@@ -1831,3 +1831,137 @@ async def test_lab016_unverified_capacity_claim_without_keywords_is_blocked():
     )
 
     assert "massimo 6 persone" not in reply
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "spatial_preference",
+    ["near_window", None],
+)
+async def test_create_reservation_tool_forwards_spatial_preference(
+    spatial_preference,
+):
+    service, reservation_service = _build_ai_service()
+
+    fake_reservation = MagicMock()
+    fake_reservation.id = uuid.uuid4()
+    fake_reservation.status.value = "confirmed"
+    fake_reservation.customer_name = "Mario Rossi"
+    fake_reservation.customer_email = "mario@example.com"
+    fake_reservation.customer_phone = "3333333333"
+    fake_reservation.party_size = 2
+    fake_reservation.reservation_time = __import__(
+        "datetime"
+    ).datetime.fromisoformat("2026-11-20T20:00:00")
+    fake_reservation.special_requests = ""
+
+    reservation_service.create_reservation.return_value = fake_reservation
+
+    arguments = {
+        "customer_name": "Mario Rossi",
+        "customer_phone": "3333333333",
+        "customer_email": "mario@example.com",
+        "party_size": 2,
+        "reservation_time": "2026-11-20T20:00:00",
+        "special_requests": (
+            "Preferirei un tavolo vicino alla finestra"
+            if spatial_preference else ""
+        ),
+        "customer_provided_date": True,
+        "customer_provided_time": True,
+        "customer_provided_party_size": True,
+    }
+
+    if spatial_preference is not None:
+        arguments["spatial_preference"] = spatial_preference
+
+    result, reservation_id = await service._execute_tool(
+        "create_reservation",
+        json.dumps(arguments),
+    )
+
+    assert result["success"] is True
+    assert reservation_id == fake_reservation.id
+
+    reservation_service.create_reservation.assert_awaited_once()
+    payload = reservation_service.create_reservation.await_args.args[0]
+
+    assert payload.spatial_preference == spatial_preference
+    assert payload.party_size == 2
+    assert payload.special_requests == arguments["special_requests"]
+
+
+def test_system_prompt_includes_spatial_preference_safety_rules():
+    from app.services.ai_service import _build_system_prompt
+
+    prompt = _build_system_prompt(
+        restaurant_name="Perugino",
+        timezone_name="Australia/Perth",
+        opening_hour=12,
+        closing_hour=23,
+    )
+
+    assert 'spatial_preference="near_window"' in prompt
+    assert "Never infer near_window" in prompt
+    assert "does not automatically mean" in prompt
+    assert "without guaranteeing" in prompt
+    assert "Never claim that a specific window table" in prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "preference,required",
+    [
+        ("near_window", False),
+        ("near_window", True),
+        (None, False),
+    ],
+)
+async def test_create_reservation_tool_forwards_spatial_requirement(
+    preference,
+    required,
+):
+    service, reservation_service = _build_ai_service()
+
+    fake_reservation = MagicMock()
+    fake_reservation.id = uuid.uuid4()
+    fake_reservation.status.value = "confirmed"
+    fake_reservation.customer_name = "Mario Rossi"
+    fake_reservation.customer_email = "mario@example.com"
+    fake_reservation.customer_phone = "3333333333"
+    fake_reservation.party_size = 2
+    fake_reservation.reservation_time = __import__(
+        "datetime"
+    ).datetime.fromisoformat("2026-11-20T20:00:00")
+    fake_reservation.special_requests = ""
+
+    reservation_service.create_reservation.return_value = fake_reservation
+
+    arguments = {
+        "customer_name": "Mario Rossi",
+        "customer_phone": "3333333333",
+        "customer_email": "mario@example.com",
+        "party_size": 2,
+        "reservation_time": "2026-11-20T20:00:00",
+        "customer_provided_date": True,
+        "customer_provided_time": True,
+        "customer_provided_party_size": True,
+    }
+
+    if preference is not None:
+        arguments["spatial_preference"] = preference
+        arguments["spatial_preference_required"] = required
+
+    result, reservation_id = await service._execute_tool(
+        "create_reservation",
+        json.dumps(arguments),
+    )
+
+    assert result["success"] is True
+    assert reservation_id == fake_reservation.id
+
+    reservation_service.create_reservation.assert_awaited_once()
+    payload = reservation_service.create_reservation.await_args.args[0]
+
+    assert payload.spatial_preference == preference
+    assert payload.spatial_preference_required is required
