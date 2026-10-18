@@ -180,3 +180,90 @@ async def test_future_capacity_protection_is_preserved(client, db_session):
     )
 
     assert result[0].evaluation.candidate.table_ids == [far_table.id]
+
+
+async def test_window_preference_across_different_service_areas(client, db_session):
+    """A window candidate in another area can replace a windowless baseline."""
+    restaurant = (
+        await db_session.execute(select(Restaurant))
+    ).scalars().one()
+
+    tables = (
+        await db_session.execute(
+            select(Table)
+            .where(Table.restaurant_id == restaurant.id)
+            .order_by(Table.table_number)
+        )
+    ).scalars().all()
+
+    assert len(tables) >= 2
+    bar_table, window_table = tables[:2]
+
+    bar_area = ServiceArea(
+        restaurant_id=restaurant.id,
+        name=f"Test Bar {uuid4()}",
+        area_type="indoor",
+        is_active=True,
+    )
+    window_area = ServiceArea(
+        restaurant_id=restaurant.id,
+        name=f"Test Window Room {uuid4()}",
+        area_type="indoor",
+        is_active=True,
+    )
+    db_session.add_all([bar_area, window_area])
+    await db_session.flush()
+
+    bar_table.service_area_id = bar_area.id
+    window_table.service_area_id = window_area.id
+
+    bar_plan = FloorPlan(
+        service_area_id=bar_area.id,
+        name="Default Layout",
+        is_active=True,
+    )
+    window_plan = FloorPlan(
+        service_area_id=window_area.id,
+        name="Default Layout",
+        is_active=True,
+    )
+    db_session.add_all([bar_plan, window_plan])
+    await db_session.flush()
+
+    db_session.add_all([
+        TablePlacement(
+            floor_plan_id=bar_plan.id,
+            table_id=bar_table.id,
+            x=100, y=100, width=80, height=80,
+            rotation=0, is_visible=True,
+        ),
+        TablePlacement(
+            floor_plan_id=window_plan.id,
+            table_id=window_table.id,
+            x=100, y=100, width=80, height=80,
+            rotation=0, is_visible=True,
+        ),
+        FloorFeature(
+            floor_plan_id=window_plan.id,
+            feature_type="window",
+            x=190, y=100, width=40, height=80,
+            rotation=0, is_visible=True,
+        ),
+    ])
+    await db_session.flush()
+
+    bar_candidate = make_ranked(bar_table.id)
+    window_candidate = make_ranked(window_table.id)
+
+    result = await IntelligenceOptimizationService()._apply_spatial_preference(
+        session=db_session,
+        restaurant_id=restaurant.id,
+        preference_value="near_window",
+        technical_result=make_technical_result(bar_table, window_table),
+        temporal_result=SimpleNamespace(
+            recommended=bar_candidate,
+            alternatives=[window_candidate],
+        ),
+    )
+
+    assert result[0].evaluation.candidate.table_ids == [window_table.id]

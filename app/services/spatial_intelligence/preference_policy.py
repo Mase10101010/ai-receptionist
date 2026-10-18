@@ -60,13 +60,6 @@ class SpatialPreferencePolicy:
 
         baseline_distance = spatial_distance(0)
 
-        if baseline_distance is None:
-            return SpatialPreferenceDecision(
-                selected_index=0,
-                applied=False,
-                reason="baseline_geometry_unavailable",
-            )
-
         best_index = 0
         best_distance = baseline_distance
 
@@ -83,7 +76,9 @@ class SpatialPreferencePolicy:
 
             distance = spatial_distance(index)
 
-            if distance is not None and distance < best_distance:
+            if distance is not None and (
+                best_distance is None or distance < best_distance
+            ):
                 best_index = index
                 best_distance = distance
 

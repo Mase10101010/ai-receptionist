@@ -90,7 +90,8 @@ def test_preserves_lower_future_capacity_loss():
     assert decision.selected_index == 0
 
 
-def test_missing_baseline_geometry_preserves_ranking():
+
+def test_missing_baseline_geometry_can_promote_evaluable_candidate():
     first, second = uuid.uuid4(), uuid.uuid4()
 
     decision = SpatialPreferencePolicy.choose(
@@ -103,8 +104,23 @@ def test_missing_baseline_geometry_preserves_ranking():
         ],
     )
 
+    assert decision.selected_index == 1
+    assert decision.applied is True
+
+
+def test_all_candidate_geometry_missing_preserves_ranking():
+    first, second = uuid.uuid4(), uuid.uuid4()
+
+    decision = SpatialPreferencePolicy.choose(
+        ranked_candidates=[
+            make_candidate(first),
+            make_candidate(second),
+        ],
+        assessments=[],
+    )
+
     assert decision.selected_index == 0
-    assert decision.reason == "baseline_geometry_unavailable"
+    assert decision.applied is False
 
 
 def test_missing_alternative_geometry_preserves_ranking():
@@ -168,3 +184,20 @@ def test_preserves_lower_marginal_capacity_loss_ratio():
 
     assert decision.selected_index == 0
     assert decision.applied is False
+
+def test_promotes_evaluable_window_candidate_when_baseline_has_no_window():
+    bar_table, window_table = uuid.uuid4(), uuid.uuid4()
+
+    decision = SpatialPreferencePolicy.choose(
+        ranked_candidates=[
+            make_candidate(bar_table, score=100.0, lost_slots=0, loss_ratio=0.0),
+            make_candidate(window_table, score=100.0, lost_slots=0, loss_ratio=0.0),
+        ],
+        assessments=[
+            make_assessment(bar_table, None, evaluable=False),
+            make_assessment(window_table, 10.0),
+        ],
+    )
+
+    assert decision.selected_index == 1
+    assert decision.applied is True
