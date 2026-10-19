@@ -100,7 +100,7 @@ class ReoptimizationRequest:
     allow_combinations: bool = True
 
     # Limiti di sicurezza per la prima versione assistita.
-    max_reservations_to_move: int = 2
+    max_reservations_to_move: int = 1
     max_plans: int = 5
 
 
@@ -119,6 +119,8 @@ class ReservationMove:
     seat_waste: int
 
     explanation: str
+    destination_resource_id: str | None = None
+    destination_setup_minutes: int = 0
 
 
 @dataclass(frozen=True, slots=True)

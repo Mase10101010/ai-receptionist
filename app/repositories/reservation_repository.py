@@ -108,6 +108,7 @@ class ReservationRepository:
                 ),
             )
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
 
         reservation = result.scalar_one_or_none()

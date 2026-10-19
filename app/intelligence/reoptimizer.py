@@ -35,6 +35,8 @@ class ReservationReoptimizer:
     Version 1 currently evaluates one moved reservation per plan.
     """
 
+    MAX_TWO_MOVE_EVALUATIONS = 2000
+
     def reoptimize(
         self,
         request: ReoptimizationRequest,
@@ -265,6 +267,8 @@ class ReservationReoptimizer:
                     destination_capacity=move_candidate.capacity,
                     seat_waste=move_waste,
                     explanation=move_explanation,
+                    destination_resource_id=move_candidate.resource_id,
+                    destination_setup_minutes=move_candidate.setup_minutes,
                 )
 
                 assignment = ScoredAssignment(
@@ -298,6 +302,15 @@ class ReservationReoptimizer:
                     ),
                 )
 
+        if request.max_reservations_to_move >= 2:
+            two_move_plans = self._find_two_move_plans(
+                request=request,
+                tables=tables,
+                reservations=reservations,
+                combinations=combinations,
+            )
+            plans.extend(two_move_plans)
+
         plans.sort(
             key=lambda plan: (
                 -plan.score,
@@ -316,6 +329,246 @@ class ReservationReoptimizer:
             evaluated_plans=evaluated_plans,
             rejected_plans=rejected_plans,
         )
+
+
+    def _find_two_move_plans(
+        self,
+        *,
+        request: ReoptimizationRequest,
+        tables: list[IntelligenceTable],
+        reservations: list[ExistingReservation],
+        combinations: list[TableCombination],
+    ) -> list[ReoptimizationPlan]:
+        """Find safe, bounded plans with exactly two coordinated moves."""
+        plans: list[ReoptimizationPlan] = []
+        evaluations = 0
+
+        incoming_candidates = generate_candidates(
+            request=self._to_optimization_request(request),
+            tables=tables,
+            combinations=combinations,
+        )
+
+        for incoming in incoming_candidates:
+            blockers = self._blocking_reservations(
+                candidate=incoming,
+                reservations=reservations,
+                request=request,
+            )
+
+            if len(blockers) != 2:
+                continue
+
+            if any(
+                r.locked
+                or r.status.lower() == "seated"
+                or not r.table_ids
+                or r.id == request.reservation_id
+                for r in blockers
+            ):
+                continue
+
+            first, second = blockers
+
+            remaining = [
+                r for r in reservations
+                if r.id not in {first.id, second.id}
+            ]
+
+            def destinations(reservation):
+                duration = int(
+                    (reservation.end_at - reservation.start_at)
+                    .total_seconds() // 60
+                )
+                if duration <= 0:
+                    return []
+
+                move_request = OptimizationRequest(
+                    requested_start=reservation.start_at,
+                    party_size=reservation.party_size,
+                    duration_minutes=duration,
+                    buffer_before_minutes=request.buffer_before_minutes,
+                    buffer_after_minutes=request.buffer_after_minutes,
+                    allow_combinations=request.allow_combinations,
+                )
+
+                return [
+                    candidate
+                    for candidate in generate_candidates(
+                        request=move_request,
+                        tables=tables,
+                        combinations=combinations,
+                    )
+                    if set(candidate.table_ids) != set(reservation.table_ids)
+                    and is_assignment_available(
+                        table_ids=candidate.table_ids,
+                        start_at=candidate.start_at,
+                        end_at=candidate.end_at,
+                        reservations=remaining,
+                        buffer_before_minutes=request.buffer_before_minutes,
+                        buffer_after_minutes=request.buffer_after_minutes,
+                        setup_minutes=candidate.setup_minutes,
+                        respect_live_occupancy=True,
+                    )
+                ]
+
+            first_destinations = destinations(first)
+            second_destinations = destinations(second)
+
+            for first_candidate in first_destinations:
+                for second_candidate in second_destinations:
+                    if evaluations >= self.MAX_TWO_MOVE_EVALUATIONS:
+                        return plans
+
+                    evaluations += 1
+
+                    simulated = [
+                        *remaining,
+                        replace(first, table_ids=first_candidate.table_ids),
+                        replace(second, table_ids=second_candidate.table_ids),
+                    ]
+
+                    assignments = [
+                        (first_candidate, second_candidate),
+                        (second_candidate, first_candidate),
+                    ]
+
+                    if any(
+                        not is_assignment_available(
+                            table_ids=candidate.table_ids,
+                            start_at=candidate.start_at,
+                            end_at=candidate.end_at,
+                            reservations=[
+                                replace(
+                                    first if other is first_candidate else second,
+                                    table_ids=other.table_ids,
+                                )
+                            ],
+                            buffer_before_minutes=request.buffer_before_minutes,
+                            buffer_after_minutes=request.buffer_after_minutes,
+                            setup_minutes=candidate.setup_minutes,
+                            respect_live_occupancy=True,
+                        )
+                        for candidate, other in assignments
+                    ):
+                        continue
+
+                    if not is_assignment_available(
+                        table_ids=incoming.table_ids,
+                        start_at=incoming.start_at,
+                        end_at=incoming.end_at,
+                        reservations=simulated,
+                        buffer_before_minutes=request.buffer_before_minutes,
+                        buffer_after_minutes=request.buffer_after_minutes,
+                        setup_minutes=incoming.setup_minutes,
+                        respect_live_occupancy=True,
+                    ):
+                        continue
+
+                    move_results = []
+                    move_score_total = 0.0
+                    move_waste_total = 0
+
+                    for reservation, candidate in (
+                        (first, first_candidate),
+                        (second, second_candidate),
+                    ):
+                        duration = int(
+                            (reservation.end_at - reservation.start_at)
+                            .total_seconds() // 60
+                        )
+
+                        others = [
+                            r for r in simulated
+                            if r.id != reservation.id
+                        ]
+
+                        fragmentation = calculate_fragmentation_minutes(
+                            table_ids=candidate.table_ids,
+                            start_at=candidate.start_at,
+                            end_at=candidate.end_at,
+                            reservations=others,
+                            useful_gap_threshold_minutes=duration,
+                        )
+
+                        score, waste, explanation = score_candidate(
+                            candidate=candidate,
+                            request=OptimizationRequest(
+                                requested_start=reservation.start_at,
+                                party_size=reservation.party_size,
+                                duration_minutes=duration,
+                                buffer_before_minutes=request.buffer_before_minutes,
+                                buffer_after_minutes=request.buffer_after_minutes,
+                                allow_combinations=request.allow_combinations,
+                            ),
+                            fragmentation_minutes=fragmentation,
+                        )
+
+                        move_score_total += score
+                        move_waste_total += waste
+
+                        move_results.append(
+                            ReservationMove(
+                                reservation_id=reservation.id,
+                                from_table_ids=reservation.table_ids,
+                                to_table_ids=candidate.table_ids,
+                                party_size=reservation.party_size,
+                                start_at=reservation.start_at,
+                                end_at=reservation.end_at,
+                                destination_capacity=candidate.capacity,
+                                seat_waste=waste,
+                                explanation=explanation,
+                                destination_resource_id=candidate.resource_id,
+                                destination_setup_minutes=candidate.setup_minutes,
+                            )
+                        )
+
+                    incoming_fragmentation = calculate_fragmentation_minutes(
+                        table_ids=incoming.table_ids,
+                        start_at=incoming.start_at,
+                        end_at=incoming.end_at,
+                        reservations=simulated,
+                        useful_gap_threshold_minutes=request.duration_minutes,
+                    )
+
+                    incoming_score, incoming_waste, incoming_explanation = (
+                        score_candidate(
+                            candidate=incoming,
+                            request=self._to_optimization_request(request),
+                            fragmentation_minutes=incoming_fragmentation,
+                        )
+                    )
+
+                    assignment = ScoredAssignment(
+                        candidate=incoming,
+                        score=incoming_score,
+                        seat_waste=incoming_waste,
+                        fragmentation_minutes=incoming_fragmentation,
+                        explanation=incoming_explanation,
+                    )
+
+                    plans.append(
+                        ReoptimizationPlan(
+                            new_reservation_assignment=assignment,
+                            moves=tuple(move_results),
+                            score=(
+                                incoming_score
+                                + move_score_total
+                                - 36.0
+                            ),
+                            total_seat_waste=(
+                                incoming_waste + move_waste_total
+                            ),
+                            moved_reservations_count=2,
+                            explanation=(
+                                "Two coordinated reservation reassignments "
+                                "make the incoming booking feasible without "
+                                "changing existing reservation times."
+                            ),
+                        )
+                    )
+
+        return plans
 
     def _find_direct_assignment(
         self,

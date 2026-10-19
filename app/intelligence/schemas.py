@@ -51,6 +51,8 @@ class IntelligenceOptimizeRequest(BaseModel):
 
 class IntelligenceAssignmentResponse(BaseModel):
     table_ids: list[UUID]
+    resource_id: str | None = None
+    setup_minutes: int = Field(default=0, ge=0)
     table_numbers: list[str]
     start_at: datetime
     end_at: datetime
@@ -140,7 +142,7 @@ class IntelligenceReoptimizeRequest(BaseModel):
     max_reservations_to_move: int = Field(
         default=1,
         ge=1,
-        le=1,
+        le=2,
     )
     max_plans: int = Field(
         default=5,
@@ -165,6 +167,8 @@ class IntelligenceReservationMoveResponse(BaseModel):
     destination_capacity: int
     seat_waste: int
     explanation: str
+    destination_resource_id: str | None = None
+    destination_setup_minutes: int = Field(default=0, ge=0)
 
 
 class IntelligenceTemporalAutopilotSafetyContext(BaseModel):

@@ -216,11 +216,20 @@ class TableCombinationService:
         combination_id: uuid.UUID,
         payload: TableCombinationUpdate,
     ) -> TableCombination:
-        combination = await self.get_combination(
+        # Authorize ownership before acquiring the write lock.
+        await self._get_restaurant_for_owner(
             restaurant_id=restaurant_id,
             owner_id=owner_id,
-            combination_id=combination_id,
         )
+
+        # Serialize configuration changes with Gap Recovery Apply.
+        combination = await self.repository.get_by_id_for_update(
+            combination_id=combination_id,
+            restaurant_id=restaurant_id,
+        )
+
+        if combination is None:
+            raise NotFoundError("Table combination not found")
 
         updates = payload.model_dump(
             exclude_unset=True,
@@ -289,11 +298,20 @@ class TableCombinationService:
         owner_id: uuid.UUID,
         combination_id: uuid.UUID,
     ) -> None:
-        combination = await self.get_combination(
+        # Authorize ownership before acquiring the write lock.
+        await self._get_restaurant_for_owner(
             restaurant_id=restaurant_id,
             owner_id=owner_id,
-            combination_id=combination_id,
         )
+
+        # Serialize configuration changes with Gap Recovery Apply.
+        combination = await self.repository.get_by_id_for_update(
+            combination_id=combination_id,
+            restaurant_id=restaurant_id,
+        )
+
+        if combination is None:
+            raise NotFoundError("Table combination not found")
 
         await self.repository.delete(
             combination,

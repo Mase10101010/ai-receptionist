@@ -1246,3 +1246,126 @@ async def test_manager_apply_live_seated_modification_failure_does_not_commit(
     ]
 
     session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_gap_recovery_v2_orchestrator_preserves_two_moves(monkeypatch):
+    """Two approved moves must reach Gate and Apply unchanged."""
+    from app.intelligence.schemas import (
+        IntelligenceReoptimizationMoveApply,
+        IntelligenceAppliedMoveResponse,
+    )
+
+    first_reservation_id = uuid4()
+    second_reservation_id = uuid4()
+    first_destination_id = uuid4()
+    second_destination_id = uuid4()
+
+    moves = [
+        IntelligenceReoptimizationMoveApply(
+            reservation_id=first_reservation_id,
+            to_table_ids=[first_destination_id],
+            primary_table_id=first_destination_id,
+        ),
+        IntelligenceReoptimizationMoveApply(
+            reservation_id=second_reservation_id,
+            to_table_ids=[second_destination_id],
+            primary_table_id=second_destination_id,
+        ),
+    ]
+
+    payload = IntelligenceApplyReoptimizationRequest(
+        suggestion_id=SUGGESTION_ID,
+        new_reservation_id=RESERVATION_ID,
+        new_reservation_table_ids=[TABLE_ID],
+        new_reservation_primary_table_id=TABLE_ID,
+        moves=moves,
+    )
+
+    service = FakeOptimizationService()
+    service.apply_reoptimization.return_value = (
+        IntelligenceApplyReoptimizationResponse(
+            new_reservation_id=RESERVATION_ID,
+            new_reservation_primary_table_id=TABLE_ID,
+            new_reservation_table_ids=[TABLE_ID],
+            new_reservation_table_numbers=["12"],
+            applied_moves=[
+                IntelligenceAppliedMoveResponse(
+                    reservation_id=move.reservation_id,
+                    primary_table_id=move.primary_table_id,
+                    table_ids=move.to_table_ids,
+                    table_numbers=[str(index)],
+                )
+                for index, move in enumerate(moves, start=3)
+            ],
+        )
+    )
+
+    FakeExecutionGate.calls = []
+    FakeExecutionGate.error = None
+    FakeAISuggestionService.accept_calls = []
+    FakeIntelligenceEventService.record_calls = []
+    FakeReservationRepository.current_reservation = None
+
+    monkeypatch.setattr(
+        execution_orchestrator,
+        "ReservationRepository",
+        FakeReservationRepository,
+    )
+    monkeypatch.setattr(
+        execution_orchestrator,
+        "AISuggestionRepository",
+        FakeSuggestionRepository,
+    )
+    monkeypatch.setattr(
+        execution_orchestrator,
+        "IntelligenceExecutionGate",
+        FakeExecutionGate,
+    )
+    monkeypatch.setattr(
+        execution_orchestrator,
+        "AISuggestionService",
+        FakeAISuggestionService,
+    )
+    monkeypatch.setattr(
+        execution_orchestrator,
+        "IntelligenceEventRepository",
+        FakeIntelligenceEventRepository,
+    )
+    monkeypatch.setattr(
+        execution_orchestrator,
+        "IntelligenceEventService",
+        FakeIntelligenceEventService,
+    )
+
+    result = await (
+        execution_orchestrator.IntelligenceExecutionOrchestrator(
+            intelligence_service=service,
+        ).apply_reoptimization(
+            session=FakeSession(),
+            payload=payload,
+            allowed_restaurant_ids=[RESTAURANT_ID],
+            source=IntelligenceEventSource.MANAGER,
+            actor_user_id=USER_ID,
+        )
+    )
+
+    assert result.applied is True
+    assert len(result.applied_moves) == 2
+
+    assert len(FakeExecutionGate.calls) == 1
+    assert FakeExecutionGate.calls[0]["moves"] == [
+        move.model_dump() for move in moves
+    ]
+
+    service.apply_reoptimization.assert_awaited_once()
+    assert (
+        service.apply_reoptimization.await_args.kwargs["payload"].moves
+        == moves
+    )
+
+    assert len(FakeAISuggestionService.accept_calls) == 1
+    assert (
+        FakeAISuggestionService.accept_calls[0]["suggestion_id"]
+        == SUGGESTION_ID
+    )

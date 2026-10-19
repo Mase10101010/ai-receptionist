@@ -766,3 +766,53 @@ async def test_reoptimization_gate_rejects_live_seated_modification_suggestion()
         match="not a reoptimization suggestion",
     ):
         await validate(gate)
+
+
+@pytest.mark.asyncio
+async def test_gap_recovery_v2_gate_validates_both_moves():
+    """A two-move plan must match the stored manager proposal."""
+    second_reservation_id = uuid.uuid4()
+    second_destination_id = uuid.uuid4()
+
+    suggestion = build_suggestion()
+
+    suggestion.payload["plan"]["moves"].append(
+        {
+            "reservation_id": str(second_reservation_id),
+            "to_table_ids": [str(second_destination_id)],
+        }
+    )
+
+    gate = build_gate(suggestion)
+
+    approved_moves = [
+        {
+            "reservation_id": MOVED_RESERVATION_ID,
+            "to_table_ids": [MOVE_TABLE_ID],
+            "primary_table_id": MOVE_TABLE_ID,
+        },
+        {
+            "reservation_id": second_reservation_id,
+            "to_table_ids": [second_destination_id],
+            "primary_table_id": second_destination_id,
+        },
+    ]
+
+    # The exact stored two-move plan is accepted.
+    await validate(gate, moves=approved_moves)
+
+    # Changing the second destination must be rejected.
+    altered_moves = [
+        dict(approved_moves[0]),
+        {
+            **approved_moves[1],
+            "to_table_ids": [uuid.uuid4()],
+        },
+    ]
+
+    with pytest.raises(ValidationError):
+        await validate(gate, moves=altered_moves)
+
+    # Omitting the second movement must also be rejected.
+    with pytest.raises(ValidationError):
+        await validate(gate, moves=approved_moves[:1])

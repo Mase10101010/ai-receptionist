@@ -50,6 +50,34 @@ class TableCombinationRepository:
 
         return result.scalar_one_or_none()
 
+    async def get_by_id_for_update(
+        self,
+        combination_id: uuid.UUID,
+        restaurant_id: uuid.UUID,
+    ) -> TableCombination | None:
+        """Lock the authoritative combination before modifying it."""
+        result = await self.db.execute(
+            select(TableCombination)
+            .where(
+                TableCombination.id == combination_id,
+                TableCombination.restaurant_id == restaurant_id,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+
+        combination = result.scalar_one_or_none()
+
+        if combination is None:
+            return None
+
+        await self.db.refresh(
+            combination,
+            attribute_names=["members"],
+        )
+
+        return combination
+
     async def get_by_smart_layout_rule_id(
         self,
         smart_layout_rule_id: uuid.UUID,
@@ -160,6 +188,16 @@ class TableCombinationRepository:
         combination: TableCombination,
         fields: dict,
     ) -> TableCombination:
+        locked_combination = await self.get_by_id_for_update(
+            combination_id=combination.id,
+            restaurant_id=combination.restaurant_id,
+        )
+
+        if locked_combination is None:
+            raise ValueError("Table combination no longer exists.")
+
+        combination = locked_combination
+
         for key, value in fields.items():
             setattr(combination, key, value)
 
@@ -173,6 +211,19 @@ class TableCombinationRepository:
         combination: TableCombination,
         table_ids: list[uuid.UUID],
     ) -> TableCombination:
+        # Serialize membership changes with Gap Recovery Apply.
+        # Reload authoritative members after acquiring the row lock.
+        locked_combination = await self.get_by_id_for_update(
+            combination_id=combination.id,
+            restaurant_id=combination.restaurant_id,
+        )
+
+        if locked_combination is None:
+            raise ValueError(
+                "Table combination no longer exists."
+            )
+
+        combination = locked_combination
         combination.members.clear()
 
         for index, table_id in enumerate(
@@ -196,5 +247,15 @@ class TableCombinationRepository:
         self,
         combination: TableCombination,
     ) -> None:
+        locked_combination = await self.get_by_id_for_update(
+            combination_id=combination.id,
+            restaurant_id=combination.restaurant_id,
+        )
+
+        if locked_combination is None:
+            raise ValueError("Table combination no longer exists.")
+
+        combination = locked_combination
+
         await self.db.delete(combination)
         await self.db.flush()

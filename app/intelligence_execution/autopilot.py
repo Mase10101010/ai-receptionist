@@ -40,6 +40,19 @@ class AutopilotAuthorityService:
         if not plan:
             return False
 
+        # Gap Recovery V2: multiple coordinated moves require
+        # explicit manager approval, regardless of AI eligibility.
+        moves = plan.get("moves", [])
+
+        # Preserve legacy plans without a moves field.
+        # Explicit malformed move lists fail closed.
+        if not isinstance(moves, list):
+            return False
+
+        # Gap Recovery V2 always requires manager approval.
+        if len(moves) > 1:
+            return False
+
         raw_execution_eligibility = plan.get(
             "execution_eligibility"
         )

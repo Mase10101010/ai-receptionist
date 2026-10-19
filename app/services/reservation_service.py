@@ -560,6 +560,10 @@ class ReservationService:
                     created.id,
                     created.restaurant_id,
                 )
+                raise ConflictError(
+                    "Reservation reoptimization could not produce "
+                    "an approvable seating plan. Please try another time."
+                )
             else:
                 created = await self._try_autopilot_reoptimization(
                     reservation=created,
@@ -2297,7 +2301,7 @@ class ReservationService:
                     buffer_before_minutes=0,
                     buffer_after_minutes=0,
                     preferred_service_area_id=None,
-                    max_reservations_to_move=1,
+                    max_reservations_to_move=2,
                     max_plans=5,
                 ),
             )

@@ -410,7 +410,7 @@ class AISuggestionService:
                     buffer_before_minutes=0,
                     buffer_after_minutes=0,
                     preferred_service_area_id=None,
-                    max_reservations_to_move=1,
+                    max_reservations_to_move=2,
                     max_plans=5,
                 ),
             )

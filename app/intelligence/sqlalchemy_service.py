@@ -1,4 +1,5 @@
 from __future__ import annotations
+from dataclasses import replace
 
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
@@ -961,6 +962,22 @@ class IntelligenceOptimizationService:
             )
         )
 
+        # Gap Recovery V2: preserve existing special requests.
+        # Protected reservations still block their assigned tables.
+        if payload.max_reservations_to_move >= 2:
+            protected_ids = {
+                str(reservation.id)
+                for reservation in reservations
+                if (reservation.special_requests or "").strip()
+            }
+
+            intelligence_reservations = [
+                replace(item, locked=True)
+                if item.id in protected_ids
+                else item
+                for item in intelligence_reservations
+            ]
+
         intelligence_combinations = (
             combinations_to_intelligence(
                 combinations,
@@ -1082,6 +1099,8 @@ class IntelligenceOptimizationService:
             candidate = item.candidate
 
             return IntelligenceAssignmentResponse(
+                resource_id=candidate.resource_id,
+                setup_minutes=candidate.setup_minutes,
                 table_ids=[
                     UUID(table_id)
                     for table_id in candidate.table_ids
@@ -1221,6 +1240,8 @@ class IntelligenceOptimizationService:
                         ),
                         seat_waste=move.seat_waste,
                         explanation=move.explanation,
+                        destination_resource_id=move.destination_resource_id,
+                        destination_setup_minutes=move.destination_setup_minutes,
                     )
                 )
 
@@ -1530,7 +1551,20 @@ class IntelligenceOptimizationService:
                 "The new reservation cannot also appear in moves."
             )
 
+        # Gap Recovery V2: two coordinated moves require
+        # an authoritative stored AI suggestion.
+        # Never allow direct execution without the Execution Gate.
+        if (
+            len(move_reservation_ids) >= 2
+            and payload.suggestion_id is None
+        ):
+            raise ValidationError(
+                "Gap Recovery V2 requires an authoritative "
+                "AI suggestion before execution."
+            )
+
         requested_modification = None
+        stored_plan = None
 
         if payload.suggestion_id is not None:
             suggestion = await (
@@ -1563,6 +1597,16 @@ class IntelligenceOptimizationService:
                 )
                 else {}
             )
+
+            stored_plan = suggestion_payload.get("plan")
+
+            if (
+                len(move_reservation_ids) >= 2
+                and not isinstance(stored_plan, dict)
+            ):
+                raise ValidationError(
+                    "Gap Recovery V2 requires a valid stored AI plan."
+                )
 
             requested_modification = (
                 suggestion_payload.get(
@@ -1750,6 +1794,48 @@ class IntelligenceOptimizationService:
                     "or belong to another restaurant."
                 )
 
+        # Gap Recovery V2: lock authoritative reservation rows
+        # before validating mutable state.
+        if len(move_reservation_ids) >= 2:
+            reservation_repository = ReservationRepository(session)
+
+            locked_reservations = {}
+
+            for reservation_id in sorted(
+                move_reservation_ids,
+                key=str,
+            ):
+                locked = await (
+                    reservation_repository
+                    .get_by_id_for_restaurants_for_update(
+                        reservation_id=reservation_id,
+                        restaurant_ids=[
+                            new_reservation.restaurant_id,
+                        ],
+                    )
+                )
+
+                if locked is None:
+                    raise ValidationError(
+                        "A reservation to move is no longer available."
+                    )
+
+                locked_reservations[reservation_id] = locked
+
+            moved_reservations = locked_reservations
+
+        # Gap Recovery V2: revalidate special requests at Apply time.
+        # A newly added request invalidates a stored two-move plan.
+        if len(move_reservation_ids) >= 2:
+            if any(
+                (reservation.special_requests or "").strip()
+                for reservation in moved_reservations.values()
+            ):
+                raise ValidationError(
+                    "Gap Recovery V2 cannot move reservations "
+                    "with existing special requests."
+                )
+
         for reservation in moved_reservations.values():
             if reservation.status in {
                 ReservationStatus.COMPLETED,
@@ -1805,6 +1891,150 @@ class IntelligenceOptimizationService:
                 "One or more selected tables were not found, "
                 "are inactive, or belong to another restaurant."
             )
+
+        # Gap Recovery V2: validate stored physical configurations.
+        if len(move_reservation_ids) >= 2:
+            assignment = stored_plan.get(
+                "new_reservation_assignment"
+            )
+
+            stored_moves = stored_plan.get("moves")
+
+            if (
+                not isinstance(assignment, dict)
+                or not isinstance(stored_moves, list)
+                or len(stored_moves) != len(payload.moves)
+            ):
+                raise ValidationError(
+                    "Gap Recovery V2 stored plan is incomplete."
+                )
+
+            stored_move_map = {}
+
+            for move in stored_moves:
+                if not isinstance(move, dict):
+                    raise ValidationError(
+                        "Gap Recovery V2 stored move is invalid."
+                    )
+
+                try:
+                    move_id = UUID(str(move["reservation_id"]))
+                except (KeyError, ValueError, TypeError):
+                    raise ValidationError(
+                        "Gap Recovery V2 stored move ID is invalid."
+                    )
+
+                if move_id in stored_move_map:
+                    raise ValidationError(
+                        "Gap Recovery V2 contains duplicate moves."
+                    )
+
+                stored_move_map[move_id] = move
+
+            configurations = [
+                (
+                    new_table_ids,
+                    assignment.get("resource_id"),
+                    assignment.get("setup_minutes"),
+                )
+            ]
+
+            for move in payload.moves:
+                stored_move = stored_move_map.get(
+                    move.reservation_id
+                )
+
+                if stored_move is None:
+                    raise ValidationError(
+                        "Gap Recovery V2 move is missing from the plan."
+                    )
+
+                configurations.append(
+                    (
+                        list(dict.fromkeys(move.to_table_ids)),
+                        stored_move.get("destination_resource_id"),
+                        stored_move.get("destination_setup_minutes"),
+                    )
+                )
+
+            combination_ids = set()
+
+            for table_ids, resource_id, setup_minutes in configurations:
+                if (
+                    not isinstance(setup_minutes, int)
+                    or isinstance(setup_minutes, bool)
+                    or setup_minutes < 0
+                ):
+                    raise ValidationError(
+                        "Gap Recovery V2 setup metadata is invalid."
+                    )
+
+                if len(table_ids) == 1:
+                    if str(resource_id) != str(table_ids[0]):
+                        raise ValidationError(
+                            "Gap Recovery V2 table identity changed."
+                        )
+                else:
+                    try:
+                        combination_ids.add(UUID(str(resource_id)))
+                    except (ValueError, TypeError):
+                        raise ValidationError(
+                            "Gap Recovery V2 combination identity is missing."
+                        )
+
+            combinations_result = await session.execute(
+                select(ORMTableCombination)
+                .where(
+                    ORMTableCombination.id.in_(combination_ids),
+                    ORMTableCombination.restaurant_id
+                    == new_reservation.restaurant_id,
+                )
+                .order_by(ORMTableCombination.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+
+            combinations_by_id = {
+                combination.id: combination
+                for combination in combinations_result.scalars().all()
+            }
+
+            for table_ids, resource_id, setup_minutes in configurations:
+                if len(table_ids) == 1:
+                    continue
+
+                combination = combinations_by_id.get(
+                    UUID(str(resource_id))
+                )
+
+                if combination is None or not combination.is_active:
+                    raise ValidationError(
+                        "Gap Recovery V2 combination is no longer active."
+                    )
+
+                current_members = {
+                    member.table_id
+                    for member in combination.members
+                }
+
+                if current_members != set(table_ids):
+                    raise ValidationError(
+                        "Gap Recovery V2 combination members changed."
+                    )
+
+                if combination.setup_minutes != setup_minutes:
+                    raise ValidationError(
+                        "Gap Recovery V2 combination setup time changed."
+                    )
+
+                if not (
+                    combination.min_capacity
+                    <= sum(table_by_id[t].seats for t in table_ids)
+                    <= combination.max_capacity
+                ):
+                    raise ValidationError(
+                        "Gap Recovery V2 combination capacity is invalid."
+                    )
 
         def validate_same_service_area(
             table_ids: list[UUID],
@@ -1961,6 +2191,23 @@ class IntelligenceOptimizationService:
                 )
             )
 
+        # Gap Recovery V2: preserve the validated preparation time
+        # for every destination in the proposed plan.
+        setup_minutes_by_reservation: dict[UUID, int] = {}
+
+        if len(move_reservation_ids) >= 2:
+            setup_minutes_by_reservation[
+                new_reservation.id
+            ] = configurations[0][2]
+
+            for move, configuration in zip(
+                payload.moves,
+                configurations[1:],
+            ):
+                setup_minutes_by_reservation[
+                    move.reservation_id
+                ] = configuration[2]
+
         # LAB-011: serialize physical destination ownership checks.
         #
         # Reoptimization generation and Apply happen at different moments.
@@ -2013,6 +2260,15 @@ class IntelligenceOptimizationService:
                 )
             )
 
+            # Gap Recovery V2: preparation occupies the destination
+            # tables before the reservation actually begins.
+            requested_blocked_start = requested_start - timedelta(
+                minutes=setup_minutes_by_reservation.get(
+                    reservation.id,
+                    0,
+                ),
+            )
+
             selected_table_id_set = set(
                 table_ids,
             )
@@ -2033,7 +2289,7 @@ class IntelligenceOptimizationService:
 
                 overlaps = (
                     existing_start < requested_end
-                    and existing_end > requested_start
+                    and existing_end > requested_blocked_start
                 )
 
                 if not overlaps:
@@ -2079,9 +2335,16 @@ class IntelligenceOptimizationService:
                     )
                 )
 
+                other_blocked_start = other_start - timedelta(
+                    minutes=setup_minutes_by_reservation.get(
+                        other_reservation.id,
+                        0,
+                    ),
+                )
+
                 overlaps = (
-                    other_start < requested_end
-                    and other_end > requested_start
+                    requested_blocked_start < other_end
+                    and other_blocked_start < requested_end
                 )
 
                 if (

@@ -1360,3 +1360,47 @@ async def test_required_spatial_preference_fails_closed_before_booking(
     service.repository.create.assert_not_awaited()
     service.restaurant_repository.get_by_id.assert_not_awaited()
     service._assign_tables_with_aie.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reoptimization_without_suggestion_fails_closed(
+    monkeypatch,
+):
+    """A recoverable booking must not proceed without an AI plan."""
+    restaurant_id = uuid4()
+
+    service, repository, email_service = _build_service()
+
+    service._assign_tables_with_aie = AsyncMock(
+        return_value=(None, []),
+    )
+    service._reoptimization_available = AsyncMock(
+        return_value=True,
+    )
+
+    analyze_reservation = AsyncMock(return_value=None)
+
+    monkeypatch.setattr(
+        AISuggestionService,
+        "analyze_reservation",
+        analyze_reservation,
+    )
+
+    with patch.object(
+        ReservationAccessService,
+        "issue",
+        new=AsyncMock(return_value="test-access-token"),
+    ):
+        with pytest.raises(
+            ConflictError,
+            match="reoptimization",
+        ):
+            await service.create_reservation(
+                _payload(restaurant_id=restaurant_id),
+            )
+
+    analyze_reservation.assert_awaited_once()
+
+    email_service.send_reservation_confirmation.assert_not_awaited()
+    email_service.send_reservation_pending_confirmation.assert_not_awaited()
+    email_service.send_restaurant_pending_reservation_notification.assert_not_awaited()
